@@ -1,0 +1,59 @@
+version: 1
+name: mcphub_help
+
+intent: |
+  Invoked with no subcommand (or with --help) mcphub prints its help, which
+  advertises the core commands: studio, sync, and mcp. Runs against an isolated
+  config/db so it never reads or writes the user's real agent files.
+
+target:
+  cmd: ["./bin/mcphub", "--help"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-help/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-help/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 40
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-help && mkdir -p /tmp/glyph-mcphub-help"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: clean_exit
+    description: the binary exits cleanly
+    verify:
+      process:
+        exitCode: 0
+  - id: help_lists_studio
+    description: help text mentions the studio subcommand
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-help/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-help/mcphub.db ./bin/mcphub --help | grep -q 'studio'"
+  - id: help_lists_sync
+    description: help text mentions the sync subcommand
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-help/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-help/mcphub.db ./bin/mcphub --help | grep -q 'sync'"
+  - id: help_lists_mcp
+    description: help text mentions the mcp subcommand
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-help/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-help/mcphub.db ./bin/mcphub --help | grep -q 'mcp'"
+  - id: bare_invocation_lists_commands
+    description: a bare `mcphub` invocation also prints the command list
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-help/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-help/mcphub.db ./bin/mcphub | grep -q 'studio'"

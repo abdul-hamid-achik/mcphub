@@ -1,0 +1,60 @@
+version: 1
+name: mcphub_status
+
+intent: |
+  `mcphub status` reports per-agent sync drift and usage intelligence. With an
+  empty agent file and an enabled server that has no recorded calls, status must
+  show the agent as pending and the server as unused. Runs against a temp
+  MCPHUB_CONFIG / MCPHUB_DB and a temp agent file, so it never touches the
+  user's real harness configs (it reads them read-only at most).
+
+target:
+  cmd: ["./bin/mcphub", "status"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-status/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-status/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-status && mkdir -p /tmp/glyph-mcphub-status"
+      timeoutMs: 5000
+    - run: "printf '{}' > /tmp/glyph-mcphub-status/claude.json"
+      timeoutMs: 5000
+    - run: "printf 'version: 1\\nexpose: lazy\\nservers:\\n  codemap: {command: codemap, args: [serve], enabled: true}\\nagents:\\n  claude: {type: claude, path: /tmp/glyph-mcphub-status/claude.json, mode: gateway}\\n' > /tmp/glyph-mcphub-status/mcphub.yaml"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: clean_exit
+    description: status exits cleanly
+    verify:
+      process:
+        exitCode: 0
+  - id: agent_pending
+    description: the empty agent is reported as out of sync
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-status/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-status/mcphub.db ./bin/mcphub status | grep -q 'pending'"
+  - id: unused_flagged
+    description: an enabled server with no calls is flagged unused
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-status/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-status/mcphub.db ./bin/mcphub status | grep -qi 'unused'"
+  - id: json_has_agents
+    description: --json emits a machine-readable report with agents
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-status/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-status/mcphub.db ./bin/mcphub status --json | jq -e '.agents[0].state' >/dev/null"

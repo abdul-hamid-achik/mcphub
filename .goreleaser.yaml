@@ -1,0 +1,86 @@
+version: 2
+
+project_name: mcphub
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mcphub
+    main: ./cmd/mcphub
+    binary: mcphub
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/abdul-hamid-achik/mcphub/internal/version.Version={{.Version}}
+      - -X github.com/abdul-hamid-achik/mcphub/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/abdul-hamid-achik/mcphub/internal/version.Date={{.CommitDate}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - AGENTS.md
+      - CHANGELOG.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+homebrew_casks:
+  - name: mcphub
+    binaries:
+      - mcphub
+    repository:
+      owner: abdul-hamid-achik
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/abdul-hamid-achik/mcphub"
+    description: "One hub for all your MCP servers, synced into every agent"
+    caveats: "Point your agents at `mcphub mcp serve` (gateway mode) or run `mcphub studio` to manage servers. See `mcphub --help`."
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/mcphub"]
+          end
+    skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
+
+release:
+  github:
+    owner: abdul-hamid-achik
+    name: mcphub
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"

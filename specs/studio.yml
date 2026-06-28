@@ -1,0 +1,63 @@
+version: 1
+name: mcphub_studio
+
+intent: |
+  The `mcphub studio` TUI launches in a PTY, renders its header and the seeded
+  server list, switches to the Agents tab on `tab`, and quits cleanly on `q`.
+  Every `wait: screen` step doubles as an assertion (the run fails if the text
+  never appears). Runs against an isolated MCPHUB_CONFIG / MCPHUB_DB so it never
+  reads or writes the user's real agent files.
+
+target:
+  cmd: ["./bin/mcphub", "studio"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-studio/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-studio/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-studio && mkdir -p /tmp/glyph-mcphub-studio"
+      timeoutMs: 5000
+    - run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-studio/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-studio/mcphub.db ./bin/mcphub init"
+      timeoutMs: 10000
+
+steps:
+  - wait:
+      screen:
+        contains: "mcphub studio"
+      timeoutMs: 5000
+  - wait:
+      screen:
+        contains: "codemap"
+      timeoutMs: 5000
+  - snapshot: servers
+  - press: "tab"
+  - wait:
+      screen:
+        contains: "claude"
+      timeoutMs: 5000
+  - snapshot: agents
+  - press: "q"
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 5000
+
+outcomes:
+  # The `wait: screen contains ...` steps above are the rendering assertions:
+  # the run fails if the header, the server list, or the Agents tab never
+  # appear. This alt-screen TUI clears on exit, so the final-frame check below
+  # only verifies a clean teardown.
+  - id: clean_exit
+    description: studio launched, rendered, switched tabs, and q quit cleanly
+    verify:
+      process:
+        exitCode: 0

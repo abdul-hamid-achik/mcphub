@@ -1,0 +1,59 @@
+version: 1
+name: mcphub_init_list
+
+intent: |
+  `mcphub init` writes a starter mcphub.yaml, and `mcphub list` then shows the
+  seeded servers (codemap, vecgrep). The config and db live under a temp dir via
+  MCPHUB_CONFIG / MCPHUB_DB, so init and list never touch the user's real agent
+  files (list reads only the server table, never the agent harnesses).
+
+target:
+  cmd: ["./bin/mcphub", "list"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-initlist/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-initlist/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-initlist && mkdir -p /tmp/glyph-mcphub-initlist"
+      timeoutMs: 5000
+    - run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-initlist/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-initlist/mcphub.db ./bin/mcphub init"
+      timeoutMs: 10000
+    - run: "test -f /tmp/glyph-mcphub-initlist/mcphub.yaml"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: clean_exit
+    description: list exits cleanly
+    verify:
+      process:
+        exitCode: 0
+  - id: list_shows_codemap
+    description: the listing includes the codemap server
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-initlist/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-initlist/mcphub.db ./bin/mcphub list | grep -q 'codemap'"
+  - id: list_shows_vecgrep
+    description: the listing includes the vecgrep server
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-initlist/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-initlist/mcphub.db ./bin/mcphub list | grep -q 'vecgrep'"
+  - id: list_json_has_codemap
+    description: the JSON listing is keyed by server name and includes codemap
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-initlist/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-initlist/mcphub.db ./bin/mcphub list --json | jq -e 'has(\"codemap\") and has(\"vecgrep\")' >/dev/null"

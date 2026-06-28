@@ -1,0 +1,28 @@
+# Build artifacts
+/bin/
+coverage.out
+coverage.html
+
+# Local intelligence db (and SQLite sidecars)
+*.db
+*.db-shm
+*.db-wal
+
+# Glyphrun run artifacts
+/.glyphrun/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+
+# Node / VitePress (docs)
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+.vercel/
+
+# Agent config backups mcphub writes before a sync
+*.bak-*
+
+# Claude Code local artifacts
+.claude/

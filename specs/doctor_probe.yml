@@ -1,0 +1,55 @@
+version: 1
+name: mcphub_doctor_probe
+
+intent: |
+  `mcphub doctor --probe` does a real MCP handshake against each enabled server
+  (not just a PATH check) and reports its tool count. With codemap enabled it
+  must connect and report a `probe:codemap` line with a tool count, then exit 0.
+  Runs against a temp MCPHUB_CONFIG / MCPHUB_DB with no agents, so it touches no
+  harness configs.
+
+target:
+  cmd: ["./bin/mcphub", "doctor", "--probe"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-probe/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-probe/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "command -v codemap >/dev/null"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-probe && mkdir -p /tmp/glyph-mcphub-probe"
+      timeoutMs: 5000
+    - run: "printf 'version: 1\\nservers:\\n  codemap: {command: codemap, args: [serve], enabled: true}\\nagents: {}\\n' > /tmp/glyph-mcphub-probe/mcphub.yaml"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 30000
+
+outcomes:
+  - id: clean_exit
+    description: doctor --probe exits 0 when every server connects
+    verify:
+      process:
+        exitCode: 0
+  - id: probed_codemap
+    description: codemap was actually connected and its tool count reported
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-probe/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-probe/mcphub.db ./bin/mcphub doctor --probe | grep 'probe:codemap' | grep -q 'tools'"
+  - id: json_probe
+    description: --json includes the probe result
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-probe/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-probe/mcphub.db ./bin/mcphub doctor --probe --json | jq -e 'any(.[]; .name == \"probe:codemap\" and .ok == true)' >/dev/null"

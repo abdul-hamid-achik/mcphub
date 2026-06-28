@@ -1,0 +1,59 @@
+version: 1
+name: mcphub_doctor_json
+
+intent: |
+  `mcphub doctor --json` emits a valid JSON array of diagnostic checks, including
+  a "config" check. The precondition writes an ISOLATED config under a temp dir
+  whose agent target points at a temp file, so doctor never reads or writes the
+  user's real agent configs (~/.claude.json, opencode, codex).
+
+target:
+  cmd: ["./bin/mcphub", "doctor", "--json"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-doctor/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-doctor/mcphub.db"
+
+terminal:
+  cols: 120
+  rows: 60
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-doctor && mkdir -p /tmp/glyph-mcphub-doctor"
+      timeoutMs: 5000
+    - run: "printf '%s\\n' 'version: 1' 'servers:' '  codemap:' '    command: codemap' '    enabled: true' '  vecgrep:' '    command: vecgrep' '    enabled: true' 'agents:' '  claude:' '    type: claude' '    path: /tmp/glyph-mcphub-doctor/claude.json' '    mode: gateway' > /tmp/glyph-mcphub-doctor/mcphub.yaml"
+      timeoutMs: 5000
+    - run: "printf '{\"mcpServers\":{}}\\n' > /tmp/glyph-mcphub-doctor/claude.json"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: clean_exit
+    description: doctor completes cleanly
+    verify:
+      process:
+        exitCode: 0
+  - id: valid_json
+    description: stdout parses as JSON
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-doctor/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-doctor/mcphub.db ./bin/mcphub doctor --json | jq -e . >/dev/null"
+  - id: has_config_check
+    description: the diagnostics include a config check
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-doctor/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-doctor/mcphub.db ./bin/mcphub doctor --json | jq -e '[.[] | select(.name == \"config\")] | length == 1' >/dev/null"
+  - id: config_check_points_at_temp
+    description: the config check resolves to the isolated temp config, never a real path
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-doctor/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-doctor/mcphub.db ./bin/mcphub doctor --json | jq -e '.[] | select(.name == \"config\") | .detail | startswith(\"/tmp/glyph-mcphub-doctor/\")' >/dev/null"

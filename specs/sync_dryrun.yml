@@ -1,0 +1,65 @@
+version: 1
+name: mcphub_sync_dryrun
+
+intent: |
+  `mcphub sync` with no --write is a DRY RUN: it prints the plan it would apply
+  (here, adding the gateway `mcphub` server to the claude agent) and changes
+  nothing — no timestamped .bak is written. The precondition writes an ISOLATED
+  config whose only agent points at a temp file, so the dry run never reads or
+  writes the user's real agent configs.
+
+target:
+  cmd: ["./bin/mcphub", "sync"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-sync/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-sync/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-sync && mkdir -p /tmp/glyph-mcphub-sync"
+      timeoutMs: 5000
+    - run: "printf '%s\\n' 'version: 1' 'servers:' '  codemap:' '    command: codemap' '    enabled: true' 'agents:' '  claude:' '    type: claude' '    path: /tmp/glyph-mcphub-sync/claude.json' '    mode: gateway' > /tmp/glyph-mcphub-sync/mcphub.yaml"
+      timeoutMs: 5000
+    - run: "printf '{\"mcpServers\":{}}\\n' > /tmp/glyph-mcphub-sync/claude.json"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: clean_exit
+    description: the dry run exits cleanly
+    verify:
+      process:
+        exitCode: 0
+  - id: prints_dry_run_notice
+    description: the output labels itself a dry run
+    verify:
+      screen:
+        contains: "Dry run"
+  - id: plan_mentions_gateway_server
+    description: the plan shows the mcphub gateway server would be added
+    verify:
+      screen:
+        contains: "mcphub"
+  - id: no_backup_written
+    description: a dry run writes NO timestamped .bak next to the agent file
+    verify:
+      command:
+        run: "test -z \"$(find /tmp/glyph-mcphub-sync -name 'claude.json.bak-*' 2>/dev/null)\""
+  - id: agent_file_unchanged
+    description: the agent file still has no servers (dry run did not edit it)
+    verify:
+      command:
+        run: "jq -e '.mcpServers == {}' /tmp/glyph-mcphub-sync/claude.json >/dev/null"

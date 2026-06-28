@@ -1,0 +1,261 @@
+# CLI reference
+
+Every mcphub command, with its flags. Run `mcphub <command> --help` for the
+same information at the terminal.
+
+```
+mcphub [command] [flags]
+```
+
+## Persistent flags
+
+These apply to every command:
+
+| Flag              | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `--config <path>` | Path to `mcphub.yaml`. Default: `./mcphub.yaml` or `~/.config/mcphub/mcphub.yaml`. |
+| `--db <path>`     | Path to the intelligence SQLite db. Default: `~/.local/share/mcphub/mcphub.db`.    |
+| `--json`          | Emit machine-readable JSON where supported.                                 |
+| `-v`, `--version` | Print the mcphub version and exit.                                          |
+| `-h`, `--help`    | Help for the command.                                                       |
+
+### Environment variables
+
+| Variable        | Overrides           |
+| --------------- | ------------------- |
+| `MCPHUB_CONFIG` | the config path     |
+| `MCPHUB_DB`     | the intelligence db |
+
+The config default resolves in order: `$MCPHUB_CONFIG`, then a `mcphub.yaml` in
+the current directory, then `~/.config/mcphub/mcphub.yaml`.
+
+## Commands at a glance
+
+| Command                          | What it does                                            |
+| -------------------------------- | ------------------------------------------------------- |
+| [`init`](#init)                  | Write a starter `mcphub.yaml` (or `--from-agents` to import existing). |
+| [`list`](#list) (`ls`)           | List configured servers.                                |
+| `add`                            | Register a server (`add <name> [cmd args...]` or `--url`). |
+| `remove` (`rm`)                  | Offload a server from `mcphub.yaml`.                   |
+| [`enable`](#enable-disable)      | Enable a server in `mcphub.yaml`.                       |
+| [`disable`](#enable-disable)     | Disable a server in `mcphub.yaml`.                      |
+| `groups`                         | List server groups.                                     |
+| `use`                            | Enable every server in a group (`--only` to disable the rest). |
+| [`status`](#status)              | Per-agent sync drift + usage intelligence at a glance.  |
+| [`sync`](#sync)                  | Write server config into agent harnesses (dry-run by default). |
+| [`studio`](#studio) (`tui`)      | Launch the interactive TUI.                            |
+| [`stats`](#stats)                | Show local tool-call intelligence (`--tools`, `--recent N`). |
+| [`doctor`](#doctor)              | Diagnose config, server availability, and agent targets. |
+| [`mcp serve`](#mcp-serve)        | Run the gateway MCP stdio server.                      |
+| `completion`                     | Generate a shell autocompletion script.                |
+| `help`                           | Help about any command.                                |
+
+---
+
+## `init`
+
+Write a starter `mcphub.yaml` with example servers and the three agent harnesses
+pre-wired.
+
+```sh
+mcphub init
+mcphub init --force
+```
+
+| Flag      | Description                                  |
+| --------- | -------------------------------------------- |
+| `--force` | Overwrite an existing config.                |
+
+Without `--force`, mcphub refuses to overwrite an existing file. The file is
+written to the resolved [config path](#persistent-flags).
+
+---
+
+## `list`
+
+List the servers configured in `mcphub.yaml`. Alias: `ls`.
+
+```sh
+mcphub list
+mcphub ls --json
+```
+
+The table shows each server's `SERVER`, `STATE` (`on`/`off`), `KIND`
+(`stdio`/`remote`), `TARGET` (the command or url), and `DESCRIPTION`. With
+`--json`, the raw server map is printed instead.
+
+---
+
+## `enable` / `disable`
+
+Toggle a server's `enabled` flag in `mcphub.yaml`. Each takes exactly one server
+name.
+
+```sh
+mcphub enable <server>
+mcphub disable <server>
+```
+
+This edits only the config — it does not touch your agents. Run
+[`mcphub sync`](#sync) afterwards to apply the change to your harnesses. An
+unknown server name is rejected with a pointer to `mcphub list`.
+
+---
+
+## `sync`
+
+Reconcile every agent harness with `mcphub.yaml`. **Dry run by default** — it
+prints the diff it would apply and changes nothing. Pass `--write` to actually
+edit the files (a timestamped `.bak` is written first).
+
+```sh
+mcphub sync                  # dry run, all agents
+mcphub sync --write          # apply
+mcphub sync claude codex     # limit scope to named agents
+```
+
+| Argument / flag | Description                                                          |
+| --------------- | ------------------------------------------------------------------- |
+| `[agent...]`    | One or more agent names to sync. With none, all agents are synced.  |
+| `--write`       | Actually edit the agent config files (a `.bak` is saved first).     |
+
+In **gateway** mode an agent is given a single `mcphub` server that proxies the
+rest. In **direct** mode every enabled server is written into the agent. Agents
+marked `disabled: true` are skipped. See [Sync to your agents](/guide/sync) for
+how each harness adapter merges.
+
+---
+
+## `studio`
+
+Launch the interactive TUI to browse servers, toggle them on and off, and
+inspect usage. Alias: `tui`.
+
+```sh
+mcphub studio
+mcphub tui
+```
+
+See [Studio](/guide/studio) for the key bindings and layout.
+
+---
+
+## `status`
+
+Answer "is everything consistent?" in one screen. For each agent, `status` does
+a read-only dry run and reports whether its on-disk MCP config already matches
+`mcphub.yaml` (`in sync`) or has changes pending. It also summarizes recorded
+usage and flags **enabled servers that have never been called** — candidates to
+disable so your agents carry less context.
+
+```sh
+mcphub status
+mcphub status --json
+```
+
+```
+Config:  ~/.config/mcphub/mcphub.yaml
+Servers: 8 (6 enabled)   Exposure: lazy
+
+AGENT     TYPE      MODE     SYNC
+claude    claude    gateway  in sync
+codex     codex     gateway  1 pending
+opencode  opencode  direct   in sync
+
+Usage:   142 calls, 3 errors, ~38500 est. tokens
+Unused:  monitor, vidtrace (enabled but never called)
+         → consider `mcphub disable <name>` to shrink agent context.
+```
+
+---
+
+## `stats`
+
+Show local tool-call intelligence recorded by the gateway: total calls, errors,
+estimated token cost, and total latency, plus a per-server breakdown.
+
+```sh
+mcphub stats              # all-time totals + per-server
+mcphub stats --tools      # per-tool breakdown (which exact tools cost the most)
+mcphub stats --recent 20  # also list the 20 most recent calls
+mcphub stats --since 24h  # limit to a recent window (24h, 90m, 7d, ...)
+mcphub stats --json
+```
+
+`--since` accepts any Go duration (`24h`, `90m`) plus a day suffix (`7d`), and
+scopes the totals and breakdowns to that lookback window — useful for "which
+servers are earning their keep *lately*". With `--json`, the output includes
+the totals plus per-server **and** per-tool breakdowns (and recent calls when
+`--recent` is set). See [Intelligence](/guide/intelligence) for what the numbers
+mean.
+
+---
+
+## `doctor`
+
+Diagnose your setup. mcphub checks, in order:
+
+- **config** — that `mcphub.yaml` loads and validates (reports its path),
+- **server:&lt;name&gt;** — for each enabled server, that its command is on
+  `PATH` (remote servers are reported as remote),
+- **agent:&lt;name&gt;** — for each agent, that its `type` is supported and its
+  config file exists (reports path, type, and resolved mode),
+- **store** — that the intelligence database opens (reports its path),
+- **tvault** — when any server uses a `vault`, that `tvault` is on `PATH`,
+- **binary** — the path to the running mcphub executable.
+
+```sh
+mcphub doctor
+mcphub doctor --probe   # also connect to each server for real
+mcphub doctor --json
+```
+
+Each check prints a `✔`/`✗` mark and a detail line. If any check fails, doctor
+exits non-zero. With `--json`, the checks are emitted as structured data.
+
+### `--probe`
+
+`--probe` goes beyond a `PATH` lookup: it actually **spawns each enabled server,
+performs the MCP handshake, and lists its tools**, reporting a `probe:<name>`
+line with the tool count (or the connection error). It's the difference between
+"the binary exists" and "the server actually works":
+
+```
+✔ probe:codemap     29 tools
+✗ probe:broken      connect: exec: "broken-mcp": executable file not found in $PATH
+```
+
+Because it launches every server, `--probe` is slower than a plain `doctor` —
+use it when you suspect a server is misconfigured or failing to start.
+
+---
+
+## `mcp serve`
+
+Start the gateway MCP stdio server. It connects to every enabled downstream
+server, aggregates their tools under `server__tool` names, and records each
+proxied call to the local intelligence db. This is the server agents point at in
+[gateway mode](/guide/concepts#gateway-vs-direct).
+
+```sh
+mcphub mcp serve
+```
+
+You normally don't run this by hand — the agent launches it, because that's what
+[`mcphub sync`](#sync) writes into the agent's config in gateway mode. Logs go to
+stderr so they never corrupt the stdio JSON-RPC stream. It shuts down cleanly on
+`SIGINT`/`SIGTERM`.
+
+The gateway also exposes five management tools to connected agents:
+`mcphub_list_servers`, `mcphub_search_tools`, `mcphub_describe_tool`,
+`mcphub_call_tool`, and `mcphub_stats`. With `expose: lazy` in `mcphub.yaml`
+those five are the *only* tools advertised. See
+[Concepts](/guide/concepts#management-tools).
+
+---
+
+## See also
+
+- [Configuration reference](/reference/config) — the full `mcphub.yaml` schema.
+- [Sync to your agents](/guide/sync) — how the harness adapters merge.
+- [Intelligence](/guide/intelligence) — the telemetry and SQLite store.

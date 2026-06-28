@@ -1,0 +1,49 @@
+version: 1
+name: mcphub_version
+
+intent: |
+  `mcphub --version` prints the binary's version line (prefixed with "mcphub ")
+  and exits cleanly. Runs against an isolated config/db so it never touches the
+  user's real agent files.
+
+target:
+  cmd: ["./bin/mcphub", "--version"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-version/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-version/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-version && mkdir -p /tmp/glyph-mcphub-version"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: clean_exit
+    description: the binary exits cleanly
+    verify:
+      process:
+        exitCode: 0
+  - id: prints_version_line
+    description: stdout starts with the "mcphub " version prefix
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-version/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-version/mcphub.db ./bin/mcphub --version | grep -q '^mcphub '"
+  - id: version_on_screen
+    description: the rendered screen shows the mcphub name
+    verify:
+      screen:
+        contains: "mcphub"

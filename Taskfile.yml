@@ -1,0 +1,144 @@
+version: '3'
+
+silent: false
+
+vars:
+  BINARY: bin/mcphub
+  INSTALL_PATH: /opt/homebrew/bin/mcphub
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo none
+  DATE:
+    sh: date -u +%Y-%m-%d
+  LDFLAGS: >-
+    -X github.com/abdul-hamid-achik/mcphub/internal/version.Version={{.VERSION}}
+    -X github.com/abdul-hamid-achik/mcphub/internal/version.Commit={{.COMMIT}}
+    -X github.com/abdul-hamid-achik/mcphub/internal/version.Date={{.DATE}}
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the mcphub binary
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.BINARY}} ./cmd/mcphub
+
+  release:
+    desc: Build an optimized release binary
+    cmds:
+      - go build -ldflags "-s -w {{.LDFLAGS}}" -o {{.BINARY}} ./cmd/mcphub
+
+  install:
+    desc: Build with version metadata and install to {{.INSTALL_PATH}}
+    deps: [release]
+    cmds:
+      - cp {{.BINARY}} {{.INSTALL_PATH}}
+      - '{{.INSTALL_PATH}} --version'
+
+  snapshot:
+    desc: Build all release artifacts locally with GoReleaser (no publish)
+    cmds:
+      - goreleaser build --snapshot --clean
+
+  release-check:
+    desc: Validate the GoReleaser config
+    cmds:
+      - goreleaser check
+
+  run:
+    desc: Build and launch the Studio TUI
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} studio
+
+  serve:
+    desc: Build and run the gateway MCP server on stdio
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} mcp serve
+
+  sync:
+    desc: Dry-run a sync of all agents from mcphub.yaml
+    deps: [build]
+    cmds:
+      - ./{{.BINARY}} sync
+
+  dev:
+    desc: Rebuild on change
+    watch: true
+    sources:
+      - '**/*.go'
+      - go.mod
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.BINARY}} ./cmd/mcphub
+
+  sqlc:
+    desc: Regenerate the type-safe DB layer from SQL (requires sqlc)
+    cmds:
+      - sqlc generate
+
+  test:
+    desc: Run all unit tests
+    cmds:
+      - go test ./...
+
+  cover:
+    desc: Run tests with an HTML coverage report
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - 'echo "Coverage report: coverage.html"'
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Format all Go source
+    cmds:
+      - gofmt -w .
+
+  tidy:
+    desc: Tidy module dependencies
+    cmds:
+      - go mod tidy
+
+  specs:
+    desc: Run glyphrun end-to-end TUI/CLI specs
+    deps: [build]
+    cmds:
+      - |
+        for spec in specs/*.yml; do
+          echo "--- $spec ---"
+          glyph run "$spec" || echo "SKIP: glyph not installed or spec failed"
+        done
+
+  docs:
+    desc: Serve the VitePress docs site locally
+    dir: docs
+    cmds:
+      - npm install
+      - npm run docs:dev
+
+  docs-build:
+    desc: Build the VitePress docs site
+    dir: docs
+    cmds:
+      - npm install
+      - npm run docs:build
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf bin/ coverage.out coverage.html
+
+  version:
+    desc: Show toolchain and key module versions
+    cmds:
+      - go version
+      - go list -m all | grep -E "bubbletea|lipgloss|go-sdk|sqlite|cobra"

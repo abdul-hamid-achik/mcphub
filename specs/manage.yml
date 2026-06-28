@@ -1,0 +1,63 @@
+version: 1
+name: mcphub_manage
+
+intent: |
+  The management commands register and offload servers in mcphub.yaml without
+  touching any agent harness. `add` registers a server, `list` shows it, `use`
+  enables a group, and `remove` offloads it again. Everything runs against a
+  temp MCPHUB_CONFIG / MCPHUB_DB so the user's real agent files are never read
+  or written.
+
+target:
+  cmd: ["./bin/mcphub", "list"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-manage/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-manage/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-manage && mkdir -p /tmp/glyph-mcphub-manage"
+      timeoutMs: 5000
+    - run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub init"
+      timeoutMs: 10000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: add_stdio_server
+    description: add registers a new stdio server
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub add monitor monitor mcp serve && MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep -q 'monitor'"
+  - id: add_remote_server
+    description: add --url registers a remote server shown as kind remote
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub add ctx7 --url https://mcp.context7.com && MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep ctx7 | grep -q remote"
+  - id: use_group_enables
+    description: use enables every server in a group
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub use coding && MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep codemap | grep -q 'on'"
+  - id: remove_offloads
+    description: remove offloads a server from the config
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub remove monitor && ! (MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep -q 'monitor')"
+  - id: clean_exit
+    description: list exits cleanly
+    verify:
+      process:
+        exitCode: 0
