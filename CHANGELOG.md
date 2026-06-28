@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-28
+
+First release. `brew install abdul-hamid-achik/tap/mcphub`.
+
 ### Added
 
 - **Gateway** (`mcphub mcp serve`) — connects to every enabled downstream MCP
@@ -71,4 +75,5 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
 
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/commits/main
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/abdul-hamid-achik/mcphub/releases/tag/v0.1.0
