@@ -89,11 +89,27 @@ advertises:
   is a handful of tools instead of hundreds — regardless of how many servers are
   behind the hub.
 
-In lazy mode you can still keep your most-used tools directly callable with the
-top-level `pin` list — `pin: [codemap__codemap_semantic]` mounts exactly those
-tools alongside the meta-tools, so the common path skips the search/describe
-round-trip while everything else stays lazy. (Tip: `mcphub stats --tools` shows
-which tools you actually call most — good pin candidates.)
+The trade-off of lazy mode: because the real tools aren't in the agent's tool
+list, the model won't *automatically* reach for them — it has to choose to call
+`mcphub_search_tools` first. So if you want a server's tools called
+automatically (like a normal MCP setup), **pin it**. Pins keep tools mounted
+directly even in lazy mode, so they appear in the agent's tool list and get
+auto-invoked, while everything else stays on-demand:
+
+```yaml
+expose: lazy
+pin:
+  - codemap                       # a whole server — all its tools, auto-callable
+  - vecgrep__*                    # same, explicit wildcard
+  - tinyvault__vault_get_secret   # a single tool
+```
+
+Manage pins without editing YAML: `mcphub pin codemap vecgrep`,
+`mcphub unpin codemap`, or `p` on a server in [Studio](/guide/studio). And
+`mcphub pin --top 8` auto-pins your eight most-called tools straight from the
+[intelligence store](/guide/intelligence) — let your real usage decide what's
+always-on. The sweet spot: lazy everywhere, pin the two or three servers you
+live in.
 
 ## Gateway vs. direct
 

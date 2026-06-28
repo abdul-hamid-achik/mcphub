@@ -36,11 +36,15 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store) *Server {
 		"connected, mcphub_search_tools to find a capability, and mcphub_stats to inspect local " +
 		"usage intelligence (calls, latency, token cost per server)."
 	if cfg.Lazy() {
-		instructions += " This gateway runs in LAZY mode: individual downstream tools are NOT " +
-			"listed to save context. To use one, call mcphub_search_tools to find it, optionally " +
-			"mcphub_describe_tool to get its input schema, then mcphub_call_tool with {server, tool, arguments}."
+		instructions += " IMPORTANT: this gateway is in LAZY mode — the underlying tools are " +
+			"intentionally not listed to save context, but they ARE available. Whenever a task " +
+			"could use an external capability (code search, secrets, browser/TUI testing, system " +
+			"info, docs, ...), take the initiative: call mcphub_search_tools with a short query to " +
+			"find the right `server__tool`, then run it with mcphub_call_tool {server, tool, " +
+			"arguments}. Do this proactively without being asked; use mcphub_describe_tool first if " +
+			"you need a tool's input schema."
 		if len(cfg.Pin) > 0 {
-			instructions += " A few frequently-used tools are pinned and listed directly — you can call those by name."
+			instructions += " Some frequently-used tools are pinned and listed directly — call those by name as usual."
 		}
 	}
 	opts := &sdk.ServerOptions{Instructions: instructions}
@@ -55,10 +59,11 @@ func (s *Server) Run(ctx context.Context) error {
 	s.hub.Connect(ctx)
 	defer s.hub.Close()
 	if s.cfg.Lazy() {
-		// Lazy: advertise only the meta-tools, plus any explicitly pinned tools
-		// so the agent's most-used tools stay directly callable.
+		// Lazy: advertise only the meta-tools, plus any pinned tools so the
+		// agent's most-used tools stay directly callable. Pins may name a whole
+		// server, a `server__*` wildcard, or an exact `server__tool`.
 		if len(s.cfg.Pin) > 0 {
-			s.hub.MountSelected(s.srv, s.cfg.PinSet())
+			s.hub.MountMatching(s.srv, s.cfg.PinMatches)
 		}
 	} else {
 		s.hub.Mount(s.srv)

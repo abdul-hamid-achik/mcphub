@@ -217,6 +217,11 @@ func (m Model) updateMain(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.toggle()
 		}
 		return m, nil
+	case "p":
+		if m.tab == tabServers {
+			m.togglePin()
+		}
+		return m, nil
 	case "s":
 		return m.openSync()
 	case "x":
@@ -302,6 +307,35 @@ func (m Model) updateSyncPanel(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// togglePin pins or unpins the selected server (a bare-server pin, which mounts
+// all of its tools directly even in lazy mode) and persists it.
+func (m *Model) togglePin() {
+	if len(m.servers) == 0 {
+		return
+	}
+	name := m.servers[m.cursor]
+	if m.cfg.ServerPinned(name) {
+		// Clear every pin that resolves to this server (bare, wildcard, exact),
+		// so the indicator and config stay consistent with CLI pins.
+		m.cfg.UnpinServer(name)
+		if err := config.Save(m.cfgPath, m.cfg); err != nil {
+			m.status = "save failed: " + err.Error()
+			return
+		}
+		m.status = name + " unpinned"
+		return
+	}
+	m.cfg.Pin = append(m.cfg.Pin, name)
+	if err := config.Save(m.cfgPath, m.cfg); err != nil {
+		m.status = "save failed: " + err.Error()
+		return
+	}
+	m.status = name + " pinned — its tools stay directly callable in lazy mode"
+}
+
+// serverPinned reports whether a server is pinned in any form.
+func (m Model) serverPinned(name string) bool { return m.cfg.ServerPinned(name) }
 
 // toggleExpose flips the gateway exposure between all and lazy and persists it.
 func (m *Model) toggleExpose() {
@@ -398,7 +432,11 @@ func (m Model) renderServers() string {
 		if srv.IsRemote() {
 			kind = "remote"
 		}
-		b.WriteString(fmt.Sprintf("%s%s  %-16s %s %s\n", cursor, mark, name, dimStyle.Render(fmt.Sprintf("%-6s", kind)), dimStyle.Render(srv.Description)))
+		pin := "  "
+		if m.serverPinned(name) {
+			pin = selectedStyle.Render("📌")
+		}
+		b.WriteString(fmt.Sprintf("%s%s %s %-16s %s %s\n", cursor, mark, pin, name, dimStyle.Render(fmt.Sprintf("%-6s", kind)), dimStyle.Render(srv.Description)))
 	}
 	return b.String()
 }
@@ -496,7 +534,7 @@ func (m Model) footer() string {
 	}
 	switch m.tab {
 	case tabServers:
-		return "↑/↓ move · space toggle · s sync · x expose · tab switch · r reload · q quit"
+		return "↑/↓ move · space toggle · p pin · s sync · x expose · tab switch · r reload · q quit"
 	case tabAgents:
 		return "↑/↓ move · s sync · x expose · tab switch · r reload · q quit"
 	default:

@@ -154,11 +154,11 @@ func (h *Hub) Mount(srv *mcp.Server) int {
 	return h.mount(srv, func(string) bool { return true })
 }
 
-// MountSelected registers only the tools whose namespaced (server__tool) name is
-// in `names` — used in lazy mode to keep a few pinned tools directly callable.
+// MountMatching registers only the tools whose namespaced (server__tool) name
+// satisfies `pred` — used in lazy mode to keep pinned tools directly callable.
 // Returns the number mounted.
-func (h *Hub) MountSelected(srv *mcp.Server, names map[string]bool) int {
-	return h.mount(srv, func(namespaced string) bool { return names[namespaced] })
+func (h *Hub) MountMatching(srv *mcp.Server, pred func(namespaced string) bool) int {
+	return h.mount(srv, pred)
 }
 
 // mount registers each connected downstream tool that `want` accepts, with a

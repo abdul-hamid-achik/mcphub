@@ -6,6 +6,32 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-28
+
+### Added
+
+- **`mcphub offload`** — removes the gateway-proxied servers from your agents so
+  each relies purely on the `mcphub` gateway (the "offload" half of "register and
+  offload"). Dry-run by default; `--write` applies with a `.bak`. Leaves the
+  gateway and any non-proxied / agent-internal servers untouched.
+- **Server & wildcard pins.** A `pin` entry can now be a whole server
+  (`codemap` — all its tools), a wildcard (`codemap__*`), or one tool. Pinned
+  tools stay directly callable in `expose: lazy`, so agents auto-invoke them
+  instead of going through `mcphub_search_tools` first.
+- **`mcphub pin` / `unpin` CLI** (and `p` in Studio) to manage pins without
+  editing YAML. `mcphub pin --top N` auto-pins your N most-called tools from the
+  local intelligence store.
+- Stronger lazy-mode gateway instructions, nudging models to discover and call
+  tools proactively.
+
+### Fixed
+
+- Pin validation now rejects forms `PinMatches` can't honor (partial wildcards,
+  trailing `__`); Studio and `unpin` resolve pins by server (so a bare name
+  clears its wildcard/exact pins too); `pin --top` skips stale usage history;
+  `offload` never removes the reserved `mcphub` gateway and no longer aborts the
+  whole run on one agent's error. (`mcphub` is now a reserved server name.)
+
 ## [0.2.0] - 2026-06-28
 
 ### Added
@@ -89,6 +115,7 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
 
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/abdul-hamid-achik/mcphub/releases/tag/v0.1.0

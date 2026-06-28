@@ -122,8 +122,11 @@ servers earn their context budget and which to disable.
 | `mcphub disable <server>` | Disable a server in `mcphub.yaml`. |
 | `mcphub groups` | List server groups. |
 | `mcphub use <group> [--only]` | Enable every server in a group (`--only` disables the rest). |
+| `mcphub pin <server\|tool...>` \| `--top N` | Keep tools directly callable in lazy mode (whole server, `srv__*`, or one tool; `--top N` auto-pins your most-used). |
+| `mcphub unpin <server\|tool...>` | Remove pins. |
 | `mcphub status` | Config, per-agent sync drift, and usage intelligence at a glance. |
 | `mcphub sync [agent...] [--write]` | Reconcile agent harnesses with the config. Dry-run unless `--write`. |
+| `mcphub offload [agent...] [--write]` | Remove gateway-proxied servers from agents, leaving just `mcphub`. Dry-run unless `--write`. |
 | `mcphub studio` \| `tui` | Launch the interactive Studio TUI. |
 | `mcphub stats [--tools] [--recent N]` | Show local tool-call intelligence. |
 | `mcphub doctor [--probe]` | Diagnose config, servers, agents, and the store (`--probe` connects for real). |

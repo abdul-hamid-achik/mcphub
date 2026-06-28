@@ -91,13 +91,54 @@ const (
 // Lazy reports whether the gateway should use on-demand (lazy) tool exposure.
 func (c *Config) Lazy() bool { return c.Expose == ExposeLazy }
 
-// PinSet returns the pinned `server__tool` names as a set for O(1) lookup.
-func (c *Config) PinSet() map[string]bool {
-	out := make(map[string]bool, len(c.Pin))
-	for _, p := range c.Pin {
-		out[p] = true
+// PinMatches reports whether a namespaced `server__tool` name is pinned. A pin
+// entry may be an exact `server__tool`, a bare `server` (pins all of that
+// server's tools), or a `server__*` wildcard (same as the bare form).
+func (c *Config) PinMatches(namespaced string) bool {
+	server := namespaced
+	if i := strings.Index(namespaced, "__"); i >= 0 {
+		server = namespaced[:i]
 	}
-	return out
+	for _, p := range c.Pin {
+		switch p {
+		case namespaced, server, server + "__*":
+			return true
+		}
+	}
+	return false
+}
+
+// PinServer extracts the server name a pin entry refers to (the part before the
+// first `__`, with a trailing `__*` wildcard stripped).
+func PinServer(p string) string {
+	p = strings.TrimSuffix(p, "__*")
+	if i := strings.Index(p, "__"); i >= 0 {
+		return p[:i]
+	}
+	return p
+}
+
+// ServerPinned reports whether any pin entry resolves to the given bare server
+// name (a bare `server`, a `server__*` wildcard, or any `server__tool`).
+func (c *Config) ServerPinned(name string) bool {
+	for _, p := range c.Pin {
+		if PinServer(p) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// UnpinServer removes every pin entry (bare, wildcard, or exact tool) that
+// resolves to the given server name.
+func (c *Config) UnpinServer(name string) {
+	kept := c.Pin[:0]
+	for _, p := range c.Pin {
+		if PinServer(p) != name {
+			kept = append(kept, p)
+		}
+	}
+	c.Pin = kept
 }
 
 // Server describes one downstream MCP server mcphub can manage and proxy.
@@ -311,6 +352,9 @@ func (c *Config) Validate() error {
 		problems = append(problems, fmt.Sprintf("expose must be %q or %q", ExposeAll, ExposeLazy))
 	}
 	for name, s := range c.Servers {
+		if name == "mcphub" {
+			problems = append(problems, `server "mcphub": name is reserved for the gateway entry written into agents`)
+		}
 		if strings.Contains(name, "__") {
 			problems = append(problems, fmt.Sprintf("server %q: name must not contain %q (reserved as the namespacing separator)", name, "__"))
 		}
@@ -335,13 +379,23 @@ func (c *Config) Validate() error {
 		}
 	}
 	for _, p := range c.Pin {
-		srv, _, ok := strings.Cut(p, "__")
-		if !ok {
-			problems = append(problems, fmt.Sprintf("pin %q must be a namespaced tool name (server__tool)", p))
+		if p == "" {
+			problems = append(problems, "pin entries must not be empty")
 			continue
 		}
+		srv := PinServer(p)
 		if _, known := c.Servers[srv]; !known {
 			problems = append(problems, fmt.Sprintf("pin %q references unknown server %q", p, srv))
+			continue
+		}
+		// Only exact `server__tool`, bare `server`, or `server__*` are matched by
+		// PinMatches — reject other wildcards or a trailing `__`, which would
+		// validate but silently pin nothing.
+		if strings.Contains(p, "*") && p != srv+"__*" {
+			problems = append(problems, fmt.Sprintf("pin %q: only whole-server wildcards (%s__*) are supported", p, srv))
+		}
+		if strings.HasSuffix(p, "__") {
+			problems = append(problems, fmt.Sprintf("pin %q: trailing %q matches no tool; use %q or %s__* instead", p, "__", srv, srv))
 		}
 	}
 	for name, a := range c.Agents {

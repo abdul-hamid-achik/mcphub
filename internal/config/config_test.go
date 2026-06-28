@@ -70,25 +70,61 @@ func TestResolvedModeDefaultsGateway(t *testing.T) {
 	}
 }
 
-func TestPinValidationAndSet(t *testing.T) {
-	servers := map[string]Server{"codemap": {Command: "codemap", Enabled: true}}
-
-	// valid: namespaced tool on a known server
-	ok := &Config{Servers: servers, Pin: []string{"codemap__codemap_status"}}
-	if err := ok.Validate(); err != nil {
-		t.Errorf("valid pin should pass: %v", err)
-	}
-	if set := ok.PinSet(); !set["codemap__codemap_status"] || len(set) != 1 {
-		t.Errorf("PinSet = %v", set)
+func TestPinMatchesAndValidation(t *testing.T) {
+	servers := map[string]Server{
+		"codemap": {Command: "codemap", Enabled: true},
+		"vecgrep": {Command: "vecgrep", Enabled: true},
 	}
 
-	// invalid: not namespaced
-	if err := (&Config{Servers: servers, Pin: []string{"codemap_status"}}).Validate(); err == nil {
-		t.Error("a non-namespaced pin should fail validation")
+	// All three pin forms validate against known servers.
+	c := &Config{Servers: servers, Pin: []string{"codemap__codemap_status", "vecgrep", "codemap__*"}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid pins should pass: %v", err)
 	}
-	// invalid: unknown server
-	if err := (&Config{Servers: servers, Pin: []string{"ghost__tool"}}).Validate(); err == nil {
-		t.Error("a pin referencing an unknown server should fail validation")
+
+	// exact server__tool
+	if !c.PinMatches("codemap__codemap_status") {
+		t.Error("exact pin should match")
+	}
+	// bare server pins every tool of that server
+	if !c.PinMatches("vecgrep__vecgrep_search") || !c.PinMatches("vecgrep__anything") {
+		t.Error("bare server pin should match all its tools")
+	}
+	// wildcard pins every tool of that server
+	if !c.PinMatches("codemap__codemap_find") {
+		t.Error("server__* wildcard should match all that server's tools")
+	}
+	// a tool of an unpinned server does not match
+	if c.PinMatches("glyph__glyph_run") {
+		t.Error("unpinned server's tool should not match")
+	}
+
+	// invalid: unknown server, partial wildcard, trailing "__", or empty —
+	// all of these would validate-but-match-nothing without the guards.
+	for _, bad := range []string{"ghost", "ghost__*", "ghost__tool", "", "codemap__codemap_*", "codemap__*x", "codemap__"} {
+		if err := (&Config{Servers: servers, Pin: []string{bad}}).Validate(); err == nil {
+			t.Errorf("pin %q should fail validation", bad)
+		}
+	}
+
+	// ServerPinned / UnpinServer resolve by server across all pin forms.
+	c2 := &Config{Servers: servers, Pin: []string{"codemap", "vecgrep__*", "codemap__codemap_find"}}
+	if !c2.ServerPinned("codemap") || !c2.ServerPinned("vecgrep") {
+		t.Error("ServerPinned should see bare, wildcard, and exact pins")
+	}
+	c2.UnpinServer("codemap")
+	if c2.ServerPinned("codemap") {
+		t.Errorf("UnpinServer should clear every codemap pin, left: %v", c2.Pin)
+	}
+	if !c2.ServerPinned("vecgrep") {
+		t.Error("UnpinServer(codemap) must not touch vecgrep")
+	}
+}
+
+func TestReservedServerName(t *testing.T) {
+	c := &Config{Servers: map[string]Server{"mcphub": {Command: "x", Enabled: true}}}
+	if err := c.Validate(); err == nil {
+		t.Error("a downstream server named \"mcphub\" should be rejected (reserved for the gateway)")
 	}
 }
 

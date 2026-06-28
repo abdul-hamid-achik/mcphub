@@ -128,6 +128,26 @@ func TestStudioToggleExpose(t *testing.T) {
 	}
 }
 
+func TestStudioPinToggle(t *testing.T) {
+	m, cfgPath := testModel(t) // servers: codemap, vecgrep (codemap first when sorted)
+	m = update(m, "p")         // pin codemap
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Pin) != 1 || cfg.Pin[0] != "codemap" {
+		t.Fatalf("p should pin codemap, got %v", cfg.Pin)
+	}
+	if !strings.Contains(view(m), "📌") {
+		t.Error("a pinned server should show the pin indicator")
+	}
+	m = update(m, "p") // unpin
+	cfg, _ = config.Load(cfgPath)
+	if len(cfg.Pin) != 0 {
+		t.Errorf("second p should unpin, got %v", cfg.Pin)
+	}
+}
+
 func TestStudioQuit(t *testing.T) {
 	m, _ := testModel(t)
 	next, cmd := m.Update(key("q"))

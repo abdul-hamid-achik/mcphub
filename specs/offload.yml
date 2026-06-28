@@ -1,0 +1,88 @@
+version: 1
+name: mcphub_offload
+
+intent: |
+  `mcphub offload` is the second half of "register and offload": it removes the
+  directly-configured copies of the servers mcphub proxies from each gateway-mode
+  agent, leaving only the single `mcphub` gateway so the agent stops carrying every
+  server's full tool list. It is a DRY RUN by default (no --write): it prints the
+  plan and changes nothing. It removes only servers mcphub actually proxies (the
+  enabled ones), never the gateway itself, and skips any agent that doesn't yet have
+  the gateway — so it can never strand an agent. Runs against an ISOLATED
+  MCPHUB_CONFIG / MCPHUB_DB and temp agent files, so it never reads or writes the
+  user's real harness configs.
+
+target:
+  cmd: ["./bin/mcphub", "offload"]
+  cwd: "."
+  env:
+    MCPHUB_CONFIG: "/tmp/glyph-mcphub-offload/mcphub.yaml"
+    MCPHUB_DB: "/tmp/glyph-mcphub-offload/mcphub.db"
+
+terminal:
+  cols: 100
+  rows: 30
+  profile: xterm-256color
+
+preconditions:
+  commands:
+    - run: "test -x ./bin/mcphub"
+      timeoutMs: 5000
+    - run: "rm -rf /tmp/glyph-mcphub-offload && mkdir -p /tmp/glyph-mcphub-offload"
+      timeoutMs: 5000
+    - run: "printf 'version: 1\\nservers:\\n  codemap: {command: codemap, args: [serve], enabled: true}\\nagents:\\n  claude: {type: claude, path: /tmp/glyph-mcphub-offload/claude.json, mode: gateway}\\n  nogw: {type: claude, path: /tmp/glyph-mcphub-offload/nogw.json, mode: gateway}\\n' > /tmp/glyph-mcphub-offload/mcphub.yaml"
+      timeoutMs: 5000
+    # claude agent already carries BOTH the mcphub gateway and the proxied codemap server
+    - run: "printf '{\"mcpServers\":{\"mcphub\":{\"command\":\"mcphub\",\"args\":[\"mcp\",\"serve\"]},\"codemap\":{\"command\":\"codemap\",\"args\":[\"serve\"]}}}\\n' > /tmp/glyph-mcphub-offload/claude.json"
+      timeoutMs: 5000
+    # nogw agent is gateway-mode but does NOT have the gateway yet — offload must skip it
+    - run: "printf '{\"mcpServers\":{\"codemap\":{\"command\":\"codemap\",\"args\":[\"serve\"]}}}\\n' > /tmp/glyph-mcphub-offload/nogw.json"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 10000
+
+outcomes:
+  - id: clean_exit
+    description: the dry run exits cleanly
+    verify:
+      process:
+        exitCode: 0
+  - id: prints_dry_run_notice
+    description: the output labels itself a dry run
+    verify:
+      screen:
+        contains: "Dry run"
+  - id: plans_offload_of_proxied
+    description: the plan shows the proxied codemap server would be offloaded
+    verify:
+      screen:
+        contains: "codemap"
+  - id: skips_agent_without_gateway
+    description: an agent that lacks the mcphub gateway is skipped, never stranded
+    verify:
+      screen:
+        contains: "no mcphub gateway found"
+  - id: dry_run_keeps_agent_file
+    description: the dry run did NOT edit the agent file — codemap is still present
+    verify:
+      command:
+        run: "jq -e '.mcpServers.codemap != null' /tmp/glyph-mcphub-offload/claude.json >/dev/null"
+  - id: dry_run_writes_no_backup
+    description: a dry run writes NO timestamped .bak next to any agent file
+    verify:
+      command:
+        run: "test -z \"$(find /tmp/glyph-mcphub-offload -name '*.json.bak-*' 2>/dev/null)\""
+  - id: write_offloads_proxied_keeps_gateway
+    description: --write removes the proxied codemap server but keeps the mcphub gateway
+    verify:
+      command:
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-offload/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-offload/mcphub.db ./bin/mcphub offload --write && jq -e '.mcpServers.codemap == null and .mcpServers.mcphub != null' /tmp/glyph-mcphub-offload/claude.json >/dev/null"
+  - id: write_saves_backup
+    description: --write saves a timestamped .bak before editing the agent file
+    verify:
+      command:
+        run: "test -n \"$(find /tmp/glyph-mcphub-offload -name 'claude.json.bak-*' 2>/dev/null)\""

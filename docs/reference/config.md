@@ -48,7 +48,7 @@ agents:
 | --------- | --------------- | -------- | -------------------------------------------------- |
 | `version` | int             | yes      | Config schema version. Currently `1`.              |
 | `expose`  | `all` \| `lazy` | no       | Gateway tool exposure. `all` (default) mounts every downstream tool as `server__tool`; `lazy` advertises only mcphub's meta-tools and serves tools on demand via `mcphub_call_tool`. |
-| `pin`     | list of strings | no       | `server__tool` names that stay mounted even in `lazy` mode, so your most-used tools are directly callable. Each must reference a known server. |
+| `pin`     | list of strings | no       | Tools that stay mounted even in `lazy` mode, so agents call them automatically. Each entry is a bare server (`codemap` — all its tools), a wildcard (`codemap__*`), or one tool (`codemap__codemap_semantic`). Manage with `mcphub pin` / `unpin` (or `p` in Studio). |
 | `servers` | map             | yes      | The downstream MCP servers mcphub manages.         |
 | `groups`  | map             | no       | Named bundles of server names.                     |
 | `agents`  | map             | yes      | The agent harnesses mcphub keeps in sync.          |
