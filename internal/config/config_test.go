@@ -139,6 +139,40 @@ func TestVaultRejectsRemote(t *testing.T) {
 	}
 }
 
+func TestMultiFormatRoundTrip(t *testing.T) {
+	for _, ext := range []string{".yaml", ".yml", ".toml", ".json"} {
+		t.Run(ext, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "mcphub"+ext)
+			want := Starter()
+			want.Expose = ExposeLazy
+			want.Pin = []string{"codemap__codemap_semantic"}
+			if err := Save(path, want); err != nil {
+				t.Fatalf("Save(%s): %v", ext, err)
+			}
+			got, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load(%s): %v", ext, err)
+			}
+			if got.Expose != ExposeLazy || len(got.Pin) != 1 || got.Pin[0] != "codemap__codemap_semantic" {
+				t.Errorf("%s: expose/pin not round-tripped: expose=%q pin=%v", ext, got.Expose, got.Pin)
+			}
+			if len(got.Servers) != len(want.Servers) {
+				t.Errorf("%s: %d servers, want %d", ext, len(got.Servers), len(want.Servers))
+			}
+			cm := got.Servers["codemap"]
+			if cm.Command != "codemap" || len(cm.Args) != 1 || cm.Args[0] != "serve" || !cm.Enabled {
+				t.Errorf("%s: codemap not round-tripped: %+v", ext, cm)
+			}
+			if got.Servers["glyph"].Enabled {
+				t.Errorf("%s: glyph should be disabled (enabled:false must survive)", ext)
+			}
+			if a := got.Agents["opencode"]; a.Type != "opencode" || a.ResolvedMode() != ModeDirect {
+				t.Errorf("%s: opencode agent not round-tripped: %+v", ext, a)
+			}
+		})
+	}
+}
+
 func TestExpandPath(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	if got := ExpandPath("~/x"); got != filepath.Join(home, "x") {

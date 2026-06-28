@@ -8,23 +8,73 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	toml "github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the root of mcphub.yaml.
+// configNames lists the base filenames Load looks for, in precedence order.
+var configNames = []string{"mcphub.yaml", "mcphub.yml", "mcphub.toml", "mcphub.json"}
+
+// formatOf returns the serialization format implied by a file extension.
+// Anything that isn't .toml or .json is treated as YAML.
+func formatOf(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".toml":
+		return "toml"
+	case ".json":
+		return "json"
+	default:
+		return "yaml"
+	}
+}
+
+func unmarshalConfig(body []byte, format string) (*Config, error) {
+	var c Config
+	var err error
+	switch format {
+	case "toml":
+		err = toml.Unmarshal(body, &c)
+	case "json":
+		err = json.Unmarshal(body, &c)
+	default:
+		err = yaml.Unmarshal(body, &c)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func marshalConfig(c *Config, format string) ([]byte, error) {
+	switch format {
+	case "toml":
+		return toml.Marshal(c)
+	case "json":
+		b, err := json.MarshalIndent(c, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return append(b, '\n'), nil
+	default:
+		return yaml.Marshal(c)
+	}
+}
+
+// Config is the root of the mcphub config file (YAML, TOML, or JSON — see Load).
 type Config struct {
-	Version int                 `yaml:"version"`
-	Expose  string              `yaml:"expose,omitempty"` // "all" (default) | "lazy"
-	Pin     []string            `yaml:"pin,omitempty"`    // server__tool names always mounted, even in lazy mode
-	Servers map[string]Server   `yaml:"servers"`
-	Groups  map[string][]string `yaml:"groups,omitempty"`
-	Agents  map[string]Agent    `yaml:"agents"`
+	Version int                 `yaml:"version" toml:"version" json:"version"`
+	Expose  string              `yaml:"expose,omitempty" toml:"expose,omitempty" json:"expose,omitempty"` // "all" (default) | "lazy"
+	Pin     []string            `yaml:"pin,omitempty" toml:"pin,omitempty" json:"pin,omitempty"`          // server__tool names always mounted, even in lazy mode
+	Servers map[string]Server   `yaml:"servers" toml:"servers" json:"servers"`
+	Groups  map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
+	Agents  map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
 }
 
 // Exposure controls how many tools the gateway advertises up front.
@@ -54,25 +104,25 @@ func (c *Config) PinSet() map[string]bool {
 // Exactly one of Command (stdio) or URL (http/sse) should be set.
 type Server struct {
 	// Command + Args define a local stdio server (e.g. command: codemap, args: [serve]).
-	Command string            `yaml:"command,omitempty"`
-	Args    []string          `yaml:"args,omitempty"`
-	Env     map[string]string `yaml:"env,omitempty"`
+	Command string            `yaml:"command,omitempty" toml:"command,omitempty" json:"command,omitempty"`
+	Args    []string          `yaml:"args,omitempty" toml:"args,omitempty" json:"args,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty" toml:"env,omitempty" json:"env,omitempty"`
 
 	// URL + Transport define a remote server. Transport is "http" or "sse".
-	URL       string `yaml:"url,omitempty"`
-	Transport string `yaml:"transport,omitempty"`
+	URL       string `yaml:"url,omitempty" toml:"url,omitempty" json:"url,omitempty"`
+	Transport string `yaml:"transport,omitempty" toml:"transport,omitempty" json:"transport,omitempty"`
 
 	// Vault names a TinyVault (tvault) project. When set, the server is spawned
 	// via `tvault run --project <Vault> -- <command>`, so the project's secrets
-	// are injected as environment variables at launch and never live in
-	// mcphub.yaml. VaultOnly / VaultPrefix narrow the injected keys.
-	Vault       string   `yaml:"vault,omitempty"`
-	VaultOnly   []string `yaml:"vault_only,omitempty"`
-	VaultPrefix string   `yaml:"vault_prefix,omitempty"`
+	// are injected as environment variables at launch and never live in the
+	// config file. VaultOnly / VaultPrefix narrow the injected keys.
+	Vault       string   `yaml:"vault,omitempty" toml:"vault,omitempty" json:"vault,omitempty"`
+	VaultOnly   []string `yaml:"vault_only,omitempty" toml:"vault_only,omitempty" json:"vault_only,omitempty"`
+	VaultPrefix string   `yaml:"vault_prefix,omitempty" toml:"vault_prefix,omitempty" json:"vault_prefix,omitempty"`
 
-	Enabled     bool     `yaml:"enabled"`
-	Description string   `yaml:"description,omitempty"`
-	Tags        []string `yaml:"tags,omitempty"`
+	Enabled     bool     `yaml:"enabled" toml:"enabled" json:"enabled"`
+	Description string   `yaml:"description,omitempty" toml:"description,omitempty" json:"description,omitempty"`
+	Tags        []string `yaml:"tags,omitempty" toml:"tags,omitempty" json:"tags,omitempty"`
 }
 
 // IsRemote reports whether the server is reached over a URL rather than spawned.
@@ -117,14 +167,14 @@ const (
 
 // Agent is one harness mcphub syncs into (claude, opencode, codex, ...).
 type Agent struct {
-	// Type selects the file-format adapter (claude | opencode | codex | crush).
-	Type string `yaml:"type"`
+	// Type selects the file-format adapter (claude | opencode | codex | crush | forge | hermes).
+	Type string `yaml:"type" toml:"type" json:"type"`
 	// Path is the harness config file. Supports ~ expansion.
-	Path string `yaml:"path"`
+	Path string `yaml:"path" toml:"path" json:"path"`
 	// Mode is gateway (default) or direct.
-	Mode Mode `yaml:"mode,omitempty"`
+	Mode Mode `yaml:"mode,omitempty" toml:"mode,omitempty" json:"mode,omitempty"`
 	// Disabled skips this agent during sync without deleting its definition.
-	Disabled bool `yaml:"disabled,omitempty"`
+	Disabled bool `yaml:"disabled,omitempty" toml:"disabled,omitempty" json:"disabled,omitempty"`
 }
 
 // ResolvedMode returns the agent's mode, defaulting to gateway.
@@ -135,30 +185,41 @@ func (a Agent) ResolvedMode() Mode {
 	return ModeGateway
 }
 
-// DefaultPath returns the path mcphub.yaml is loaded from when unspecified.
-// Precedence: $MCPHUB_CONFIG, ./mcphub.yaml, ~/.config/mcphub/mcphub.yaml.
+// DefaultPath returns the config path used when unspecified. Precedence:
+// $MCPHUB_CONFIG, then the first existing mcphub.{yaml,yml,toml,json} in the
+// current directory, then in ~/.config/mcphub, else ~/.config/mcphub/mcphub.yaml.
 func DefaultPath() string {
 	if p := os.Getenv("MCPHUB_CONFIG"); p != "" {
 		return p
 	}
-	if _, err := os.Stat("mcphub.yaml"); err == nil {
-		return "mcphub.yaml"
+	for _, name := range configNames {
+		if _, err := os.Stat(name); err == nil {
+			return name
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "mcphub.yaml"
 	}
-	return filepath.Join(home, ".config", "mcphub", "mcphub.yaml")
+	dir := filepath.Join(home, ".config", "mcphub")
+	for _, name := range configNames {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return filepath.Join(dir, "mcphub.yaml")
 }
 
-// Load reads and validates a config file.
+// Load reads and validates a config file. The format is chosen from the file
+// extension: .toml, .json, or YAML for everything else.
 func Load(path string) (*Config, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-	var c Config
-	if err := yaml.Unmarshal(body, &c); err != nil {
+	c, err := unmarshalConfig(body, formatOf(path))
+	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if c.Servers == nil {
@@ -170,7 +231,7 @@ func Load(path string) (*Config, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	return &c, nil
+	return c, nil
 }
 
 // Save validates and writes the config back to path (used by
@@ -187,11 +248,11 @@ func Save(path string, c *Config) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	body, err := yaml.Marshal(c)
+	body, err := marshalConfig(c, formatOf(path))
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".mcphub-*.yaml.tmp")
+	tmp, err := os.CreateTemp(dir, ".mcphub-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -212,6 +273,35 @@ func Save(path string, c *Config) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// Starter returns the default seed config used by `mcphub init`. It is the
+// structured form of the commented YAML starter, so init can emit it as TOML or
+// JSON too.
+func Starter() *Config {
+	return &Config{
+		Version: 1,
+		Expose:  ExposeAll,
+		Servers: map[string]Server{
+			"codemap":    {Command: "codemap", Args: []string{"serve"}, Enabled: true, Description: "Code knowledge graph", Tags: []string{"code", "search"}},
+			"vecgrep":    {Command: "vecgrep", Args: []string{"serve", "--mcp"}, Enabled: true, Description: "Semantic code search", Tags: []string{"code", "search"}},
+			"monitor":    {Command: "monitor", Args: []string{"mcp", "serve"}, Enabled: true, Description: "Local system & process observability", Tags: []string{"ops"}},
+			"cairntrace": {Command: "cairn", Args: []string{"mcp"}, Enabled: false, Description: "Service discovery, audit & investigation", Tags: []string{"ops"}},
+			"glyph":      {Command: "glyph", Args: []string{"mcp"}, Enabled: false, Description: "TUI behavior testing"},
+		},
+		Groups: map[string][]string{
+			"coding": {"codemap", "vecgrep"},
+			"ops":    {"monitor", "cairntrace"},
+		},
+		Agents: map[string]Agent{
+			"claude":   {Type: "claude", Path: "~/.claude.json", Mode: ModeGateway},
+			"opencode": {Type: "opencode", Path: "~/.config/opencode/opencode.json", Mode: ModeDirect},
+			"codex":    {Type: "codex", Path: "~/.codex/config.toml", Mode: ModeGateway},
+			"crush":    {Type: "crush", Path: "~/.config/crush/crush.json", Mode: ModeGateway},
+			"forge":    {Type: "forge", Path: "~/forge/.mcp.json", Mode: ModeGateway},
+			"hermes":   {Type: "hermes", Path: "~/.hermes/config.yaml", Mode: ModeGateway},
+		},
+	}
 }
 
 // Validate checks structural invariants and returns a combined error.

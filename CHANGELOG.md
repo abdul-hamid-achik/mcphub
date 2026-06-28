@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Config in YAML, TOML, or JSON.** The config file format is chosen from its
+  extension (`mcphub.yaml` / `.toml` / `.json`); mcphub reads and writes all
+  three, so `enable`/`disable`/`add`/Studio round-trip in whatever format you
+  picked. `mcphub init --format yaml|toml|json`.
+- **Markdown reports.** `mcphub status --markdown` and `mcphub stats --markdown`
+  emit clean Markdown (headings + tables) for pasting into notes or issues.
+- **Richer starter config.** `mcphub init` now seeds `monitor` and `cairntrace`
+  servers and wires up all six agents (claude/opencode/codex/crush/forge/hermes)
+  with XDG-aware paths, plus an `ops` group.
+
 ## [0.1.0] - 2026-06-28
 
 First release. `brew install abdul-hamid-achik/tap/mcphub`.

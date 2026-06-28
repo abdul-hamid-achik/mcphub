@@ -39,14 +39,18 @@ type statusReport struct {
 }
 
 func newStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var markdown bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Config, per-agent sync drift, and usage intelligence at a glance",
 		Long: `status answers "is everything consistent?". For each agent it does a
-read-only dry run and reports whether the agent's MCP config already matches
-mcphub.yaml ("in sync") or has changes pending. It also summarizes recorded
+read-only dry run and reports whether the agent's config already matches your
+mcphub config ("in sync") or has changes pending. It also summarizes recorded
 usage and flags enabled servers that have never been called — candidates to
-disable so your agents carry less context.`,
+disable so your agents carry less context.
+
+Use --markdown for a report you can paste into notes or an issue, or --json for
+a machine-readable one.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, cfgPath, err := loadConfig()
 			if err != nil {
@@ -97,9 +101,37 @@ disable so your agents carry less context.`,
 			if flagJSON {
 				return printJSON(cmd, rep)
 			}
+			if markdown {
+				return renderStatusMarkdown(cmd, rep)
+			}
 			return renderStatus(cmd, rep)
 		},
 	}
+	cmd.Flags().BoolVar(&markdown, "markdown", false, "render the report as Markdown (great for notes/issues)")
+	return cmd
+}
+
+func renderStatusMarkdown(cmd *cobra.Command, rep statusReport) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "# mcphub status\n\n")
+	fmt.Fprintf(out, "- **Config:** `%s`\n", rep.Config)
+	fmt.Fprintf(out, "- **Servers:** %d (%d enabled)\n", rep.Servers, rep.Enabled)
+	fmt.Fprintf(out, "- **Exposure:** %s\n\n", rep.Expose)
+
+	fmt.Fprintf(out, "## Agents\n\n| Agent | Type | Mode | Sync |\n| --- | --- | --- | --- |\n")
+	for _, a := range rep.Agents {
+		state := a.State
+		if a.Error != "" {
+			state = "error: " + a.Error
+		}
+		fmt.Fprintf(out, "| %s | %s | %s | %s |\n", a.Agent, a.Type, a.Mode, state)
+	}
+
+	fmt.Fprintf(out, "\n## Usage\n\n%d calls · %d errors · ~%d est. tokens\n", rep.Calls, rep.Errors, rep.Tokens)
+	if len(rep.Unused) > 0 {
+		fmt.Fprintf(out, "\n**Unused** (enabled but never called): %s — consider `mcphub disable <name>`.\n", strings.Join(rep.Unused, ", "))
+	}
+	return nil
 }
 
 func renderStatus(cmd *cobra.Command, rep statusReport) error {

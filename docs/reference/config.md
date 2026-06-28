@@ -1,18 +1,25 @@
 # Configuration reference
 
-`mcphub.yaml` is the single source of truth for which downstream MCP servers
-exist, how they group, and which agent harnesses mcphub keeps in sync. Edit this
-one file (or use [Studio](/guide/studio)), then [`mcphub sync`](/guide/sync)
-propagates the result into every agent.
+The mcphub config file is the single source of truth for which downstream MCP
+servers exist, how they group, and which agent harnesses mcphub keeps in sync.
+Edit this one file (or use [Studio](/guide/studio)), then
+[`mcphub sync`](/guide/sync) propagates the result into every agent.
+
+## Format: YAML, TOML, or JSON
+
+The config can be **YAML** (`mcphub.yaml`, the default and the only one that
+keeps inline comments), **TOML** (`mcphub.toml`), or **JSON** (`mcphub.json`).
+mcphub picks the format from the file extension and reads and writes all three —
+so `enable`, `disable`, `add`, and Studio round-trip in whatever format you
+chose. Generate one with `mcphub init --format yaml|toml|json`.
 
 ## Location
 
 mcphub resolves the config path in this order:
 
-1. the `--config <path>` flag,
-2. the `MCPHUB_CONFIG` environment variable,
-3. a `mcphub.yaml` in the current directory,
-4. `~/.config/mcphub/mcphub.yaml`.
+1. the `MCPHUB_CONFIG` environment variable, or the `--config <path>` flag,
+2. the first existing `mcphub.{yaml,yml,toml,json}` in the current directory,
+3. the first existing one in `~/.config/mcphub/`, else `~/.config/mcphub/mcphub.yaml`.
 
 Generate a starter file with [`mcphub init`](/reference/cli#init).
 

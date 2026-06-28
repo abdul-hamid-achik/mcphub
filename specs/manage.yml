@@ -40,7 +40,7 @@ outcomes:
     description: add registers a new stdio server
     verify:
       command:
-        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub add monitor monitor mcp serve && MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep -q 'monitor'"
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub add tracer tracer mcp serve && MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep -q 'tracer'"
   - id: add_remote_server
     description: add --url registers a remote server shown as kind remote
     verify:
@@ -55,7 +55,7 @@ outcomes:
     description: remove offloads a server from the config
     verify:
       command:
-        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub remove monitor && ! (MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep -q 'monitor')"
+        run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-manage/mcphub.db ./bin/mcphub remove tracer && ! (MCPHUB_CONFIG=/tmp/glyph-mcphub-manage/mcphub.yaml ./bin/mcphub list | grep -q 'tracer')"
   - id: clean_exit
     description: list exits cleanly
     verify:

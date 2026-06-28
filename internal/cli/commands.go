@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/harness"
 	"github.com/abdul-hamid-achik/mcphub/internal/hub"
+	"github.com/abdul-hamid-achik/mcphub/internal/store"
 )
 
 // --- init -----------------------------------------------------------------
@@ -42,6 +44,18 @@ servers:
     enabled: true
     description: Semantic code search
     tags: [code, search]
+  monitor:
+    command: monitor
+    args: [mcp, serve]
+    enabled: true
+    description: Local system & process observability
+    tags: [ops]
+  cairntrace:
+    command: cairn
+    args: [mcp]
+    enabled: false
+    description: Service discovery, audit & investigation
+    tags: [ops]
   glyph:
     command: glyph
     args: [mcp]
@@ -51,8 +65,10 @@ servers:
 # Optional named bundles you can enable together with 'mcphub use <group>'.
 groups:
   coding: [codemap, vecgrep]
+  ops: [monitor, cairntrace]
 
-# Agent harnesses mcphub keeps in sync.
+# Agent harnesses mcphub keeps in sync. Paths follow each tool's convention;
+# XDG-based ones live under ~/.config (or $XDG_CONFIG_HOME if you set it).
 #   mode: gateway  -> the agent sees ONLY mcphub, which proxies the rest (saves tokens)
 #   mode: direct   -> every enabled server is written straight into the agent
 agents:
@@ -62,27 +78,48 @@ agents:
     mode: gateway
   opencode:
     type: opencode
-    path: ~/.config/opencode/opencode.json
+    path: ~/.config/opencode/opencode.json   # XDG
     mode: direct
   codex:
     type: codex
     path: ~/.codex/config.toml
     mode: gateway
+  crush:
+    type: crush
+    path: ~/.config/crush/crush.json          # XDG
+    mode: gateway
+  forge:
+    type: forge
+    path: ~/forge/.mcp.json
+    mode: gateway
+  hermes:
+    type: hermes
+    path: ~/.hermes/config.yaml
+    mode: gateway
 `
 
 func newInitCmd() *cobra.Command {
 	var force, fromAgents bool
+	var format string
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Write a starter mcphub.yaml (or import from your agents)",
-		Long: `init creates mcphub.yaml.
+		Short: "Write a starter config (yaml, toml, or json)",
+		Long: `init creates a starter config. The config can be YAML (default), TOML, or
+JSON — pick with --format; mcphub reads and writes all three.
 
 By default it writes a small starter config. With --from-agents it scans your
-installed harness configs (Claude Code, opencode, Codex, Crush), unions every
-MCP server they already declare, and wires those agents up in gateway mode —
-so you can adopt mcphub without retyping what you already have.`,
+installed harness configs (Claude Code, opencode, Codex, Crush, Forge, Hermes),
+unions every MCP server they already declare, and wires those agents up in
+gateway mode — so you can adopt mcphub without retyping what you already have.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := configPath()
+			if format != "" {
+				ext, err := extForFormat(format)
+				if err != nil {
+					return err
+				}
+				path = strings.TrimSuffix(path, filepath.Ext(path)) + ext
+			}
 			if _, err := os.Stat(path); err == nil && !force {
 				return fmt.Errorf("%s already exists (use --force to overwrite)", path)
 			}
@@ -105,7 +142,13 @@ so you can adopt mcphub without retyping what you already have.`,
 					len(c.Servers), len(c.Agents), path)
 				return nil
 			}
-			if err := os.WriteFile(path, []byte(starterConfig), 0o644); err != nil {
+			// YAML keeps the nicely-commented starter; TOML/JSON are serialized
+			// from the structured default (no inline comments in those formats).
+			if filepath.Ext(path) == ".yaml" || filepath.Ext(path) == ".yml" || filepath.Ext(path) == "" {
+				if err := os.WriteFile(path, []byte(starterConfig), 0o644); err != nil {
+					return err
+				}
+			} else if err := config.Save(path, config.Starter()); err != nil {
 				return err
 			}
 			fmt.Fprintf(out, "Wrote %s\nNext: edit it, then `mcphub sync` (dry-run) to preview.\n", path)
@@ -114,7 +157,22 @@ so you can adopt mcphub without retyping what you already have.`,
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing config")
 	cmd.Flags().BoolVar(&fromAgents, "from-agents", false, "import servers from your installed harness configs")
+	cmd.Flags().StringVar(&format, "format", "", "config format: yaml (default), toml, or json")
 	return cmd
+}
+
+// extForFormat maps a --format value to a file extension.
+func extForFormat(format string) (string, error) {
+	switch strings.ToLower(format) {
+	case "yaml", "yml":
+		return ".yaml", nil
+	case "toml":
+		return ".toml", nil
+	case "json":
+		return ".json", nil
+	default:
+		return "", fmt.Errorf("unknown --format %q (yaml, toml, or json)", format)
+	}
 }
 
 func dirOf(path string) string {
@@ -200,6 +258,7 @@ func newStatsCmd() *cobra.Command {
 	var byTools bool
 	var recent int
 	var since string
+	var markdown bool
 	cmd := &cobra.Command{
 		Use:   "stats",
 		Short: "Show local tool-call intelligence",
@@ -245,11 +304,14 @@ most recent N calls, or --since to limit to a recent window (e.g. --since 24h,
 			if flagJSON {
 				return printJSON(cmd, map[string]any{"totals": totals, "servers": servers, "tools": tools, "recent": recents})
 			}
-			out := cmd.OutOrStdout()
 			scope := "all time"
 			if window > 0 {
 				scope = "last " + since
 			}
+			if markdown {
+				return renderStatsMarkdown(cmd, scope, totals, servers, tools, byTools)
+			}
+			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Totals (%s): %d calls, %d errors, ~%d tokens, %dms total\n\n",
 				scope, totals.Calls, totals.Errors, totals.EstTokens, totals.TotalMs)
 			if totals.Calls == 0 {
@@ -290,7 +352,31 @@ most recent N calls, or --since to limit to a recent window (e.g. --since 24h,
 	cmd.Flags().BoolVar(&byTools, "tools", false, "break down by individual tool instead of server")
 	cmd.Flags().IntVar(&recent, "recent", 0, "also list the N most recent calls")
 	cmd.Flags().StringVar(&since, "since", "", "limit to a recent window, e.g. 24h, 90m, 7d (default: all time)")
+	cmd.Flags().BoolVar(&markdown, "markdown", false, "render as Markdown (great for notes/issues)")
 	return cmd
+}
+
+func renderStatsMarkdown(cmd *cobra.Command, scope string, totals store.Totals, servers []store.ServerStat, tools []store.ToolStat, byTools bool) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "# mcphub stats\n\n")
+	fmt.Fprintf(out, "**Totals (%s):** %d calls · %d errors · ~%d est. tokens · %dms total\n\n",
+		scope, totals.Calls, totals.Errors, totals.EstTokens, totals.TotalMs)
+	if totals.Calls == 0 {
+		fmt.Fprintln(out, "_No tool calls recorded for this window._")
+		return nil
+	}
+	if byTools {
+		fmt.Fprintf(out, "| Server | Tool | Calls | Errors | Avg ms | Est tokens |\n| --- | --- | ---: | ---: | ---: | ---: |\n")
+		for _, t := range tools {
+			fmt.Fprintf(out, "| %s | %s | %d | %d | %d | %d |\n", t.Server, t.Tool, t.Calls, t.Errors, t.AvgMs, t.EstTokens)
+		}
+	} else {
+		fmt.Fprintf(out, "| Server | Calls | Errors | Avg ms | Est tokens |\n| --- | ---: | ---: | ---: | ---: |\n")
+		for _, s := range servers {
+			fmt.Fprintf(out, "| %s | %d | %d | %d | %d |\n", s.Server, s.Calls, s.Errors, s.AvgMs, s.EstTokens)
+		}
+	}
+	return nil
 }
 
 // parseSince parses a lookback window. It accepts any Go duration (e.g. 24h,

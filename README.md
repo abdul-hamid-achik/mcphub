@@ -11,10 +11,10 @@ you can see which servers actually earn their place in your context window.
 
 ## Why
 
-Every coding agent — Claude Code, opencode, Codex — wants its MCP servers configured in its
-own bespoke file, in its own format, by hand. Add a server and you edit three configs. Each
-agent then loads the full tool list of every server you gave it, burning context on tools it
-will rarely call.
+Every coding agent — Claude Code, opencode, Codex, Crush, Forge, Hermes — wants its MCP servers
+configured in its own bespoke file, in its own format, by hand. Add a server and you edit six
+configs. Each agent then loads the full tool list of every server you gave it, burning context
+on tools it will rarely call.
 
 mcphub fixes both halves:
 
@@ -30,18 +30,28 @@ mcphub fixes both halves:
 - **Single gateway** — `mcphub mcp serve` connects to every enabled downstream server as an
   MCP client, aggregates their tools under `server__tool` names, and re-exposes them on one
   stdio connection.
-- **Config sync** — push `mcphub.yaml` into Claude Code, opencode, and Codex with a
-  non-destructive merge. Dry-run by default; `--write` applies after saving a timestamped `.bak`.
+- **Syncs to six harnesses** — push your config into Claude Code, opencode, Codex, Crush, Forge,
+  and Hermes with a non-destructive merge. Dry-run by default; `--write` applies after saving a
+  timestamped `.bak`. `mcphub init --from-agents` imports what you already have.
 - **Two sync modes** — `gateway` (the agent sees only mcphub) or `direct` (every enabled server
   written verbatim), chosen per agent.
-- **Local intelligence** — every proxied tool call is recorded to a local SQLite database, so
-  `mcphub stats` reports calls, errors, latency, and estimated token cost per server and tool.
-- **Studio TUI** — a bubbletea terminal UI to browse servers, toggle them, and watch usage.
-- **Doctor** — `mcphub doctor` diagnoses config, downstream server availability, agent targets,
-  and the store in one pass.
+- **Lazy exposure + pinning** — `expose: lazy` advertises only five meta-tools and serves the
+  rest on demand (huge token savings); `pin: [server__tool]` keeps your most-used tools mounted.
+- **Local intelligence** — every proxied call is recorded to SQLite, so `mcphub stats`
+  (`--tools`, `--recent`, `--since 7d`) and `mcphub status` (per-agent **sync drift** + flags
+  enabled-but-unused servers) tell you which servers earn their context budget.
+- **Config in YAML, TOML, or JSON** — pick with `mcphub init --format`; mcphub reads and writes
+  all three.
+- **Markdown reports** — `mcphub status --markdown` / `mcphub stats --markdown` for pasting into
+  notes or issues (`--json` too, for scripting).
+- **Secrets via [tvault](https://github.com/abdul-hamid-achik/tinyvault)** — `vault: <project>`
+  injects a server's secrets at spawn through `tvault run`, so they never live in the config.
+- **Studio TUI** — bubbletea v2 + harmonica: three tabs (Servers / Agents / Stats), toggle with
+  space, preview-and-apply a sync with `s`, flip exposure with `x`.
+- **Doctor** — `mcphub doctor` diagnoses config, server availability, agent targets, and the
+  store; `--probe` actually connects to each server for a real health check.
 - **stdio and remote servers** — local `command`/`args` servers or remote `http`/`sse` URLs.
 - **Pure Go, no cgo** — the SQLite store uses `modernc.org/sqlite`; the binary is self-contained.
-- **JSON everywhere** — `--json` on `list`, `stats`, and `doctor` for scripting.
 
 ## Install
 
@@ -58,8 +68,9 @@ go install github.com/abdul-hamid-achik/mcphub/cmd/mcphub@latest
 task install                       # build with version metadata, install to /opt/homebrew/bin
 go build -o bin/mcphub ./cmd/mcphub
 
-# 2. Write a starter config
-mcphub init                        # creates ./mcphub.yaml (or ~/.config/mcphub/mcphub.yaml)
+# 2. Write a starter config (YAML by default; --format toml or json also work)
+mcphub init                        # creates ~/.config/mcphub/mcphub.yaml
+mcphub init --from-agents          # ...or import the servers your agents already declare
 
 # 3. Edit mcphub.yaml — add your servers and agents, toggle what's enabled
 mcphub list                        # see what's configured

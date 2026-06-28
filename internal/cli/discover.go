@@ -19,13 +19,24 @@ type agentSpec struct {
 
 // defaultAgentSpecs lists the harnesses mcphub knows how to read/write and
 // their conventional config locations.
+// xdgConfigHome returns $XDG_CONFIG_HOME, or ~/.config when it is unset — the
+// standard base directory the XDG-based harnesses (opencode, crush) live under.
+func xdgConfigHome() string {
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return x
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config")
+}
+
 func defaultAgentSpecs() []agentSpec {
 	home, _ := os.UserHomeDir()
+	xdg := xdgConfigHome()
 	return []agentSpec{
 		{"claude", "claude", filepath.Join(home, ".claude.json")},
-		{"opencode", "opencode", filepath.Join(home, ".config", "opencode", "opencode.json")},
+		{"opencode", "opencode", filepath.Join(xdg, "opencode", "opencode.json")},
 		{"codex", "codex", filepath.Join(home, ".codex", "config.toml")},
-		{"crush", "crush", filepath.Join(home, ".config", "crush", "crush.json")},
+		{"crush", "crush", filepath.Join(xdg, "crush", "crush.json")},
 		{"forge", "forge", filepath.Join(home, "forge", ".mcp.json")},
 		{"hermes", "hermes", filepath.Join(home, ".hermes", "config.yaml")},
 	}
