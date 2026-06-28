@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-28
+
 ### Added
 
 - **Config in YAML, TOML, or JSON.** The config file format is chosen from its
@@ -87,5 +89,6 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
 
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/abdul-hamid-achik/mcphub/releases/tag/v0.1.0
