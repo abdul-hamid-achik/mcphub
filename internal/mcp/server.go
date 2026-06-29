@@ -58,6 +58,9 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store) *Server {
 func (s *Server) Run(ctx context.Context) error {
 	s.hub.Connect(ctx)
 	defer s.hub.Close()
+	// Background watcher: reconnect downstreams that fail or die mid-session,
+	// so a crashed server self-heals without restarting the agent.
+	go s.hub.Watch(ctx)
 	if s.cfg.Lazy() {
 		// Lazy: advertise only the meta-tools, plus any pinned tools so the
 		// agent's most-used tools stay directly callable. Pins may name a whole
@@ -219,19 +222,19 @@ func (s *Server) handleDescribeTool(_ context.Context, _ *sdk.CallToolRequest, i
 func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in callInput) (*sdk.CallToolResult, any, error) {
 	server, tool := splitNamespaced(in.Server, in.Tool)
 	if server == "" || tool == "" {
-		return result(map[string]any{"error": "need server and tool (or a server__tool name)"})
+		return nil, nil, fmt.Errorf("need server and tool (or a server__tool name)")
 	}
 	var args json.RawMessage
 	if in.Arguments != nil {
 		b, err := json.Marshal(in.Arguments)
 		if err != nil {
-			return result(map[string]any{"error": "marshal arguments: " + err.Error()})
+			return nil, nil, fmt.Errorf("marshal arguments: %w", err)
 		}
 		args = b
 	}
 	res, err := s.hub.Call(ctx, server, tool, args)
 	if err != nil {
-		return result(map[string]any{"error": err.Error(), "server": server, "tool": tool})
+		return nil, nil, fmt.Errorf("call %s__%s: %w", server, tool, err)
 	}
 	// Pass the downstream result through verbatim.
 	return res, nil, nil

@@ -61,11 +61,10 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	if path == ":memory:" {
-		// An in-memory db is per-connection; pin the pool to one connection so
-		// migrations and queries see the same database (used by tests).
-		sqlDB.SetMaxOpenConns(1)
-	}
+	// SQLite serializes writes; a single connection prevents "database is
+	// locked" errors under concurrent gateway writes. For :memory: this is
+	// also required so migrations and queries share the same per-connection db.
+	sqlDB.SetMaxOpenConns(1)
 	if err := applyMigrations(sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, err
@@ -254,18 +253,26 @@ func (s *Store) RecentCalls(ctx context.Context, n int) ([]db.ToolCall, error) {
 
 // --- managed-entry bookkeeping & sync audit -------------------------------
 
-// SetManaged replaces the full set of mcphub-managed servers for an agent.
+// SetManaged replaces the full set of mcphub-managed servers for an agent. The
+// clear-and-reinsert runs in a single transaction so a mid-loop failure can't
+// partially wipe the owned set (which would let the next sync miss removals).
 func (s *Store) SetManaged(ctx context.Context, agent string, servers []string) error {
-	if err := s.q.ClearManagedForAgent(ctx, agent); err != nil {
-		return err
+	tx, err := s.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() // no-op after commit
+	q := s.q.WithTx(tx)
+	if err := q.ClearManagedForAgent(ctx, agent); err != nil {
+		return fmt.Errorf("clear managed: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, srv := range servers {
-		if err := s.q.UpsertManaged(ctx, db.UpsertManagedParams{Agent: agent, Server: srv, AppliedAt: now}); err != nil {
-			return err
+		if err := q.UpsertManaged(ctx, db.UpsertManagedParams{Agent: agent, Server: srv, AppliedAt: now}); err != nil {
+			return fmt.Errorf("upsert managed %q: %w", srv, err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ManagedFor returns the server names mcphub currently manages for an agent.

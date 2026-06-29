@@ -24,6 +24,7 @@ import (
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/store"
+	"github.com/abdul-hamid-achik/mcphub/internal/version"
 )
 
 // Downstream is one connected (or failed) backing server.
@@ -43,6 +44,8 @@ type Hub struct {
 	store *store.Store
 	log   *log.Logger
 
+	connectTimeout time.Duration
+
 	mu          sync.Mutex
 	downstreams []*Downstream
 }
@@ -54,11 +57,8 @@ func New(cfg *config.Config, st *store.Store, logger *log.Logger) *Hub {
 		logger = log.New(os.Stderr)
 		logger.SetLevel(log.FatalLevel + 1) // effectively silent
 	}
-	return &Hub{cfg: cfg, store: st, log: logger}
+	return &Hub{cfg: cfg, store: st, log: logger, connectTimeout: cfg.ConnectTimeoutDuration()}
 }
-
-// connectTimeout bounds how long we wait for a single downstream to come up.
-const connectTimeout = 30 * time.Second
 
 // Connect spawns and connects to every enabled server concurrently. A server
 // that fails to start is recorded with its error and skipped, never aborting
@@ -100,15 +100,11 @@ func (h *Hub) Connect(ctx context.Context) {
 
 func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *Downstream {
 	d := &Downstream{Name: name}
-	cctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	cctx, cancel := context.WithTimeout(ctx, h.connectTimeout)
 	defer cancel()
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "mcphub", Version: "0.1.0"}, nil)
-	transport, err := transportFor(srv)
-	if err != nil {
-		d.Err = err
-		return d
-	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "mcphub", Version: version.Version}, nil)
+	transport := transportFor(srv)
 	session, err := client.Connect(cctx, transport, nil)
 	if err != nil {
 		d.Err = fmt.Errorf("connect: %w", err)
@@ -125,19 +121,19 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 	return d
 }
 
-func transportFor(srv config.Server) (mcp.Transport, error) {
+func transportFor(srv config.Server) mcp.Transport {
 	if srv.IsRemote() {
 		switch srv.Transport {
 		case "sse":
-			return &mcp.SSEClientTransport{Endpoint: srv.URL}, nil
+			return &mcp.SSEClientTransport{Endpoint: srv.URL}
 		default: // "http" or unset
-			return &mcp.StreamableClientTransport{Endpoint: srv.URL}, nil
+			return &mcp.StreamableClientTransport{Endpoint: srv.URL}
 		}
 	}
 	command, cargs := srv.SpawnCommand()
 	cmd := exec.Command(command, cargs...)
 	cmd.Env = append(os.Environ(), envPairs(srv.Env)...)
-	return &mcp.CommandTransport{Command: cmd}, nil
+	return &mcp.CommandTransport{Command: cmd}
 }
 
 func envPairs(env map[string]string) []string {
@@ -212,6 +208,9 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	}
 	if !d.Connected() {
 		return nil, fmt.Errorf("server %q is not connected", server)
+	}
+	if _, ok := h.FindTool(server, tool); !ok {
+		return nil, fmt.Errorf("tool %q not found on server %q", tool, server)
 	}
 	namespaced := server + "__" + tool
 	start := time.Now()
@@ -327,4 +326,74 @@ func (h *Hub) Close() error {
 		}
 	}
 	return nil
+}
+
+// watchInterval is how often Watch checks for failed downstreams.
+const watchInterval = 30 * time.Second
+
+// Watch periodically reconnects downstreams that failed to connect or whose
+// sessions have died. It runs until ctx is cancelled. Call it from a long-lived
+// gateway (mcp serve) so a crashed downstream self-heals without restarting the
+// agent. It is a no-op for downstreams that are already connected.
+func (h *Hub) Watch(ctx context.Context) {
+	ticker := time.NewTicker(watchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.reconnectFailed(ctx)
+		}
+	}
+}
+
+// reconnectFailed tries to reconnect every non-connected downstream. Successful
+// reconnects replace the old entry in the slice and close the stale session.
+func (h *Hub) reconnectFailed(ctx context.Context) {
+	// Snapshot the names+configs of failed downstreams under the lock.
+	type failed struct {
+		index int
+		name  string
+		srv   config.Server
+		old   *Downstream
+	}
+	var toReconnect []failed
+	h.mu.Lock()
+	for i, d := range h.downstreams {
+		if !d.Connected() {
+			toReconnect = append(toReconnect, failed{i, d.Name, h.cfg.Servers[d.Name], d})
+		}
+	}
+	h.mu.Unlock()
+	if len(toReconnect) == 0 {
+		return
+	}
+	for _, f := range toReconnect {
+		nd := h.connectOne(ctx, f.name, f.srv)
+		if nd.Connected() {
+			h.mu.Lock()
+			// Guard against a concurrent Connect/refresh that may have replaced
+			// the slice already; only swap if the old pointer still matches.
+			if i := indexOf(h.downstreams, f.old); i >= 0 {
+				h.downstreams[i] = nd
+			}
+			h.mu.Unlock()
+			if f.old.session != nil {
+				_ = f.old.session.Close()
+			}
+			h.log.Info("downstream reconnected", "server", f.name, "tools", len(nd.Tools))
+		} else {
+			h.log.Warn("downstream still unavailable", "server", f.name, "err", nd.Err)
+		}
+	}
+}
+
+func indexOf(downstreams []*Downstream, d *Downstream) int {
+	for i, dd := range downstreams {
+		if dd == d {
+			return i
+		}
+	}
+	return -1
 }

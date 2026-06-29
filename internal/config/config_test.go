@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const sample = `version: 1
@@ -56,6 +57,7 @@ func TestValidateRejectsBadServers(t *testing.T) {
 		"bad transport":     {Servers: map[string]Server{"x": {URL: "u", Transport: "grpc"}}},
 		"unknown group ref": {Servers: map[string]Server{}, Groups: map[string][]string{"g": {"missing"}}},
 		"agent no path":     {Servers: map[string]Server{}, Agents: map[string]Agent{"a": {Type: "claude"}}},
+		"agent bad type":    {Servers: map[string]Server{}, Agents: map[string]Agent{"a": {Type: "cluade", Path: "~/x"}}},
 	}
 	for name, c := range cases {
 		if err := c.Validate(); err == nil {
@@ -216,5 +218,41 @@ func TestExpandPath(t *testing.T) {
 	}
 	if got := ExpandPath("/abs/path"); got != "/abs/path" {
 		t.Errorf("ExpandPath(/abs/path) = %s", got)
+	}
+}
+
+func TestConnectTimeoutDuration(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  string
+		want time.Duration
+	}{
+		{"empty defaults to 30s", "", 30 * time.Second},
+		{"explicit 60s", "60s", 60 * time.Second},
+		{"2 minutes", "2m", 2 * time.Minute},
+		{"invalid falls back to 30s", "bogus", 30 * time.Second},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := &Config{ConnectTimeout: c.cfg}
+			if got := cfg.ConnectTimeoutDuration(); got != c.want {
+				t.Errorf("ConnectTimeoutDuration() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsBadConnectTimeout(t *testing.T) {
+	c := &Config{
+		Servers:        map[string]Server{"x": {Command: "c"}},
+		ConnectTimeout: "bogus",
+	}
+	if err := c.Validate(); err == nil {
+		t.Error("expected validation error for bad connect_timeout")
+	}
+	// A valid duration should pass.
+	c.ConnectTimeout = "60s"
+	if err := c.Validate(); err != nil {
+		t.Errorf("valid connect_timeout should pass, got %v", err)
 	}
 }

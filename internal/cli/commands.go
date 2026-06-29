@@ -257,7 +257,7 @@ func toggleCmd(verb string, enabled bool) *cobra.Command {
 func newStatsCmd() *cobra.Command {
 	var byTools bool
 	var recent int
-	var since string
+	var since, server string
 	var markdown bool
 	cmd := &cobra.Command{
 		Use:   "stats",
@@ -266,8 +266,9 @@ func newStatsCmd() *cobra.Command {
 
 By default it shows all-time totals and a per-server breakdown. Use --tools for
 a per-tool breakdown (which exact tools cost the most), --recent N to list the
-most recent N calls, or --since to limit to a recent window (e.g. --since 24h,
---since 7d) — handy for "which servers are earning their keep lately".`,
+most recent N calls, --since to limit to a recent window (e.g. --since 24h,
+--since 7d), or --server to drill into one server's tools — handy for "which
+servers are earning their keep lately".`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st, err := openStore()
 			if err != nil {
@@ -299,6 +300,19 @@ most recent N calls, or --since to limit to a recent window (e.g. --since 24h,
 				}
 				for _, r := range rows {
 					recents = append(recents, recentCall{TS: r.Ts, Namespaced: r.Namespaced, OK: r.Ok, DurationMs: r.DurationMs, EstTokens: r.EstTokens})
+				}
+			}
+			// --server filter: drill into one server's stats.
+			if server != "" {
+				servers = filterServerStats(servers, server)
+				tools = filterToolStats(tools, server)
+				recents = filterRecentCalls(recents, server)
+				totals = store.Totals{}
+				for _, s := range servers {
+					totals.Calls += s.Calls
+					totals.Errors += s.Errors
+					totals.EstTokens += s.EstTokens
+					totals.TotalMs += s.AvgMs * s.Calls
 				}
 			}
 			if flagJSON {
@@ -353,6 +367,7 @@ most recent N calls, or --since to limit to a recent window (e.g. --since 24h,
 	cmd.Flags().IntVar(&recent, "recent", 0, "also list the N most recent calls")
 	cmd.Flags().StringVar(&since, "since", "", "limit to a recent window, e.g. 24h, 90m, 7d (default: all time)")
 	cmd.Flags().BoolVar(&markdown, "markdown", false, "render as Markdown (great for notes/issues)")
+	cmd.Flags().StringVar(&server, "server", "", "filter to one server's stats and tools")
 	return cmd
 }
 
@@ -377,6 +392,37 @@ func renderStatsMarkdown(cmd *cobra.Command, scope string, totals store.Totals, 
 		}
 	}
 	return nil
+}
+
+func filterServerStats(rows []store.ServerStat, server string) []store.ServerStat {
+	var out []store.ServerStat
+	for _, s := range rows {
+		if s.Server == server {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func filterToolStats(rows []store.ToolStat, server string) []store.ToolStat {
+	var out []store.ToolStat
+	for _, t := range rows {
+		if t.Server == server {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func filterRecentCalls(rows []recentCall, server string) []recentCall {
+	prefix := server + "__"
+	var out []recentCall
+	for _, r := range rows {
+		if strings.HasPrefix(r.Namespaced, prefix) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // parseSince parses a lookback window. It accepts any Go duration (e.g. 24h,

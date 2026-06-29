@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -20,10 +21,12 @@ copies of the servers mcphub now proxies from each gateway-mode agent, so the
 agent relies purely on the single mcphub gateway. This is where the token
 savings land — each agent stops carrying every server's full tool list.
 
-It only removes servers mcphub actually proxies (the enabled ones in your
-config). Anything mcphub does NOT proxy (disabled or agent-internal servers like
-node_repl) is left untouched, and the mcphub gateway itself is never removed.
-Dry-run by default; --write applies after saving a timestamped .bak.
+It only removes servers mcphub both proxies AND previously managed in the agent
+(tracked in the intelligence store), so a user's hand-added entry that happens
+to share a name with a proxied server is never clobbered. Anything mcphub does
+NOT proxy (disabled or agent-internal servers like node_repl) is left untouched,
+and the mcphub gateway itself is never removed. Dry-run by default; --write
+applies after saving a timestamped .bak and updates the managed-entries store.
 
 Run 'mcphub sync --write' first so each agent has the mcphub gateway; offload
 skips any agent that doesn't.`,
@@ -45,7 +48,13 @@ skips any agent that doesn't.`,
 					kept = append(kept, s)
 				}
 			}
-			proxied = kept
+			proxiedSet := toSet(kept)
+
+			st, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer st.Close()
 
 			targets := args
 			if len(targets) == 0 {
@@ -86,10 +95,20 @@ skips any agent that doesn't.`,
 					fmt.Fprintf(out, "» %s (no mcphub gateway found — run `mcphub sync --write` first; skipped)\n", name)
 					continue
 				}
+				// Only remove servers mcphub BOTH proxies AND previously managed
+				// in this agent — so a user's hand-added entry sharing a proxied
+				// name is never clobbered.
+				managed, err := st.ManagedFor(context.Background(), name)
+				if err != nil {
+					fmt.Fprintf(out, "» %s (error: %v)\n", name, err)
+					anyErr = true
+					continue
+				}
+				owned := intersect(kept, managed)
 				// desired=nil leaves the gateway and any non-proxied servers
-				// untouched; owned=proxied removes the proxied servers that are
-				// actually present.
-				plan, err := adapter.Apply(path, nil, proxied, !write)
+				// untouched; owned=removable removes only the proxied+managed
+				// servers that are actually present.
+				plan, err := adapter.Apply(path, nil, owned, !write)
 				if err != nil {
 					fmt.Fprintf(out, "» %s (error: %v)\n", name, err)
 					anyErr = true
@@ -98,6 +117,14 @@ skips any agent that doesn't.`,
 				printOffload(out, name, agent, plan)
 				if plan.HasChanges() {
 					anyChange = true
+				}
+				// Keep the store's managed-entries in sync: drop the offloaded
+				// servers so the next `sync` sees a consistent owned set.
+				if write && plan.Applied {
+					remaining := minus(managed, proxiedSet)
+					if err := st.SetManaged(context.Background(), name, remaining); err != nil {
+						fmt.Fprintf(out, "» %s (warning: store update failed: %v)\n", name, err)
+					}
 				}
 			}
 			if !write && anyChange {
@@ -140,4 +167,36 @@ func printOffload(out io.Writer, name string, agent config.Agent, plan harness.P
 			fmt.Fprintln(out, "    applied")
 		}
 	}
+}
+
+// toSet converts a string slice to a set for fast lookup.
+func toSet(s []string) map[string]bool {
+	out := make(map[string]bool, len(s))
+	for _, v := range s {
+		out[v] = true
+	}
+	return out
+}
+
+// intersect returns the elements of a that are also in b (preserving a's order).
+func intersect(a, b []string) []string {
+	bs := toSet(b)
+	var out []string
+	for _, v := range a {
+		if bs[v] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// minus returns the elements of a that are NOT in set.
+func minus(a []string, set map[string]bool) []string {
+	var out []string
+	for _, v := range a {
+		if !set[v] {
+			out = append(out, v)
+		}
+	}
+	return out
 }

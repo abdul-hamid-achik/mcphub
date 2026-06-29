@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -91,5 +92,71 @@ func TestRecordSurvivesCancelledContext(t *testing.T) {
 	}
 	if tot.Errors != 1 {
 		t.Errorf("the cancelled call should be recorded as an error, got %d", tot.Errors)
+	}
+}
+
+func TestTransportFor(t *testing.T) {
+	cases := []struct {
+		name string
+		srv  config.Server
+		want func(mcp.Transport) bool
+	}{
+		{
+			"stdio",
+			config.Server{Command: "echo", Args: []string{"hi"}},
+			func(tr mcp.Transport) bool {
+				ct, ok := tr.(*mcp.CommandTransport)
+				return ok && ct.Command != nil && ct.Command.Args[0] == "echo"
+			},
+		},
+		{
+			"http remote",
+			config.Server{URL: "https://srv.example.com", Transport: "http"},
+			func(tr mcp.Transport) bool {
+				st, ok := tr.(*mcp.StreamableClientTransport)
+				return ok && st.Endpoint == "https://srv.example.com"
+			},
+		},
+		{
+			"sse remote",
+			config.Server{URL: "https://sse.example.com", Transport: "sse"},
+			func(tr mcp.Transport) bool {
+				st, ok := tr.(*mcp.SSEClientTransport)
+				return ok && st.Endpoint == "https://sse.example.com"
+			},
+		},
+		{
+			"default remote (unset transport → http)",
+			config.Server{URL: "https://def.example.com"},
+			func(tr mcp.Transport) bool {
+				_, ok := tr.(*mcp.StreamableClientTransport)
+				return ok
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr := transportFor(c.srv)
+			if !c.want(tr) {
+				t.Fatalf("transportFor(%+v) = %T, wrong type or field", c.srv, tr)
+			}
+		})
+	}
+}
+
+func TestTransportForVaultWrapped(t *testing.T) {
+	srv := config.Server{Command: "myserver", Args: []string{"--port", "8080"}, Vault: "secrets"}
+	tr := transportFor(srv)
+	ct, ok := tr.(*mcp.CommandTransport)
+	if !ok {
+		t.Fatalf("expected *CommandTransport, got %T", tr)
+	}
+	if ct.Command.Args[0] != "tvault" {
+		t.Fatalf("expected tvault wrapper, got %q", ct.Command.Args[0])
+	}
+	// tvault run --project secrets -- myserver --port 8080
+	wantArgs := []string{"tvault", "run", "--project", "secrets", "--", "myserver", "--port", "8080"}
+	if !reflect.DeepEqual(ct.Command.Args, wantArgs) {
+		t.Fatalf("vault args = %v, want %v", ct.Command.Args, wantArgs)
 	}
 }

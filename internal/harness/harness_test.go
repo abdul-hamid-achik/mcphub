@@ -86,7 +86,7 @@ func applyLifecycle(t *testing.T, a Adapter, path, mustPreserve string) {
 
 func TestClaudeLifecycle(t *testing.T) {
 	p := writeFile(t, "claude.json", `{"mcpServers":{"keep":{"command":"k"}},"numFlag":42}`)
-	applyLifecycle(t, claudeAdapter{}, p, "numFlag")
+	applyLifecycle(t, claudeAdapter, p, "numFlag")
 	if !strings.Contains(read(t, p), "keep") {
 		t.Error("hand-written server should survive")
 	}
@@ -94,7 +94,7 @@ func TestClaudeLifecycle(t *testing.T) {
 
 func TestOpencodeLifecycle(t *testing.T) {
 	p := writeFile(t, "opencode.json", `{"$schema":"x","mcp":{},"model":"a/b"}`)
-	applyLifecycle(t, opencodeAdapter{}, p, "model")
+	applyLifecycle(t, opencodeAdapter, p, "model")
 }
 
 func TestCodexLifecycle(t *testing.T) {
@@ -104,7 +104,7 @@ func TestCodexLifecycle(t *testing.T) {
 
 func TestCrushLifecycle(t *testing.T) {
 	p := writeFile(t, "crush.json", `{"$schema":"x","mcp":{"keep":{"command":"k","type":"stdio"}},"options":{"a":1}}`)
-	applyLifecycle(t, crushAdapter{}, p, "options")
+	applyLifecycle(t, crushAdapter, p, "options")
 	if !strings.Contains(read(t, p), "keep") {
 		t.Error("hand-written crush server should survive")
 	}
@@ -115,7 +115,7 @@ func TestListReadsLocalAndRemote(t *testing.T) {
 	p := writeFile(t, "claude.json", `{"mcpServers":{
 		"local":{"command":"c","args":["x"],"type":"stdio"},
 		"remote":{"type":"http","url":"https://e.com"}}}`)
-	got, err := claudeAdapter{}.List(p)
+	got, err := claudeAdapter.List(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestListReadsLocalAndRemote(t *testing.T) {
 }
 
 func TestListMissingFileIsEmpty(t *testing.T) {
-	got, err := claudeAdapter{}.List(filepath.Join(t.TempDir(), "nope.json"))
+	got, err := claudeAdapter.List(filepath.Join(t.TempDir(), "nope.json"))
 	if err != nil || len(got) != 0 {
 		t.Errorf("missing file should be empty, got %v err %v", got, err)
 	}
@@ -186,9 +186,9 @@ func TestRemoteIdempotent(t *testing.T) {
 		a          Adapter
 		file, seed string
 	}{
-		{"claude", claudeAdapter{}, "claude.json", `{"mcpServers":{}}`},
-		{"crush", crushAdapter{}, "crush.json", `{"mcp":{}}`},
-		{"opencode", opencodeAdapter{}, "opencode.json", `{"mcp":{}}`},
+		{"claude", claudeAdapter, "claude.json", `{"mcpServers":{}}`},
+		{"crush", crushAdapter, "crush.json", `{"mcp":{}}`},
+		{"opencode", opencodeAdapter, "opencode.json", `{"mcp":{}}`},
 		{"codex", codexAdapter{}, "config.toml", ""},
 	}
 	for _, tc := range cases {
@@ -216,7 +216,7 @@ func TestRemoteIdempotent(t *testing.T) {
 func TestClaudePreservesExtraKeys(t *testing.T) {
 	p := writeFile(t, "claude.json",
 		`{"mcpServers":{"api":{"type":"http","url":"https://api.x","headers":{"Authorization":"Bearer SECRET"}}}}`)
-	a := claudeAdapter{}
+	a := claudeAdapter
 	desired := []MCPServer{
 		{Name: "api", URL: "https://api.x", Transport: "http"}, // unchanged
 		{Name: "new", Command: "x", Args: []string{"y"}},       // sibling add
@@ -244,7 +244,7 @@ func TestClaudePreservesExtraKeys(t *testing.T) {
 func TestUpdatePreservesExtraKeys(t *testing.T) {
 	p := writeFile(t, "claude.json",
 		`{"mcpServers":{"api":{"type":"http","url":"https://old.x","timeout":30,"headers":{"X":"Y"}}}}`)
-	a := claudeAdapter{}
+	a := claudeAdapter
 	desired := []MCPServer{{Name: "api", URL: "https://new.x", Transport: "http"}} // url changed => update
 	if _, err := a.Apply(p, desired, []string{"api"}, false); err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func TestUpdatePreservesExtraKeys(t *testing.T) {
 // deleted on a write triggered by a sibling change.
 func TestMalformedManagedEntryNotDeleted(t *testing.T) {
 	p := writeFile(t, "claude.json", `{"mcpServers":{"bad":12345,"keep":{"command":"k"}}}`)
-	a := claudeAdapter{}
+	a := claudeAdapter
 	desired := []MCPServer{{Name: "keep", Command: "k"}, {Name: "new", Command: "n"}}
 	plan, err := a.Apply(p, desired, []string{"bad"}, false)
 	if err != nil {
@@ -281,11 +281,11 @@ func TestMalformedManagedEntryNotDeleted(t *testing.T) {
 
 func TestForgeLifecycle(t *testing.T) {
 	p := writeFile(t, "forge.mcp.json", `{"mcpServers":{"keep":{"command":"k","disable":false}}}`)
-	applyLifecycle(t, forgeAdapter{}, p, "keep")
+	applyLifecycle(t, forgeAdapter, p, "keep")
 
 	// a freshly written entry carries forge's `disable: false` flag
 	p2 := writeFile(t, "forge2.mcp.json", `{"mcpServers":{}}`)
-	a := forgeAdapter{}
+	a := forgeAdapter
 	if _, err := a.Apply(p2, gateway, nil, false); err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestForUnknownKind(t *testing.T) {
 func TestOpencodeFlattensCommand(t *testing.T) {
 	p := writeFile(t, "opencode.json", `{"mcp":{}}`)
 	desired := []MCPServer{{Name: "cm", Command: "codemap", Args: []string{"serve"}}}
-	a := opencodeAdapter{}
+	a := opencodeAdapter
 	if _, err := a.Apply(p, desired, nil, false); err != nil {
 		t.Fatal(err)
 	}

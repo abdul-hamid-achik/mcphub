@@ -6,6 +6,56 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-29
+
+### Added
+
+ - **`stats --server <name>`** — filter the per-tool breakdown to one server.
+ - **Configurable connect timeout** — a `connect_timeout` field in `mcphub.yaml`
+   (or `--connect-timeout` flag on `mcp serve` / `doctor --probe`) controls how
+   long the gateway waits for a downstream to start (default 30s).
+ - **Downstream reconnection** — the gateway now health-checks downstreams and
+   reconnects failed/stale ones automatically during `mcp serve`, so a crashed
+   server self-heals without restarting the agent.
+ - **Agent type validation** — `config.Validate()` now rejects unknown agent
+   types at load/save time, catching typos like `type: cluade` before they
+   surface at `sync`.
+ - Tests for `transportFor` (4 branches + vault wrapping), `parseEnv` (7
+   cases), MCP meta-tool handlers (list/search/describe/call/stats), and a
+   starter-config drift guard (asserts the YAML starter and `Starter()` match).
+
+### Fixed
+
+ - **Client version** — the MCP client implementation now reports the actual
+   build version instead of a hardcoded `"0.1.0"`.
+ - **`SetManaged` atomicity** — the clear-and-reinsert is now wrapped in a SQL
+   transaction, so a mid-loop failure can't partially wipe the managed-entries
+   table.
+ - **`handleCallTool` error semantics** — infrastructure errors (unknown
+   server, not connected, marshal failure) now return proper MCP protocol
+   errors instead of a successful result with an `{"error":...}` body.
+ - **`offload` safety** — now uses the store's managed-entries as the owned set
+   (so a user's hand-added entry sharing a proxied name is never clobbered) and
+   updates the store after a successful write.
+ - **File permissions** — `config.Save` preserves the existing file's mode
+   (defaulting to `0o600` for new configs) and `backup` preserves the source
+   file's mode, instead of hardcoding `0o644`.
+ - **SQLite pool** — `SetMaxOpenConns(1)` is now set for all SQLite databases,
+   not just `:memory:`, preventing "database is locked" errors under concurrent
+   gateway writes.
+ - **Tool existence pre-check** — `Hub.Call` now checks the tool exists on the
+   downstream before forwarding, giving a clear "tool not found" error instead
+   of a round-trip to the downstream.
+
+### Changed
+
+ - **JSON adapter dedup** — the four JSON harness adapters (claude, opencode,
+   crush, forge) now share a single `jsonAdapter` implementation, eliminating
+   ~200 lines of duplicated `List`/`Apply` boilerplate. Harness coverage rose
+   from 77.8% to 81.8%.
+ - **`transportFor` simplified** — removed the dead `error` return (it was
+   always nil); the function now returns just `mcp.Transport`.
+
 ## [0.3.0] - 2026-06-28
 
 ### Added
@@ -114,8 +164,8 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   `config.mts` and set the package type. `npm run docs:build` (and `task
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
-
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/abdul-hamid-achik/mcphub/releases/tag/v0.1.0

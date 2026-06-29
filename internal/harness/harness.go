@@ -124,15 +124,15 @@ type Adapter interface {
 func For(kind string) (Adapter, error) {
 	switch kind {
 	case "claude", "claudecode":
-		return claudeAdapter{}, nil
+		return claudeAdapter, nil
 	case "opencode":
-		return opencodeAdapter{}, nil
+		return opencodeAdapter, nil
 	case "codex":
 		return codexAdapter{}, nil
 	case "crush":
-		return crushAdapter{}, nil
+		return crushAdapter, nil
 	case "forge", "forgecode":
-		return forgeAdapter{}, nil
+		return forgeAdapter, nil
 	case "hermes":
 		return hermesAdapter{}, nil
 	default:
@@ -209,6 +209,11 @@ func backup(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Preserve the source file's permissions (e.g. 0o600 for sensitive configs).
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
 	base := fmt.Sprintf("%s.bak-%s", path, time.Now().UTC().Format("20060102-150405"))
 	dst := base
 	for i := 1; ; i++ {
@@ -217,7 +222,7 @@ func backup(path string) (string, error) {
 		}
 		dst = fmt.Sprintf("%s-%d", base, i)
 	}
-	if err := os.WriteFile(dst, body, 0o644); err != nil {
+	if err := os.WriteFile(dst, body, mode); err != nil {
 		return "", err
 	}
 	return dst, nil

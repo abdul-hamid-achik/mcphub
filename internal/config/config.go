@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
@@ -69,12 +70,13 @@ func marshalConfig(c *Config, format string) ([]byte, error) {
 
 // Config is the root of the mcphub config file (YAML, TOML, or JSON — see Load).
 type Config struct {
-	Version int                 `yaml:"version" toml:"version" json:"version"`
-	Expose  string              `yaml:"expose,omitempty" toml:"expose,omitempty" json:"expose,omitempty"` // "all" (default) | "lazy"
-	Pin     []string            `yaml:"pin,omitempty" toml:"pin,omitempty" json:"pin,omitempty"`          // server__tool names always mounted, even in lazy mode
-	Servers map[string]Server   `yaml:"servers" toml:"servers" json:"servers"`
-	Groups  map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
-	Agents  map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
+	Version        int                 `yaml:"version" toml:"version" json:"version"`
+	Expose         string              `yaml:"expose,omitempty" toml:"expose,omitempty" json:"expose,omitempty"` // "all" (default) | "lazy"
+	Pin            []string            `yaml:"pin,omitempty" toml:"pin,omitempty" json:"pin,omitempty"`          // server__tool names always mounted, even in lazy mode
+	Servers        map[string]Server   `yaml:"servers" toml:"servers" json:"servers"`
+	Groups         map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
+	Agents         map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
+	ConnectTimeout string              `yaml:"connect_timeout,omitempty" toml:"connect_timeout,omitempty" json:"connect_timeout,omitempty"` // per-downstream connect timeout, e.g. "30s", "60s" (default 30s)
 }
 
 // Exposure controls how many tools the gateway advertises up front.
@@ -226,6 +228,17 @@ func (a Agent) ResolvedMode() Mode {
 	return ModeGateway
 }
 
+// validAgentTypes lists every harness type harness.For accepts. Kept in sync
+// with internal/harness.For — if you add a harness, add its type here too.
+var validAgentTypes = map[string]bool{
+	"claude": true, "claudecode": true,
+	"opencode": true,
+	"codex":    true,
+	"crush":    true,
+	"forge":    true, "forgecode": true,
+	"hermes": true,
+}
+
 // DefaultPath returns the config path used when unspecified. Precedence:
 // $MCPHUB_CONFIG, then the first existing mcphub.{yaml,yml,toml,json} in the
 // current directory, then in ~/.config/mcphub, else ~/.config/mcphub/mcphub.yaml.
@@ -310,7 +323,13 @@ func Save(path string, c *Config) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
+	// Preserve the existing file's permissions, or default to 0o600 for a new
+	// config (it may carry env vars / vault references).
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
 		return err
 	}
 	return os.Rename(tmpName, path)
@@ -404,12 +423,32 @@ func (c *Config) Validate() error {
 		}
 		if a.Type == "" {
 			problems = append(problems, fmt.Sprintf("agent %q: missing type", name))
+		} else if !validAgentTypes[a.Type] {
+			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes)", name, a.Type))
+		}
+	}
+	if c.ConnectTimeout != "" {
+		if _, err := time.ParseDuration(c.ConnectTimeout); err != nil {
+			problems = append(problems, fmt.Sprintf("connect_timeout %q: %v (try 30s, 60s, 2m)", c.ConnectTimeout, err))
 		}
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid config:\n  - %s", strings.Join(problems, "\n  - "))
 	}
 	return nil
+}
+
+// ConnectTimeoutDuration returns the configured per-downstream connect timeout,
+// defaulting to 30s when unset.
+func (c *Config) ConnectTimeoutDuration() time.Duration {
+	if c.ConnectTimeout == "" {
+		return 30 * time.Second
+	}
+	d, err := time.ParseDuration(c.ConnectTimeout)
+	if err != nil {
+		return 30 * time.Second
+	}
+	return d
 }
 
 // EnabledServers returns the names of enabled servers, sorted.
