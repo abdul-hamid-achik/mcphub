@@ -8,7 +8,9 @@ TUI), and mcphub does two jobs for you:
   downstream server, aggregates their tools, and re-exposes them on one stdio
   connection, so an agent connects to one server instead of a dozen.
 - **Syncs your agents** — `mcphub sync` writes the right MCP config into every
-  agent harness (Claude Code, opencode, Codex) so you never hand-edit each one.
+  supported agent harness (Claude Code, opencode, Codex, Copilot CLI, Qwen
+  Code, Gemini CLI, Kilo Code, Kimi Code CLI, Crush, Forge, Hermes) so you
+  never hand-edit each one.
 
 Think of it as a *MCP Docker Kit, without Docker*: one place to declare your
 servers, one connection to front them all, and one command to push that setup
@@ -49,8 +51,11 @@ mcphub init
 ```
 
 This creates a config at the [default path](#where-things-live) with a few
-example servers and the three agent harnesses pre-wired. Pass `--force` to
-overwrite an existing file.
+example servers and six agent harnesses pre-wired (claude, opencode, codex,
+crush, forge, hermes). Five more (copilot, qwen, gemini, kilo, kimi) are
+available and can be added to `agents` in `mcphub.yaml` — run `mcphub agents`
+to see every type and its status. Pass `--force` to overwrite an existing
+file.
 
 Open it and describe your real servers. A stdio server is a `command` plus
 `args`; a remote server is a `url` plus a `transport`:

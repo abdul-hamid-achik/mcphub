@@ -11,8 +11,9 @@ Everything starts from `mcphub.yaml`. It declares:
 - **`servers`** — every downstream MCP server mcphub can manage and proxy,
   stdio (a `command`) or remote (a `url`).
 - **`groups`** — optional named bundles of servers.
-- **`agents`** — the harnesses mcphub keeps in sync (Claude Code, opencode,
-  Codex), each with a `path` and a `mode`.
+- **`agents`** — the 11 agent harnesses mcphub keeps in sync (Claude Code,
+  opencode, Codex, Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code
+  CLI, Crush, Forge, Hermes), each with a `path` and a `mode`.
 
 You edit this one file (or toggle servers in [Studio](/guide/studio)), and
 mcphub propagates the result everywhere. You never hand-edit `~/.claude.json`,

@@ -9,7 +9,7 @@ import "encoding/json"
 var forgeAdapter = jsonAdapter{
 	kind:        "forge",
 	key:         "mcpServers",
-	managedKeys: []string{"command", "args", "env", "url", "disable"},
+	managedKeys: []string{"command", "args", "env", "url"},
 	transport:   transportStrip,
 	entryFrom:   func(s MCPServer) any { return forgeEntryFrom(s) },
 	parseEntry: func(name string, raw json.RawMessage) (MCPServer, bool) {
@@ -26,7 +26,7 @@ type forgeEntry struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
-	Disable bool              `json:"disable"`
+	Disable bool              `json:"disable,omitempty"`
 }
 
 func forgeEntryFrom(s MCPServer) forgeEntry {

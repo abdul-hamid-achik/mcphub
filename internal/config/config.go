@@ -236,7 +236,12 @@ var validAgentTypes = map[string]bool{
 	"codex":    true,
 	"crush":    true,
 	"forge":    true, "forgecode": true,
-	"hermes": true,
+	"hermes":  true,
+	"copilot": true,
+	"qwen":    true,
+	"gemini":  true,
+	"kilo":    true,
+	"kimi":    true,
 }
 
 // DefaultPath returns the config path used when unspecified. Precedence:
@@ -424,7 +429,7 @@ func (c *Config) Validate() error {
 		if a.Type == "" {
 			problems = append(problems, fmt.Sprintf("agent %q: missing type", name))
 		} else if !validAgentTypes[a.Type] {
-			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes)", name, a.Type))
+			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi)", name, a.Type))
 		}
 	}
 	if c.ConnectTimeout != "" {

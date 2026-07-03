@@ -11,9 +11,10 @@ you can see which servers actually earn their place in your context window.
 
 ## Why
 
-Every coding agent — Claude Code, opencode, Codex, Crush, Forge, Hermes — wants its MCP servers
-configured in its own bespoke file, in its own format, by hand. Add a server and you edit six
-configs. Each agent then loads the full tool list of every server you gave it, burning context
+Every coding agent — Claude Code, opencode, Codex, Copilot CLI, Qwen Code, Gemini CLI,
+Kilo Code, Kimi Code CLI, Crush, Forge, Hermes — wants its MCP servers configured in its
+own bespoke file, in its own format, by hand. Add a server and you edit eleven configs.
+Each agent then loads the full tool list of every server you gave it, burning context
 on tools it will rarely call.
 
 mcphub fixes both halves:
@@ -30,8 +31,9 @@ mcphub fixes both halves:
 - **Single gateway** — `mcphub mcp serve` connects to every enabled downstream server as an
   MCP client, aggregates their tools under `server__tool` names, and re-exposes them on one
   stdio connection.
-- **Syncs to six harnesses** — push your config into Claude Code, opencode, Codex, Crush, Forge,
-  and Hermes with a non-destructive merge. Dry-run by default; `--write` applies after saving a
+- **Syncs to eleven harnesses** — push your config into Claude Code, opencode, Codex,
+  Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI, Crush, Forge, and Hermes
+  with a non-destructive merge. Dry-run by default; `--write` applies after saving a
   timestamped `.bak`. `mcphub init --from-agents` imports what you already have.
 - **Two sync modes** — `gateway` (the agent sees only mcphub) or `direct` (every enabled server
   written verbatim), chosen per agent.
@@ -131,6 +133,7 @@ servers earn their context budget and which to disable.
 | `mcphub stats [--tools] [--recent N]` | Show local tool-call intelligence. |
 | `mcphub doctor [--probe]` | Diagnose config, servers, agents, and the store (`--probe` connects for real). |
 | `mcphub mcp serve` | Run the gateway MCP stdio server that proxies all enabled servers. |
+| `mcphub agents` | List all supported agent harnesses and their status (configured / available / not installed). |
 
 **Persistent flags:** `--config <path>`, `--db <path>`, `--json`, `--version`.
 
@@ -213,8 +216,8 @@ agents:
 
 Each `server` is either a stdio server (`command` + `args` + optional `env`) **or** a remote
 server (`url` + `transport`, where `transport` is `http` or `sse`). Each `agent` has a `type`
-(`claude`, `opencode`, `codex`, `crush`, `forge`, or `hermes`), a `path`, and a `mode` that
-defaults to `gateway`.
+(`claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`,
+`kilo`, or `kimi`), a `path`, and a `mode` that defaults to `gateway`.
 
 Set top-level `expose: lazy` to have the gateway advertise only its meta-tools (saving tokens —
 agents discover with `mcphub_search_tools` and run a tool with `mcphub_call_tool`), and use
@@ -245,10 +248,15 @@ mcphub sync --write       # apply (a .bak is saved first)
 | Harness | Config | Format |
 | --- | --- | --- |
 | Claude Code | `~/.claude.json` | JSON `mcpServers` |
-| opencode | `opencode.json` | JSON `mcp` |
+| opencode | `~/.config/opencode/opencode.json` | JSON `mcp` |
 | Codex | `~/.codex/config.toml` | TOML `[mcp_servers.*]` |
+| Copilot CLI | `~/.copilot/mcp-config.json` | JSON `mcpServers` |
+| Qwen Code | `~/.qwen/settings.json` | JSON `mcpServers` |
+| Gemini CLI | `~/.gemini/settings.json` | JSON `mcpServers` |
+| Kilo Code | `~/.config/kilo/kilo.jsonc` | JSONC `mcp` |
+| Kimi Code CLI | `~/.kimi/config.toml` | TOML `[mcp_servers.*]` |
 | Crush | `~/.config/crush/crush.json` | JSON `mcp` |
-| Forge (forgecode) | `.mcp.json` | JSON `mcpServers` |
+| Forge (forgecode) | `~/forge/.mcp.json` | JSON `mcpServers` |
 | Hermes | `~/.hermes/config.yaml` | YAML `mcp_servers` |
 
 ## Studio TUI

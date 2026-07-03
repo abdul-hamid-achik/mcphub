@@ -6,8 +6,11 @@ import (
 	"os"
 )
 
-// readJSONObject reads a JSON object file into a map of raw values, preserving
-// every untouched key verbatim. A missing file yields an empty object.
+// readJSONObject reads a JSON (or JSONC — JSON with comments) object file
+// into a map of raw values, preserving every untouched key verbatim. A missing
+// file yields an empty object. Comments (// line and /* block */) are stripped
+// before parsing so .jsonc files (Kilo Code) work the same as plain .json;
+// they are not preserved on write (a .bak is always taken first).
 func readJSONObject(path string) (map[string]json.RawMessage, error) {
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -20,13 +23,67 @@ func readJSONObject(path string) (map[string]json.RawMessage, error) {
 		return map[string]json.RawMessage{}, nil
 	}
 	var top map[string]json.RawMessage
-	if err := json.Unmarshal(body, &top); err != nil {
+	if err := json.Unmarshal(stripJSONComments(body), &top); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if top == nil {
 		top = map[string]json.RawMessage{}
 	}
 	return top, nil
+}
+
+// stripJSONComments removes // line comments and /* block */ comments from
+// JSONC source, being careful not to strip inside string literals. For plain
+// JSON (which has no comments) this is a no-op pass-through.
+func stripJSONComments(b []byte) []byte {
+	out := make([]byte, 0, len(b))
+	i := 0
+	inString := false
+	for i < len(b) {
+		c := b[i]
+		if inString {
+			out = append(out, c)
+			if c == '\\' && i+1 < len(b) {
+				out = append(out, b[i+1])
+				i += 2
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			i++
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			i++
+			continue
+		}
+		if c == '/' && i+1 < len(b) {
+			if b[i+1] == '/' {
+				for i < len(b) && b[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if b[i+1] == '*' {
+				i += 2
+				for i+1 < len(b) && !(b[i] == '*' && b[i+1] == '/') {
+					i++
+				}
+				if i+1 < len(b) {
+					i += 2 // skip closing */
+				} else {
+					i = len(b) // unclosed comment; eat to end
+				}
+				continue
+			}
+		}
+		out = append(out, c)
+		i++
+	}
+	return out
 }
 
 // writeJSONObject writes a JSON object as indented JSON with a trailing

@@ -99,6 +99,58 @@ func TestStudioTabSwitchToAgents(t *testing.T) {
 	}
 }
 
+// TestStudioAgentsTabShowsNewTypes verifies the Agents tab renders rows for
+// new agent types (kimi, kilo) alongside the existing ones.
+func TestStudioAgentsTabShowsNewTypes(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "mcphub.yaml")
+	cfg := &config.Config{
+		Version: 1,
+		Servers: map[string]config.Server{"s": {Command: "x", Enabled: true}},
+		Agents: map[string]config.Agent{
+			"claude": {Type: "claude", Path: "~/.claude.json", Mode: config.ModeGateway},
+			"kimi":   {Type: "kimi", Path: "~/.kimi/config.toml", Mode: config.ModeGateway},
+			"kilo":   {Type: "kilo", Path: "~/.config/kilo/kilo.jsonc", Mode: config.ModeDirect},
+		},
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := New(cfg, cfgPath, st)
+	m = update(m, "tab") // Servers -> Agents
+	body := view(m)
+	for _, want := range []string{"claude", "kimi", "kilo", "gateway", "direct"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("agents tab should show %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestComputeAvailableAgents verifies that agent types whose config files
+// exist on disk but aren't in the config are reported as available.
+func TestComputeAvailableAgents(t *testing.T) {
+	// Build a config with only claude configured.
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"claude": {Type: "claude", Path: "~/.claude.json"},
+		},
+	}
+	avail := computeAvailableAgents(cfg)
+	// The result depends on the real machine — we can't assert specific
+	// contents, but we CAN assert that 'claude' is NOT in the list (it's
+	// configured) and that the function doesn't panic.
+	for _, a := range avail {
+		if a == "claude" {
+			t.Error("claude is configured, should not be in available list")
+		}
+	}
+}
+
 func TestStudioSyncPanelOpens(t *testing.T) {
 	m, _ := testModel(t)
 	m = update(m, "s") // open sync preview

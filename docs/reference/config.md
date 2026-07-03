@@ -181,7 +181,7 @@ agents:
 
 | Field      | Type   | Required | Description                                                                   |
 | ---------- | ------ | -------- | ----------------------------------------------------------------------------- |
-| `type`     | string | yes      | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, or `hermes`. |
+| `type`     | string | yes      | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`, `kilo`, or `kimi`. |
 | `path`     | string | yes      | The harness config file. Supports leading `~` expansion.                      |
 | `mode`     | string | no       | `gateway` (default) or `direct`.                                              |
 | `disabled` | bool   | no       | Skip this agent during `sync` without deleting its definition.                |
@@ -199,10 +199,16 @@ the harness's on-disk format:
 | `crush`    | `~/.config/crush/crush.json`             | `mcp`              |
 | `forge`    | `.mcp.json`                              | `mcpServers`       |
 | `hermes`   | `~/.hermes/config.yaml`                  | `mcp_servers`      |
+| `copilot`  | `~/.copilot/mcp-config.json`             | `mcpServers`       |
+| `qwen`     | `~/.qwen/settings.json`                  | `mcpServers`       |
+| `gemini`   | `~/.gemini/settings.json`                | `mcpServers`       |
+| `kilo`     | `~/.config/kilo/kilo.jsonc`              | `mcp`              |
+| `kimi`     | `~/.kimi/config.toml`                    | `[mcp_servers.*]`  |
 
 See [Sync to your agents](/guide/sync#the-harness-adapters) for each adapter's
-format details (including the note that the Codex TOML round-trip does not
-preserve comments or key ordering).
+format details (including the note that the Codex and Kimi TOML round-trips do
+not preserve comments or key ordering, and that Kilo's JSONC parser strips
+comments on write).
 
 ### `mode`
 

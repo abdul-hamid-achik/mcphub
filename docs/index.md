@@ -17,7 +17,7 @@ features:
   - title: Gateway & aggregation
     details: '`mcphub mcp serve` connects to every enabled downstream server as a client, aggregates their tools under namespaced `server__tool` names, and re-exposes them on ONE stdio connection. Your agent talks to one server instead of a dozen.'
   - title: Sync to every agent
-    details: '`mcphub sync` writes the right MCP config into Claude Code, opencode, and Codex for you. Non-destructive merge, a timestamped .bak before every change, dry-run by default. Stop hand-editing each harness.'
+    details: '`mcphub sync` writes the right MCP config into every supported agent harness (Claude Code, opencode, Codex, Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI, Crush, Forge, Hermes) for you. Non-destructive merge, a timestamped .bak before every change, dry-run by default. Stop hand-editing each harness.'
   - title: Token savings
     details: 'In gateway mode each agent loads ONE server instead of every server''s full tool list. Fewer tools in context means fewer tokens spent before you''ve typed a word.'
   - title: Local intelligence

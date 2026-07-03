@@ -21,9 +21,9 @@ func (hermesAdapter) Kind() string { return "hermes" }
 
 func hermesEntryFrom(s MCPServer) map[string]any {
 	if s.isRemote() {
-		return map[string]any{"url": s.URL, "enabled": true}
+		return map[string]any{"url": s.URL}
 	}
-	e := map[string]any{"command": s.Command, "enabled": true}
+	e := map[string]any{"command": s.Command}
 	if len(s.Args) > 0 {
 		e["args"] = toAnySlice(s.Args)
 	}

@@ -96,6 +96,17 @@ agents:
     type: hermes
     path: ~/.hermes/config.yaml
     mode: gateway
+
+# Additional agent harnesses are supported but not seeded by default — add them
+# when you install the tool:
+#   copilot  ~/.copilot/mcp-config.json      GitHub Copilot CLI
+#   qwen     ~/.qwen/settings.json            Qwen Code
+#   gemini   ~/.gemini/settings.json          Gemini CLI
+#   kilo     ~/.config/kilo/kilo.jsonc        Kilo Code (XDG)
+#   kimi     ~/.kimi/config.toml               Kimi Code CLI
+#
+# Run 'mcphub init --from-agents' to auto-discover installed agents, or
+# 'mcphub agents' to see all supported types and their status.
 `
 
 func newInitCmd() *cobra.Command {
@@ -523,6 +534,21 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 					checks = append(checks, checkResult{"agent:" + name, false, "path not found: " + ap})
 				} else {
 					checks = append(checks, checkResult{"agent:" + name, true, fmt.Sprintf("%s (%s, %s)", ap, a.Type, a.ResolvedMode())})
+				}
+			}
+
+			// Report available-but-unconfigured agents: supported harness
+			// types whose config file exists on disk but aren't in mcphub.yaml.
+			configuredTypes := map[string]bool{}
+			for _, name := range c.AgentNames() {
+				configuredTypes[c.Agents[name].Type] = true
+			}
+			for _, spec := range defaultAgentSpecs() {
+				if configuredTypes[spec.Type] {
+					continue
+				}
+				if _, err := os.Stat(config.ExpandPath(spec.Path)); err == nil {
+					checks = append(checks, checkResult{"available:" + spec.Type, true, "config file exists but not in mcphub.yaml — add it or run 'mcphub init --from-agents'"})
 				}
 			}
 

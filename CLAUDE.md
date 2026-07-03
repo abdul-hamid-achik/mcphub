@@ -28,7 +28,8 @@ them before declaring a change done. Single test:
 (`mcphub.yaml`, the registry) → `internal/hub` dials each enabled server as a
 go-sdk MCP **client** and `Mount`s their tools as `server__tool` onto
 `internal/mcp` (mcphub's own gateway MCP server) → `internal/harness` adapters
-sync that into Claude/opencode/Codex configs → `internal/store` (sqlc + SQLite)
+sync that into 11 agent configs (Claude, opencode, Codex, Crush, Forge, Hermes,
+Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI) → `internal/store`
 records telemetry and which servers mcphub owns. TUI: `internal/ui/studio`
 (charm.land v2). Keep these boundaries clean.
 
@@ -53,9 +54,10 @@ records telemetry and which servers mcphub owns. TUI: `internal/ui/studio`
 - **`sync` is sacred.** It is dry-run by default, writes a timestamped `.bak`
   before any write, only touches the MCP-server section of each file, and prunes
   only entries mcphub previously *owned* (the `managed_entries` table) so
-  hand-added servers survive. Never touch real `~/.claude.json` /
-  `opencode.json` / `~/.codex/config.toml` directly or from tests — use temp
-  files (and `store.Open(":memory:")`).
+  hand-added servers survive. Never touch real agent configs
+  (`~/.claude.json`, `~/.copilot/mcp-config.json`, `~/.qwen/settings.json`,
+  `~/.codex/config.toml`, etc.) directly or from tests — use temp files (and
+  `store.Open(":memory:")`).
 
 ## Conventions
 

@@ -256,3 +256,87 @@ func TestValidateRejectsBadConnectTimeout(t *testing.T) {
 		t.Errorf("valid connect_timeout should pass, got %v", err)
 	}
 }
+
+// TestValidateAcceptsNewAgentTypes guards against accidental removal of the
+// 5 new agent types from validAgentTypes.
+func TestValidateAcceptsNewAgentTypes(t *testing.T) {
+	newTypes := []string{"copilot", "qwen", "gemini", "kilo", "kimi"}
+	for _, typ := range newTypes {
+		t.Run(typ, func(t *testing.T) {
+			c := &Config{
+				Servers: map[string]Server{"x": {Command: "c"}},
+				Agents:  map[string]Agent{"a": {Type: typ, Path: "~/x"}},
+			}
+			if err := c.Validate(); err != nil {
+				t.Errorf("type %q should validate, got %v", typ, err)
+			}
+		})
+	}
+}
+
+// TestKindsAndValidTypesInSync guards against drift between validAgentTypes and
+// harness.Kinds(). The config.go comment explicitly warns about this.
+func TestKindsAndValidTypesInSync(t *testing.T) {
+	// Every type in Kinds() must be in validAgentTypes.
+	for _, k := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi"} {
+		c := &Config{
+			Servers: map[string]Server{"x": {Command: "c"}},
+			Agents:  map[string]Agent{"a": {Type: k, Path: "~/x"}},
+		}
+		if err := c.Validate(); err != nil {
+			t.Errorf("Kinds drift: %q should be a valid agent type, got %v", k, err)
+		}
+	}
+}
+
+// TestAllAgentTypesRoundTrip verifies that every supported agent type
+// survives a yaml/toml/json save+load cycle with its type, path, and mode
+// preserved. The existing TestMultiFormatRoundTrip only covers Starter()'s 6
+// original agents; this covers all 11.
+func TestAllAgentTypesRoundTrip(t *testing.T) {
+	allKinds := []string{
+		"claude", "opencode", "codex", "crush", "forge", "hermes",
+		"copilot", "qwen", "gemini", "kilo", "kimi",
+	}
+	agents := map[string]Agent{}
+	for _, k := range allKinds {
+		agents[k] = Agent{Type: k, Path: "~/." + k + "/config", Mode: ModeGateway}
+	}
+	// opencode uses direct mode in the starter; exercise that path too.
+	oc := agents["opencode"]
+	oc.Mode = ModeDirect
+	agents["opencode"] = oc
+
+	for _, ext := range []string{".yaml", ".toml", ".json"} {
+		t.Run(ext, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "mcphub"+ext)
+			want := &Config{
+				Version: 1,
+				Servers: map[string]Server{"s": {Command: "x", Enabled: true}},
+				Agents:  agents,
+			}
+			if err := Save(path, want); err != nil {
+				t.Fatalf("Save(%s): %v", ext, err)
+			}
+			got, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load(%s): %v", ext, err)
+			}
+			if len(got.Agents) != len(allKinds) {
+				t.Fatalf("%s: %d agents, want %d", ext, len(got.Agents), len(allKinds))
+			}
+			for _, k := range allKinds {
+				a := got.Agents[k]
+				if a.Type != k {
+					t.Errorf("%s: agent %q type = %q, want %q", ext, k, a.Type, k)
+				}
+				if a.Path != "~/."+k+"/config" {
+					t.Errorf("%s: agent %q path = %q", ext, k, a.Path)
+				}
+			}
+			if got.Agents["opencode"].ResolvedMode() != ModeDirect {
+				t.Errorf("%s: opencode mode not round-tripped as direct: %+v", ext, got.Agents["opencode"])
+			}
+		})
+	}
+}

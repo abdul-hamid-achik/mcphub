@@ -190,6 +190,11 @@ func TestRemoteIdempotent(t *testing.T) {
 		{"crush", crushAdapter, "crush.json", `{"mcp":{}}`},
 		{"opencode", opencodeAdapter, "opencode.json", `{"mcp":{}}`},
 		{"codex", codexAdapter{}, "config.toml", ""},
+		{"copilot", copilotAdapter, "copilot.json", `{"mcpServers":{}}`},
+		{"qwen", qwenAdapter, "qwen.json", `{"mcpServers":{}}`},
+		{"gemini", geminiAdapter, "gemini.json", `{"mcpServers":{}}`},
+		{"kilo", kiloAdapter, "kilo.jsonc", `{"mcp":{}}`},
+		{"kimi", kimiAdapter{}, "kimi.toml", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,14 +288,14 @@ func TestForgeLifecycle(t *testing.T) {
 	p := writeFile(t, "forge.mcp.json", `{"mcpServers":{"keep":{"command":"k","disable":false}}}`)
 	applyLifecycle(t, forgeAdapter, p, "keep")
 
-	// a freshly written entry carries forge's `disable: false` flag
+	// a freshly written entry does NOT carry disable (it's user-owned, omitempty)
 	p2 := writeFile(t, "forge2.mcp.json", `{"mcpServers":{}}`)
 	a := forgeAdapter
 	if _, err := a.Apply(p2, gateway, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(read(t, p2), `"disable": false`) {
-		t.Errorf("forge entry should carry disable:false:\n%s", read(t, p2))
+	if strings.Contains(read(t, p2), `"disable"`) {
+		t.Errorf("fresh forge entry should not carry disable (user-owned):\n%s", read(t, p2))
 	}
 }
 
@@ -323,5 +328,634 @@ func TestOpencodeFlattensCommand(t *testing.T) {
 	body := read(t, p)
 	if !strings.Contains(body, `"codemap"`) || !strings.Contains(body, `"serve"`) {
 		t.Errorf("command+args should flatten into one array: %s", body)
+	}
+}
+
+func TestCopilotLifecycle(t *testing.T) {
+	p := writeFile(t, "mcp-config.json", `{"mcpServers":{"keep":{"type":"stdio","command":"k"}},"tools":{}}`)
+	applyLifecycle(t, copilotAdapter, p, "tools")
+	if !strings.Contains(read(t, p), "keep") {
+		t.Error("hand-written copilot server should survive")
+	}
+	// a freshly written stdio entry carries type:"stdio"
+	p2 := writeFile(t, "copilot2.json", `{"mcpServers":{}}`)
+	if _, err := copilotAdapter.Apply(p2, gateway, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, p2), `"type": "stdio"`) {
+		t.Errorf("copilot stdio entry should carry type:stdio:\n%s", read(t, p2))
+	}
+}
+
+func TestQwenLifecycle(t *testing.T) {
+	p := writeFile(t, "settings.json", `{"mcpServers":{"keep":{"command":"k"}},"model":"qwen"}`)
+	applyLifecycle(t, qwenAdapter, p, "model")
+	if !strings.Contains(read(t, p), "keep") {
+		t.Error("hand-written qwen server should survive")
+	}
+	// remote http → httpUrl
+	p2 := writeFile(t, "qwen2.json", `{"mcpServers":{}}`)
+	remote := []MCPServer{{Name: "r", URL: "https://e.com", Transport: "http"}}
+	if _, err := qwenAdapter.Apply(p2, remote, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, p2), `"httpUrl"`) {
+		t.Errorf("qwen http remote should use httpUrl:\n%s", read(t, p2))
+	}
+	// remote sse → url
+	p3 := writeFile(t, "qwen3.json", `{"mcpServers":{}}`)
+	sse := []MCPServer{{Name: "r", URL: "https://e.com", Transport: "sse"}}
+	if _, err := qwenAdapter.Apply(p3, sse, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, p3), `"url"`) || strings.Contains(read(t, p3), "httpUrl") {
+		t.Errorf("qwen sse remote should use url not httpUrl:\n%s", read(t, p3))
+	}
+}
+
+func TestGeminiLifecycle(t *testing.T) {
+	p := writeFile(t, "gemini.json", `{"mcpServers":{"keep":{"command":"k"}},"ui":{"theme":"dark"}}`)
+	applyLifecycle(t, geminiAdapter, p, "theme")
+	if !strings.Contains(read(t, p), "keep") {
+		t.Error("hand-written gemini server should survive")
+	}
+	// remote http → httpUrl (same as qwen)
+	p2 := writeFile(t, "gemini2.json", `{"mcpServers":{}}`)
+	remote := []MCPServer{{Name: "r", URL: "https://e.com", Transport: "http"}}
+	if _, err := geminiAdapter.Apply(p2, remote, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, p2), `"httpUrl"`) {
+		t.Errorf("gemini http remote should use httpUrl:\n%s", read(t, p2))
+	}
+}
+
+func TestKiloLifecycle(t *testing.T) {
+	// kilo uses JSONC — comments must not break parsing
+	p := writeFile(t, "kilo.jsonc", `// top comment
+{
+  "mcp": {
+    "keep": {"type": "local", "command": ["k"], "enabled": true}
+  },
+  "other": 42 /* inline */
+}`)
+	applyLifecycle(t, kiloAdapter, p, "other")
+	if !strings.Contains(read(t, p), "keep") {
+		t.Error("hand-written kilo server should survive")
+	}
+	// freshly written local entry flattens command+args and uses "environment"
+	p2 := writeFile(t, "kilo2.jsonc", `{"mcp":{}}`)
+	desired := []MCPServer{{Name: "cm", Command: "codemap", Args: []string{"serve"}, Env: map[string]string{"X": "1"}}}
+	if _, err := kiloAdapter.Apply(p2, desired, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p2)
+	if !strings.Contains(body, `"codemap"`) || !strings.Contains(body, `"serve"`) {
+		t.Errorf("kilo should flatten command+args: %s", body)
+	}
+	if !strings.Contains(body, `"environment"`) {
+		t.Errorf("kilo should use environment not env: %s", body)
+	}
+}
+
+func TestKimiLifecycle(t *testing.T) {
+	p := writeFile(t, "config.toml", "default_model = \"kimi\"\n[mcp_servers.existing]\ntype = \"local\"\ncommand = [\"keepme\"]\nenabled = true\n")
+	applyLifecycle(t, kimiAdapter{}, p, "keepme")
+	if !strings.Contains(read(t, p), "default_model") {
+		t.Error("kimi adapter dropped an unrelated top-level key")
+	}
+	// freshly written local entry carries type:"local" but NOT enabled (user-owned)
+	p2 := writeFile(t, "kimi2.toml", "")
+	desired := []MCPServer{{Name: "cm", Command: "codemap", Args: []string{"serve"}}}
+	if _, err := (kimiAdapter{}).Apply(p2, desired, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p2)
+	if !strings.Contains(body, `'local'`) {
+		t.Errorf("kimi entry should carry type:local:\n%s", body)
+	}
+	if strings.Contains(body, "enabled") {
+		t.Errorf("kimi entry should NOT carry enabled (user-owned):\n%s", body)
+	}
+}
+
+func TestStripJSONComments(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"no comments", `{"a":1}`, `{"a":1}`},
+		{"line comment", `{"a":1}\n// trailing`, `{"a":1}\n`},
+		{"block comment", `{"a":/* x */1}`, `{"a":1}`},
+		{"url in string", `{"u":"https://x.com"}`, `{"u":"https://x.com"}`},
+		{"escaped quote", `{"u":"he said \"hi\""}`, `{"u":"he said \"hi\""}`},
+		{"comment in string", `{"u":"// not a comment"}`, `{"u":"// not a comment"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(stripJSONComments([]byte(tc.in)))
+			// normalize: trim all whitespace for comparison
+			if strings.ReplaceAll(got, " ", "") != strings.ReplaceAll(tc.want, " ", "") {
+				t.Errorf("strip(%q)\n got %q\nwant %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestKimiUpdatePreservesExtraKeys pins the kimi overlay fix: updating a kimi
+// entry must overlay managed keys but keep unmodeled ones (e.g. tools/approval).
+func TestKimiUpdatePreservesExtraKeys(t *testing.T) {
+	p := writeFile(t, "kimi_update.toml",
+		`[mcp_servers.api]
+type = 'local'
+command = ['old']
+enabled = true
+tools = ['a', 'b']
+`)
+	a := kimiAdapter{}
+	desired := []MCPServer{{Name: "api", Command: "new"}} // command changed -> update
+	if _, err := a.Apply(p, desired, []string{"api"}, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "new") {
+		t.Error("command should have updated to 'new'")
+	}
+	if !strings.Contains(body, "'a'") || !strings.Contains(body, "'b'") {
+		t.Errorf("unmodeled tools key should survive update:\n%s", body)
+	}
+	if !strings.Contains(body, `type = 'local'`) {
+		t.Errorf("type should survive overlay:\n%s", body)
+	}
+	if !strings.Contains(body, "enabled = true") {
+		t.Errorf("enabled should survive overlay:\n%s", body)
+	}
+}
+
+// TestGeminiSseUsesUrl closes the asymmetry with qwen: sse transport must write
+// `url`, not `httpUrl`.
+func TestGeminiSseUsesUrl(t *testing.T) {
+	p := writeFile(t, "gemini_sse.json", `{"mcpServers":{}}`)
+	sse := []MCPServer{{Name: "r", URL: "https://e.com", Transport: "sse"}}
+	if _, err := geminiAdapter.Apply(p, sse, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, `"url"`) {
+		t.Errorf("gemini sse should use url:\n%s", body)
+	}
+	if strings.Contains(body, "httpUrl") {
+		t.Errorf("gemini sse should NOT use httpUrl:\n%s", body)
+	}
+}
+
+// TestQwenGeminiParseTransportField guards the READ direction: httpUrl -> http,
+// url -> sse, httpUrl takes precedence when both present.
+func TestQwenGeminiParseTransportField(t *testing.T) {
+	adapters := []struct {
+		name string
+		a    jsonAdapter
+	}{
+		{"qwen", qwenAdapter},
+		{"gemini", geminiAdapter},
+	}
+	for _, tc := range adapters {
+		t.Run(tc.name, func(t *testing.T) {
+			// httpUrl -> http
+			p := writeFile(t, tc.name+"_http.json", `{"mcpServers":{"r":{"httpUrl":"https://h.com"}}}`)
+			got, err := tc.a.List(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].URL != "https://h.com" || got[0].Transport != "http" {
+				t.Errorf("httpUrl parse: got %+v", got)
+			}
+			// url -> sse
+			p = writeFile(t, tc.name+"_sse.json", `{"mcpServers":{"r":{"url":"https://s.com"}}}`)
+			got, err = tc.a.List(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].URL != "https://s.com" || got[0].Transport != "sse" {
+				t.Errorf("url parse: got %+v", got)
+			}
+			// both present -> httpUrl wins
+			p = writeFile(t, tc.name+"_both.json", `{"mcpServers":{"r":{"httpUrl":"https://h.com","url":"https://s.com"}}}`)
+			got, err = tc.a.List(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].URL != "https://h.com" || got[0].Transport != "http" {
+				t.Errorf("precedence: httpUrl should win, got %+v", got)
+			}
+			// stdio: command+args, no transport
+			p = writeFile(t, tc.name+"_local.json", `{"mcpServers":{"r":{"command":"npx","args":["-y","x"]}}}`)
+			got, err = tc.a.List(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Command != "npx" || len(got[0].Args) != 2 || got[0].Transport != "" {
+				t.Errorf("stdio parse: got %+v", got)
+			}
+		})
+	}
+}
+
+// TestCopilotRemoteTypeAndReadback verifies copilot writes type:http/sse for
+// remotes and round-trips them through List.
+func TestCopilotRemoteTypeAndReadback(t *testing.T) {
+	for _, tc := range []struct {
+		transport, wantType string
+	}{
+		{"http", "http"},
+		{"sse", "sse"},
+		{"", "http"}, // empty defaults to http
+	} {
+		t.Run(tc.transport, func(t *testing.T) {
+			p := writeFile(t, "copilot_"+tc.transport+".json", `{"mcpServers":{}}`)
+			remote := []MCPServer{{Name: "r", URL: "https://e.com", Transport: tc.transport}}
+			if _, err := copilotAdapter.Apply(p, remote, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			body := read(t, p)
+			if !strings.Contains(body, `"type": "`+tc.wantType+`"`) {
+				t.Errorf("expected type %q:\n%s", tc.wantType, body)
+			}
+			// read back
+			got, err := copilotAdapter.List(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTransport := tc.transport
+			if wantTransport == "" {
+				wantTransport = "http"
+			}
+			if len(got) != 1 || got[0].URL != "https://e.com" || got[0].Transport != wantTransport {
+				t.Errorf("read-back: got %+v", got)
+			}
+		})
+	}
+}
+
+// TestCopilotUpdatePreservesExtraKeys verifies that updating a copilot entry
+// keeps unmodeled per-entry keys (headers, timeout, tools).
+func TestCopilotUpdatePreservesExtraKeys(t *testing.T) {
+	p := writeFile(t, "copilot_update.json",
+		`{"mcpServers":{"api":{"type":"http","url":"https://old","headers":{"Authorization":"Bearer X"},"timeout":30}}}`)
+	desired := []MCPServer{{Name: "api", URL: "https://new", Transport: "http"}}
+	if _, err := copilotAdapter.Apply(p, desired, []string{"api"}, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "https://new") {
+		t.Error("url should have updated")
+	}
+	if !strings.Contains(body, "Bearer X") || !strings.Contains(body, `"timeout"`) {
+		t.Errorf("update dropped unmodeled keys (headers/timeout):\n%s", body)
+	}
+}
+
+// TestKiloRemoteAndFreshFlags tests the remote branch and the enabled/type
+// flags on a fresh local write.
+func TestKiloRemoteAndFreshFlags(t *testing.T) {
+	// remote -> type:remote, url, no command, no enabled (user-owned)
+	p := writeFile(t, "kilo_remote.jsonc", `{"mcp":{}}`)
+	remote := []MCPServer{{Name: "r", URL: "https://e.com", Transport: "http"}}
+	if _, err := kiloAdapter.Apply(p, remote, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, `"remote"`) || !strings.Contains(body, `"https://e.com"`) {
+		t.Errorf("kilo remote: missing type/url:\n%s", body)
+	}
+	if strings.Contains(body, `"command"`) {
+		t.Errorf("kilo remote: should NOT have command:\n%s", body)
+	}
+	// local -> type:local, no enabled (user-owned)
+	p = writeFile(t, "kilo_local.jsonc", `{"mcp":{}}`)
+	local := []MCPServer{{Name: "cm", Command: "codemap", Args: []string{"serve"}}}
+	if _, err := kiloAdapter.Apply(p, local, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body = read(t, p)
+	if !strings.Contains(body, `"local"`) {
+		t.Errorf("kilo local: missing type:\n%s", body)
+	}
+	// read-back: transport is stripped (kilo can't represent http vs sse)
+	got, err := kiloAdapter.List(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Command != "codemap" || len(got[0].Args) != 1 || got[0].Transport != "" {
+		t.Errorf("kilo read-back: got %+v", got)
+	}
+}
+
+// TestKimiRemoteAndEnvironment tests the remote branch and env->environment
+// write + read-back for kimi.
+func TestKimiRemoteAndEnvironment(t *testing.T) {
+	// remote
+	p := writeFile(t, "kimi_remote.toml", "")
+	remote := []MCPServer{{Name: "r", URL: "https://e.com"}}
+	if _, err := (kimiAdapter{}).Apply(p, remote, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, `remote`) || !strings.Contains(body, `https://e.com`) {
+		t.Errorf("kimi remote: missing type/url:\n%s", body)
+	}
+	// local with env -> environment table
+	p = writeFile(t, "kimi_env.toml", "")
+	local := []MCPServer{{Name: "cm", Command: "codemap", Args: []string{"serve"}, Env: map[string]string{"X": "1"}}}
+	if _, err := (kimiAdapter{}).Apply(p, local, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body = read(t, p)
+	if !strings.Contains(body, "environment") || !strings.Contains(body, "X") {
+		t.Errorf("kimi env: should write under 'environment':\n%s", body)
+	}
+	// read-back
+	got, err := kimiAdapter{}.List(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Command != "codemap" || len(got[0].Args) != 1 || got[0].Env["X"] != "1" {
+		t.Errorf("kimi read-back: got %+v", got)
+	}
+}
+
+// TestForReturnsCorrectKind verifies adapter.Kind() matches the requested kind.
+func TestForReturnsCorrectKind(t *testing.T) {
+	for _, k := range Kinds() {
+		a, err := For(k)
+		if err != nil {
+			t.Errorf("For(%q): %v", k, err)
+			continue
+		}
+		if a.Kind() != k {
+			t.Errorf("For(%q).Kind() = %q", k, a.Kind())
+		}
+	}
+}
+
+// TestKiloJSONCEdgeComments exercises JSONC comments inside the mcp object
+// and inside a string value (not a comment).
+func TestKiloJSONCEdgeComments(t *testing.T) {
+	p := writeFile(t, "kilo_edge.jsonc", `{
+  // top comment
+  "mcp": {
+    "keep": {  // inline comment
+      "type": "local",
+      "command": ["k"]
+    }
+  },
+  "note": "url with // is not a comment"
+}`)
+	applyLifecycle(t, kiloAdapter, p, "note")
+	// the string value with // must survive
+	if !strings.Contains(read(t, p), "not a comment") {
+		t.Error("string value containing // was corrupted")
+	}
+}
+
+// TestUpdatePreservesExtraKeysAllAdapters pins finding-1 on the UPDATE path
+// for every JSON adapter: updating an entry overlays modeled fields but keeps
+// unmodeled ones. claude and copilot already have dedicated tests above; this
+// covers opencode, crush, forge, and kilo.
+func TestUpdatePreservesExtraKeysAllAdapters(t *testing.T) {
+	cases := []struct {
+		name    string
+		a       Adapter
+		file    string
+		seed    string
+		desired []MCPServer
+		owned   []string
+		// A string that must survive the update (an unmodeled key's value).
+		mustSurvive string
+		// A string confirming the modeled field was updated.
+		mustUpdate string
+	}{
+		{
+			name:        "opencode",
+			a:           opencodeAdapter,
+			file:        "oc.json",
+			seed:        `{"mcp":{"api":{"type":"local","command":["old"],"enabled":true,"timeout":30}}}`,
+			desired:     []MCPServer{{Name: "api", Command: "new"}},
+			owned:       []string{"api"},
+			mustSurvive: `"timeout"`,
+			mustUpdate:  `"new"`,
+		},
+		{
+			name:        "crush",
+			a:           crushAdapter,
+			file:        "crush.json",
+			seed:        `{"mcp":{"api":{"type":"stdio","command":"old","timeout":30}}}`,
+			desired:     []MCPServer{{Name: "api", Command: "new"}},
+			owned:       []string{"api"},
+			mustSurvive: `"timeout"`,
+			mustUpdate:  `"new"`,
+		},
+		{
+			name:        "forge",
+			a:           forgeAdapter,
+			file:        "forge.json",
+			seed:        `{"mcpServers":{"api":{"command":"old","disable":false,"timeout":30}}}`,
+			desired:     []MCPServer{{Name: "api", Command: "new"}},
+			owned:       []string{"api"},
+			mustSurvive: `"timeout"`,
+			mustUpdate:  `"new"`,
+		},
+		{
+			name:        "kilo",
+			a:           kiloAdapter,
+			file:        "kilo.jsonc",
+			seed:        `{"mcp":{"api":{"type":"local","command":["old"],"enabled":true,"timeout":30}}}`,
+			desired:     []MCPServer{{Name: "api", Command: "new"}},
+			owned:       []string{"api"},
+			mustSurvive: `"timeout"`,
+			mustUpdate:  `"new"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeFile(t, tc.file, tc.seed)
+			if _, err := tc.a.Apply(p, tc.desired, tc.owned, false); err != nil {
+				t.Fatal(err)
+			}
+			body := read(t, p)
+			if !strings.Contains(body, tc.mustUpdate) {
+				t.Errorf("%s: modeled field should have updated to %q:\n%s", tc.name, tc.mustUpdate, body)
+			}
+			if !strings.Contains(body, tc.mustSurvive) {
+				t.Errorf("%s: unmodeled key should survive update:\n%s", tc.name, body)
+			}
+		})
+	}
+}
+
+// TestCodexUpdatePreservesExtraKeys pins the codex TOML overlay on the update
+// path: updating a codex entry must preserve unmodeled keys like
+// startup_timeout_sec.
+func TestCodexUpdatePreservesExtraKeys(t *testing.T) {
+	p := writeFile(t, "codex_update.toml",
+		`[mcp_servers.api]
+command = 'old'
+args = ['serve']
+startup_timeout_sec = 120
+`)
+	desired := []MCPServer{{Name: "api", Command: "new", Args: []string{"serve"}}}
+	if _, err := (codexAdapter{}).Apply(p, desired, []string{"api"}, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "new") {
+		t.Error("command should have updated to 'new'")
+	}
+	if !strings.Contains(body, "startup_timeout_sec") {
+		t.Errorf("codex update dropped unmodeled startup_timeout_sec:\n%s", body)
+	}
+}
+
+// TestHermesUpdatePreservesExtraKeys pins the hermes YAML overlay on the
+// update path.
+func TestHermesUpdatePreservesExtraKeys(t *testing.T) {
+	p := writeFile(t, "hermes_update.yaml",
+		"mcp_servers:\n  api:\n    command: old\n    enabled: true\n    timeout: 30\n")
+	desired := []MCPServer{{Name: "api", Command: "new"}}
+	if _, err := (hermesAdapter{}).Apply(p, desired, []string{"api"}, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "new") {
+		t.Error("command should have updated to 'new'")
+	}
+	if !strings.Contains(body, "timeout") {
+		t.Errorf("hermes update dropped unmodeled timeout:\n%s", body)
+	}
+}
+
+// TestForgeUpdatePreservesDisableTrue pins a real bug: forge's `disable` flag
+// was in managedKeys and forgeEntryFrom hardcoded Disable:false, so any update
+// silently reset the user's disable:true to false. The fix removes `disable`
+// from managedKeys and uses omitempty so entryFrom no longer emits it.
+func TestForgeUpdatePreservesDisableTrue(t *testing.T) {
+	p := writeFile(t, "forge_disable.json", `{"mcpServers":{"api":{"command":"old","disable":true}}}`)
+	desired := []MCPServer{{Name: "api", Command: "new"}}
+	if _, err := forgeAdapter.Apply(p, desired, []string{"api"}, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "new") {
+		t.Error("command should have updated to 'new'")
+	}
+	if !strings.Contains(body, `"disable": true`) {
+		t.Errorf("user's disable:true should survive an update:\n%s", body)
+	}
+}
+
+// TestEnabledFlagSurvivesUpdate pins the systemic fix: the enabled/disabled
+// flag is user-owned, not managed by mcphub. Updating an entry must not reset
+// the user's enabled:false to true.
+func TestEnabledFlagSurvivesUpdate(t *testing.T) {
+	cases := []struct {
+		name    string
+		a       Adapter
+		file    string
+		seed    string
+		desired []MCPServer
+		owned   []string
+		// A string that must NOT appear (proving enabled was NOT overwritten to true).
+		mustNotContain string
+		// A string confirming the modeled field was updated.
+		mustUpdate string
+	}{
+		{
+			name:           "opencode",
+			a:              opencodeAdapter,
+			file:           "oc_disable.json",
+			seed:           `{"mcp":{"api":{"type":"local","command":["old"],"enabled":false}}}`,
+			desired:        []MCPServer{{Name: "api", Command: "new"}},
+			owned:          []string{"api"},
+			mustNotContain: `"enabled": true`,
+			mustUpdate:     `"new"`,
+		},
+		{
+			name:           "kilo",
+			a:              kiloAdapter,
+			file:           "kilo_disable.jsonc",
+			seed:           `{"mcp":{"api":{"type":"local","command":["old"],"enabled":false}}}`,
+			desired:        []MCPServer{{Name: "api", Command: "new"}},
+			owned:          []string{"api"},
+			mustNotContain: `"enabled": true`,
+			mustUpdate:     `"new"`,
+		},
+		{
+			name:           "hermes",
+			a:              hermesAdapter{},
+			file:           "hermes_disable.yaml",
+			seed:           "mcp_servers:\n  api:\n    command: old\n    enabled: false\n",
+			desired:        []MCPServer{{Name: "api", Command: "new"}},
+			owned:          []string{"api"},
+			mustNotContain: "enabled: true",
+			mustUpdate:     "new",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeFile(t, tc.file, tc.seed)
+			if _, err := tc.a.Apply(p, tc.desired, tc.owned, false); err != nil {
+				t.Fatal(err)
+			}
+			body := read(t, p)
+			if !strings.Contains(body, tc.mustUpdate) {
+				t.Errorf("%s: modeled field should have updated:\n%s", tc.name, body)
+			}
+			if strings.Contains(body, tc.mustNotContain) {
+				t.Errorf("%s: enabled flag was reset to true — should be user-owned:\n%s", tc.name, body)
+			}
+		})
+	}
+}
+
+// TestQwenUpdatePreservesExtraKeys pins the qwen overlay on the update path.
+func TestQwenUpdatePreservesExtraKeys(t *testing.T) {
+	p := writeFile(t, "qwen_update.json",
+		`{"mcpServers":{"api":{"command":"old","timeout":30,"headers":{"Authorization":"Bearer X"}}}}`)
+	desired := []MCPServer{{Name: "api", Command: "new"}}
+	if _, err := qwenAdapter.Apply(p, desired, []string{"api"}, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "new") {
+		t.Error("command should have updated to 'new'")
+	}
+	if !strings.Contains(body, "Bearer X") || !strings.Contains(body, `"timeout"`) {
+		t.Errorf("qwen update dropped unmodeled keys:\n%s", body)
+	}
+}
+
+// TestGeminiUpdatePreservesExtraKeys pins the gemini overlay on the update path.
+func TestGeminiUpdatePreservesExtraKeys(t *testing.T) {
+	p := writeFile(t, "gemini_update.json",
+		`{"mcpServers":{"api":{"command":"old","timeout":30,"headers":{"Authorization":"Bearer X"}}}}`)
+	desired := []MCPServer{{Name: "api", Command: "new"}}
+	if _, err := geminiAdapter.Apply(p, desired, []string{"api"}, false); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "new") {
+		t.Error("command should have updated to 'new'")
+	}
+	if !strings.Contains(body, "Bearer X") || !strings.Contains(body, `"timeout"`) {
+		t.Errorf("gemini update dropped unmodeled keys:\n%s", body)
+	}
+}
+
+// TestKindsReturnsExactSet pins the exact membership and order of Kinds() so
+// a dropped or reordered kind is caught immediately.
+func TestKindsReturnsExactSet(t *testing.T) {
+	got := Kinds()
+	want := []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Kinds() = %v, want %v", got, want)
 	}
 }

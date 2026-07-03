@@ -56,8 +56,10 @@ the current directory, then `~/.config/mcphub/mcphub.yaml`.
 
 ## `init`
 
-Write a starter `mcphub.yaml` with example servers and the three agent harnesses
-pre-wired.
+Write a starter `mcphub.yaml` with example servers and six agent harnesses
+pre-wired (the starter seeds Claude, opencode, Codex, Crush, Forge, Hermes;
+five more — copilot, qwen, gemini, kilo, kimi — are available when you install
+them; run `mcphub agents` to see every supported type and its status).
 
 ```sh
 mcphub init
@@ -240,6 +242,9 @@ Diagnose your setup. mcphub checks, in order:
   `PATH` (remote servers are reported as remote),
 - **agent:&lt;name&gt;** — for each agent, that its `type` is supported and its
   config file exists (reports path, type, and resolved mode),
+- **available:&lt;type&gt;** — for each supported harness whose config file
+  exists on disk but isn't wired in `mcphub.yaml` (run `mcphub agents` to list
+  all supported types, or `mcphub init --from-agents` to auto-wire them),
 - **store** — that the intelligence database opens (reports its path),
 - **tvault** — when any server uses a `vault`, that `tvault` is on `PATH`,
 - **binary** — the path to the running mcphub executable.

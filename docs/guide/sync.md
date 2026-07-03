@@ -1,8 +1,8 @@
 # Sync to your agents
 
 `mcphub sync` reconciles every agent harness with `mcphub.yaml`. It is how you
-stop hand-editing `~/.claude.json`, `opencode.json`, and `~/.codex/config.toml`
-one by one: edit the single source of truth, then push it everywhere.
+stop hand-editing each agent's config file one by one: edit the single
+source of truth, then push it everywhere.
 
 ```sh
 mcphub sync                 # dry run: print the diff, change nothing
@@ -75,7 +75,7 @@ core):
 ## The harness adapters
 
 Each agent `type` maps to an adapter that knows that harness's on-disk format.
-Supported types: **`claude`**, **`opencode`**, **`codex`**.
+Supported types: **`claude`**, **`opencode`**, **`codex`**, **`crush`**, **`forge`**, **`hermes`**, **`copilot`**, **`qwen`**, **`gemini`**, **`kilo`**, **`kimi`**.
 
 ### Claude Code (`type: claude`)
 
@@ -101,6 +101,89 @@ so — heads up — **comments and key ordering in that file are not preserved**
 Only the `mcp_servers` subtree is logically changed; a timestamped `.bak` is
 always written first, and sync defaults to dry-run, so this is safe but worth
 knowing.
+
+### Crush (`type: crush`)
+
+Target: `~/.config/crush/crush.json`. MCP servers live under the top-level
+**`mcp`** object. Each entry carries an explicit `type` (`"stdio"` | `"http"` |
+`"sse"`) alongside `command`/`args` or `url`. As with the other JSON adapters,
+every other key is preserved byte-for-byte.
+
+### Forge / forgecode (`type: forge`)
+
+Target: `~/forge/.mcp.json` (Forge's own convention is a project-local
+`.mcp.json`, but mcphub's default path is the home-relative
+`~/forge/.mcp.json` — set the agent's `path` if you keep it elsewhere). MCP
+**`mcpServers`** object — the same shape Claude uses — except each entry carries
+a `disable` boolean rather than a `type` tag. Other JSON keys are preserved
+byte-for-byte.
+
+### Hermes (`type: hermes`)
+
+Target: `~/.hermes/config.yaml`. MCP servers live under the top-level
+**`mcp_servers`** map; each entry carries an `enabled` flag. Only the
+`mcp_servers` subtree is logically changed and a timestamped `.bak` is always
+written first. **Caveat (like Codex):** the YAML is round-tripped through a
+generic map, so on a write the whole file is reserialized — every key's *value*
+is preserved, but comments and key ordering elsewhere are not.
+
+### GitHub Copilot CLI (`type: copilot`)
+
+Target: `~/.copilot/mcp-config.json`. MCP servers live under the top-level
+**`mcpServers`** object — the same shape Claude uses — except every entry
+carries an explicit `type` (`"local"`/`"stdio"` | `"http"` | `"sse"`). Entries
+may also include `tools`, `headers`, and `timeout` keys; these are left
+untouched as unmodeled. Other JSON keys are preserved byte-for-byte.
+
+### Qwen Code (`type: qwen`)
+
+Target: `~/.qwen/settings.json`. MCP servers live under the top-level
+**`mcpServers`** object. Qwen distinguishes transport by field name rather than
+a type tag: stdio uses `command`+`args`, HTTP uses `httpUrl`, and SSE uses
+`url`. Extra keys (`headers`, `timeout`, `trust`, …) are preserved as
+unmodeled. Other JSON keys are preserved byte-for-byte.
+
+### Gemini CLI (`type: gemini`)
+
+Target: `~/.gemini/settings.json`. MCP servers live under the top-level
+**`mcpServers`** object. Gemini uses the same field-name convention as Qwen:
+stdio → `command`+`args`, HTTP → `httpUrl`, SSE → `url`. Extra keys (`headers`,
+`timeout`, `trust`, `includeTools`, …) are preserved as unmodeled. Other JSON
+keys are preserved byte-for-byte.
+
+### Kilo Code (`type: kilo`)
+
+Target: `~/.config/kilo/kilo.jsonc`. MCP servers live under the top-level
+**`mcp`** object. Kilo uses `type: "local"`/`"remote"`, flattens command+args
+into a single `command` **array**, and names the env map `environment` — the
+same entry shape as opencode. **Caveat:** the file is JSONC (JSON with
+comments); mcphub strips comments before parsing so `.jsonc` reads the same as
+`.json`, but **comments are not preserved on write** (a `.bak` is taken first,
+matching the codex/hermes caveat). Other JSON keys are preserved byte-for-byte.
+
+### Kimi Code CLI (`type: kimi`)
+
+Target: `~/.kimi/config.toml`. MCP servers live under the **`[mcp_servers.*]`**
+tables. Kimi uses `type: "local"`/`"remote"`, flattens command+args into a
+`command` **array**, and names the env map `environment` — the same entry shape
+as opencode/kilo but in TOML. **Caveat (like Codex):** TOML is round-tripped
+through a generic map, so comments and key ordering in the file are not
+preserved. A timestamped `.bak` is always written before mutating, and `sync`
+defaults to dry-run, so this is safe but worth knowing.
+
+### The five newer types
+
+`claude`, `opencode`, `codex`, `crush`, `forge`, and `hermes` are the original
+harnesses that `mcphub init` seeds into a starter `mcphub.yaml`. The five
+newer types — **`copilot`**, **`qwen`**, **`gemini`**, **`kilo`**, and **`kimi`**
+— are registered and fully supported (they sync just like the others) but are
+**not seeded by default**. To use one, add an `agents:` entry for it to
+`mcphub.yaml` when you install the corresponding tool, or run
+`mcphub init --from-agents` to auto-discover any whose config files already
+exist on disk. `mcphub agents` lists every type with its status
+(configured / available / not_installed), and `mcphub doctor` reports
+`available:` entries for types that have a config file but are not yet in
+`mcphub.yaml`.
 
 ## Scoping and skipping
 

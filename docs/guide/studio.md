@@ -18,7 +18,10 @@ A header line shows the server/enabled/expose/agent counts, then three tabs:
 - **Servers** — every server in `mcphub.yaml`, each showing an on/off mark, its
   name, kind, and description. The cursor (`▶`) marks the current row.
 - **Agents** — each harness mcphub syncs into, with its type, mode, how many
-  servers mcphub currently manages there, and its config path.
+  servers mcphub currently manages there, and its config path. Agents that
+  have a config file on disk but are not declared in `mcphub.yaml` are shown
+  as **available** at the bottom of the list — add them to `agents` (or run
+  `mcphub agents`) to start syncing them.
 - **Stats** — the same local intelligence `mcphub stats` reports: total calls,
   estimated tokens, and errors, followed by spring-animated per-server bars.
 

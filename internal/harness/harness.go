@@ -7,6 +7,11 @@
 //	crush    ~/.config/crush/crush.json  JSON "mcp"
 //	forge    .mcp.json                   JSON "mcpServers" (entries use `disable`)
 //	hermes   ~/.hermes/config.yaml       YAML "mcp_servers"
+//	copilot  ~/.copilot/mcp-config.json  JSON "mcpServers" (type: local|http|sse)
+//	qwen     ~/.qwen/settings.json       JSON "mcpServers" (httpUrl|url by transport)
+//	gemini   ~/.gemini/settings.json     JSON "mcpServers" (httpUrl|url by transport)
+//	kilo     ~/.config/kilo/kilo.jsonc   JSONC "mcp" (type: local|remote, command array)
+//	kimi     ~/.kimi/config.toml         TOML "[mcp_servers.*]" (type: local|remote)
 //
 // Each adapter is responsible for a SAFE read-modify-write: it produces a
 // dry-run Plan (the diff) without writing, writes a timestamped .bak before
@@ -14,16 +19,20 @@
 // the modeled fields so any extra keys a user added to a managed entry (custom
 // headers, timeouts, an explicit enabled:false) survive.
 //
-// The JSON adapters (claude/opencode/crush/forge) preserve every other key in
-// the file byte-for-byte. The Codex (TOML) and Hermes (YAML) adapters are the
-// exception: they round-trip through a generic map, so on a write the whole file
-// is reserialized — every key's VALUE is preserved, but comments and key/table
-// ordering elsewhere are not. A .bak is always written first.
+// The JSON adapters (claude/opencode/crush/forge/copilot/qwen/gemini/kilo)
+// preserve every other key in the file byte-for-byte. readJSONObject strips
+// JSONC comments so .jsonc files (kilo) parse the same as .json; comments are
+// not preserved on write (a .bak is taken first). The Codex, Kimi (TOML), and
+// Hermes (YAML) adapters are the other exception: they round-trip through a
+// generic map, so on a write the whole file is reserialized — every key's
+// VALUE is preserved, but comments and key/table ordering elsewhere are not.
+// A .bak is always written first.
 package harness
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -135,6 +144,16 @@ func For(kind string) (Adapter, error) {
 		return forgeAdapter, nil
 	case "hermes":
 		return hermesAdapter{}, nil
+	case "copilot":
+		return copilotAdapter, nil
+	case "qwen":
+		return qwenAdapter, nil
+	case "gemini":
+		return geminiAdapter, nil
+	case "kilo":
+		return kiloAdapter, nil
+	case "kimi":
+		return kimiAdapter{}, nil
 	default:
 		return nil, fmt.Errorf("unknown harness type %q (supported: %s)", kind, strings.Join(Kinds(), ", "))
 	}
@@ -142,7 +161,51 @@ func For(kind string) (Adapter, error) {
 
 // Kinds lists the supported harness types.
 func Kinds() []string {
-	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes"}
+	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi"}
+}
+
+// DefaultPath returns the conventional config file path for a harness kind,
+// or "" if the kind is unknown. Paths follow each tool's documented convention:
+// home-dotfiles (claude, codex, copilot, qwen, gemini, kimi) and XDG-based
+// (opencode, crush, kilo). The path uses ~ for home; callers expand it with
+// config.ExpandPath before stat/open.
+func DefaultPath(kind string) string {
+	home, _ := os.UserHomeDir()
+	xdg := xdgConfigHome()
+	switch kind {
+	case "claude":
+		return filepath.Join(home, ".claude.json")
+	case "opencode":
+		return filepath.Join(xdg, "opencode", "opencode.json")
+	case "codex":
+		return filepath.Join(home, ".codex", "config.toml")
+	case "crush":
+		return filepath.Join(xdg, "crush", "crush.json")
+	case "forge":
+		return filepath.Join(home, "forge", ".mcp.json")
+	case "hermes":
+		return filepath.Join(home, ".hermes", "config.yaml")
+	case "copilot":
+		return filepath.Join(home, ".copilot", "mcp-config.json")
+	case "qwen":
+		return filepath.Join(home, ".qwen", "settings.json")
+	case "gemini":
+		return filepath.Join(home, ".gemini", "settings.json")
+	case "kilo":
+		return filepath.Join(xdg, "kilo", "kilo.jsonc")
+	case "kimi":
+		return filepath.Join(home, ".kimi", "config.toml")
+	}
+	return ""
+}
+
+// xdgConfigHome returns $XDG_CONFIG_HOME, or ~/.config when unset.
+func xdgConfigHome() string {
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return x
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config")
 }
 
 // remoteTransport returns the transport to record for a parsed entry. Transport

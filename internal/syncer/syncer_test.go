@@ -149,3 +149,55 @@ func TestReconcileDriftRemoval(t *testing.T) {
 		t.Errorf("after removal the managed set should be empty, got %v", m)
 	}
 }
+
+// TestReconcileAllAdapterKinds proves the wiring (harness.For dispatch) works
+// end-to-end for every registered kind: write the gateway, persist managed,
+// then disable and see it removed.
+func TestReconcileAllAdapterKinds(t *testing.T) {
+	dir := t.TempDir()
+	seed := map[string]string{
+		"claude":   "{}",
+		"opencode": `{"mcp":{}}`,
+		"codex":    "",
+		"crush":    `{"mcp":{}}`,
+		"forge":    `{"mcpServers":{}}`,
+		"hermes":   "",
+		"copilot":  `{"mcpServers":{}}`,
+		"qwen":     `{"mcpServers":{}}`,
+		"gemini":   `{"mcpServers":{}}`,
+		"kilo":     `{"mcp":{}}`,
+		"kimi":     "",
+	}
+	ext := map[string]string{
+		"claude": ".json", "opencode": ".json", "codex": ".toml",
+		"crush": ".json", "forge": ".json", "hermes": ".yaml",
+		"copilot": ".json", "qwen": ".json", "gemini": ".json",
+		"kilo": ".jsonc", "kimi": ".toml",
+	}
+	for _, kind := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi"} {
+		t.Run(kind, func(t *testing.T) {
+			path := filepath.Join(dir, kind+ext[kind])
+			if err := os.WriteFile(path, []byte(seed[kind]), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			c := &config.Config{
+				Servers: map[string]config.Server{"s": {Command: "x", Enabled: true}},
+				Agents:  map[string]config.Agent{"a": {Type: kind, Path: path, Mode: config.ModeGateway}},
+			}
+			st := newStore(t)
+			ctx := context.Background()
+			const self = "/bin/mcphub"
+
+			res := Reconcile(ctx, c, st, self, nil, true)
+			if res[0].Err != nil {
+				t.Fatalf("write: %v", res[0].Err)
+			}
+			if !res[0].Plan.Applied {
+				t.Fatalf("write should apply: %+v", res[0])
+			}
+			if m, _ := st.ManagedFor(ctx, "a"); len(m) != 1 || m[0] != "mcphub" {
+				t.Errorf("managed=[mcphub], got %v", m)
+			}
+		})
+	}
+}

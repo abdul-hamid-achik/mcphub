@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/harmonica"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
+	"github.com/abdul-hamid-achik/mcphub/internal/harness"
 	"github.com/abdul-hamid-achik/mcphub/internal/store"
 	"github.com/abdul-hamid-achik/mcphub/internal/syncer"
 )
@@ -67,10 +68,11 @@ type Model struct {
 	store   *store.Store
 	self    string
 
-	servers []string
-	agents  []string
-	cursor  int
-	tab     int
+	servers         []string
+	availableAgents []string // types with config files on disk but not in config
+	agents          []string
+	cursor          int
+	tab             int
 
 	totals      store.Totals
 	serverStats []store.ServerStat
@@ -109,6 +111,7 @@ func New(cfg *config.Config, cfgPath string, st *store.Store) Model {
 func (m *Model) reload() {
 	m.servers = m.cfg.ServerNames()
 	m.agents = m.cfg.AgentNames()
+	m.availableAgents = computeAvailableAgents(m.cfg)
 	if m.store == nil {
 		return
 	}
@@ -442,25 +445,55 @@ func (m Model) renderServers() string {
 }
 
 func (m Model) renderAgents() string {
-	if len(m.agents) == 0 {
-		return dimStyle.Render("  No agents configured. Add an `agents:` block to mcphub.yaml.")
-	}
 	var b strings.Builder
-	for i, name := range m.agents {
-		a := m.cfg.Agents[name]
-		cursor := "  "
-		if i == m.cursor {
-			cursor = selectedStyle.Render("▶ ")
+	if len(m.agents) == 0 {
+		b.WriteString(dimStyle.Render("  No agents configured. Add an `agents:` block to mcphub.yaml."))
+		b.WriteString("\n")
+	} else {
+		for i, name := range m.agents {
+			a := m.cfg.Agents[name]
+			cursor := "  "
+			if i == m.cursor {
+				cursor = selectedStyle.Render("▶ ")
+			}
+			managed := m.managed[name]
+			b.WriteString(fmt.Sprintf("%s%-10s %s  %s  %s\n",
+				cursor, name,
+				dimStyle.Render(fmt.Sprintf("%-8s", a.Type)),
+				onStyle.Render(string(a.ResolvedMode())),
+				dimStyle.Render(fmt.Sprintf("manages %d · %s", managed, a.Path))))
 		}
-		managed := m.managed[name]
-		b.WriteString(fmt.Sprintf("%s%-10s %s  %s  %s\n",
-			cursor, name,
-			dimStyle.Render(fmt.Sprintf("%-8s", a.Type)),
-			onStyle.Render(string(a.ResolvedMode())),
-			dimStyle.Render(fmt.Sprintf("manages %d · %s", managed, a.Path))))
 	}
-	b.WriteString("\n" + dimStyle.Render("  press s to sync these agents from mcphub.yaml"))
+	// Show available-but-unconfigured agents.
+	if len(m.availableAgents) > 0 {
+		b.WriteString("\n" + subtleStyle.Render("  available (config file exists, not in mcphub.yaml):"))
+		b.WriteString("\n" + subtleStyle.Render("  "+strings.Join(m.availableAgents, ", ")))
+		b.WriteString("\n" + dimStyle.Render("  run 'mcphub init --from-agents' to add them"))
+	}
+	if len(m.agents) > 0 {
+		b.WriteString("\n" + dimStyle.Render("  press s to sync these agents from mcphub.yaml"))
+	}
 	return b.String()
+}
+
+// computeAvailableAgents returns the harness kinds whose default config file
+// exists on disk but aren't already wired into the config.
+func computeAvailableAgents(cfg *config.Config) []string {
+	configured := map[string]bool{}
+	for _, name := range cfg.AgentNames() {
+		configured[cfg.Agents[name].Type] = true
+	}
+	var avail []string
+	for _, kind := range harness.Kinds() {
+		if configured[kind] {
+			continue
+		}
+		p := config.ExpandPath(harness.DefaultPath(kind))
+		if _, err := os.Stat(p); err == nil {
+			avail = append(avail, kind)
+		}
+	}
+	return avail
 }
 
 func (m Model) renderStats() string {
