@@ -148,6 +148,39 @@ agents:
 Mix modes freely: one agent can run through the gateway while another talks to
 servers directly.
 
+## Per-agent routing
+
+Modes and `expose` are global knobs. For finer control — "Codex gets only
+codemap and vecgrep; Claude gets everything" — give an agent a `servers` and/or
+`tools` allowlist:
+
+```yaml
+agents:
+  codex:
+    type: codex
+    path: ~/.codex/config.toml
+    mode: gateway
+    servers: [codemap, vecgrep]                # only these enabled servers
+    tools: [codemap__codemap_find, vecgrep__vecgrep_search]  # gateway-only
+```
+
+- **`servers`** — which enabled downstream servers the agent may reach.
+  Omit it for all enabled servers; an explicit empty list `[]` means **none**
+  (a deliberately minimal agent). In direct mode only those servers are
+  written; in gateway mode the spawned `mcphub mcp serve --agent <name>`
+  proxies only them.
+- **`tools`** — which `server__tool` names a gateway-mode agent may call (each
+  must belong to one of the allowed `servers`). Omit for every tool of the
+  allowed servers; an explicit empty list `[]` means **none**. Direct mode
+  can't filter individual tools (the agent talks to each server itself), so
+  `tools` is rejected there.
+
+The gateway refuses out-of-scope calls with a clear error, and `mcphub doctor`
+reports each agent's scope (`routes to N/M enabled servers`). An omitted
+`servers`/`tools` is unscoped (sees everything) — the default; an explicit
+empty list is the opposite extreme (sees nothing of that kind). This is
+context **curation**, not a security isolation boundary.
+
 ## Token savings
 
 This is the practical payoff of gateway mode.

@@ -23,17 +23,24 @@ type AgentResult struct {
 
 // Desired computes the server entries mcphub wants present in an agent: in
 // gateway mode a single 'mcphub' server (self), in direct mode every enabled
-// downstream server verbatim.
-func Desired(c *config.Config, agent config.Agent, self string) []harness.MCPServer {
+// downstream server verbatim — filtered to the agent's `servers` allowlist
+// when one is set. When the agent has any routing config (servers or tools),
+// the gateway entry is launched with `--agent <name>` so the spawned gateway
+// can scope its advertisement and lazy meta-tools to that agent.
+func Desired(c *config.Config, name string, agent config.Agent, self string) []harness.MCPServer {
 	if agent.ResolvedMode() == config.ModeGateway {
+		args := []string{"mcp", "serve"}
+		if agent.HasRouting() {
+			args = append(args, "--agent", name)
+		}
 		return []harness.MCPServer{{
 			Name:    "mcphub",
 			Command: self,
-			Args:    []string{"mcp", "serve"},
+			Args:    args,
 		}}
 	}
 	var out []harness.MCPServer
-	for _, name := range c.EnabledServers() {
+	for _, name := range agent.AllowedServers(c.EnabledServers()) {
 		s := c.Servers[name]
 		// SpawnCommand applies tvault wrapping when the server uses a vault, so
 		// a directly-written agent also launches it with secrets injected.
@@ -90,7 +97,7 @@ func Reconcile(ctx context.Context, c *config.Config, st *store.Store, self stri
 			results = append(results, r)
 			continue
 		}
-		desired := Desired(c, agent, self)
+		desired := Desired(c, name, agent, self)
 		owned, err := st.ManagedFor(ctx, name)
 		if err != nil {
 			r.Err = err

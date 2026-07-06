@@ -21,14 +21,14 @@ func TestDesired(t *testing.T) {
 	}
 
 	// Gateway: exactly one self entry.
-	g := Desired(c, config.Agent{Mode: config.ModeGateway}, "/bin/mcphub")
+	g := Desired(c, "a", config.Agent{Mode: config.ModeGateway}, "/bin/mcphub")
 	if len(g) != 1 || g[0].Name != "mcphub" || g[0].Command != "/bin/mcphub" ||
 		len(g[0].Args) != 2 || g[0].Args[0] != "mcp" || g[0].Args[1] != "serve" {
 		t.Fatalf("gateway desired = %+v", g)
 	}
 
 	// Direct: disabled excluded, vault wrapped, remote passthrough.
-	d := Desired(c, config.Agent{Mode: config.ModeDirect}, "/bin/mcphub")
+	d := Desired(c, "a", config.Agent{Mode: config.ModeDirect}, "/bin/mcphub")
 	if len(d) != 2 {
 		t.Fatalf("direct desired len = %d, want 2 (disabled excluded): %+v", len(d), d)
 	}
@@ -51,6 +51,50 @@ func TestDesired(t *testing.T) {
 	}
 	if _, leaked := by["off"]; leaked {
 		t.Error("disabled server leaked into direct desired set")
+	}
+}
+
+func TestDesiredRouting(t *testing.T) {
+	c := &config.Config{
+		Servers: map[string]config.Server{
+			"a":   {Command: "a", Enabled: true},
+			"b":   {Command: "b", Enabled: true},
+			"c":   {Command: "c", Enabled: true},
+			"off": {Command: "off", Enabled: false},
+		},
+	}
+
+	// Gateway + routing => --agent <name> appended; no routing => plain 2 args.
+	gw := Desired(c, "claude", config.Agent{Mode: config.ModeGateway, Servers: &[]string{"a"}}, "/bin/mcphub")
+	if len(gw) != 1 || gw[0].Name != "mcphub" {
+		t.Fatalf("gateway routing desired = %+v", gw)
+	}
+	want := []string{"mcp", "serve", "--agent", "claude"}
+	if len(gw[0].Args) != len(want) || strings.Join(gw[0].Args, " ") != strings.Join(want, " ") {
+		t.Errorf("gateway routing args = %v, want %v", gw[0].Args, want)
+	}
+	gwPlain := Desired(c, "x", config.Agent{Mode: config.ModeGateway}, "/bin/mcphub")
+	if len(gwPlain[0].Args) != 2 {
+		t.Errorf("gateway no-routing args = %v, want 2 (no --agent)", gwPlain[0].Args)
+	}
+
+	// Direct + Servers filter => only listed enabled servers, disabled dropped.
+	d := Desired(c, "x", config.Agent{Mode: config.ModeDirect, Servers: &[]string{"a", "c", "off"}}, "/bin/mcphub")
+	names := make([]string, 0, len(d))
+	for _, s := range d {
+		names = append(names, s.Name)
+	}
+	if strings.Join(names, ",") != "a,c" {
+		t.Errorf("direct filtered names = %v, want [a,c] (off disabled, dropped)", names)
+	}
+
+	// Direct + empty Servers list => nothing written (agent on a diet).
+	// Direct + empty/absent Servers => all enabled servers (the unscoped default;
+	// omitempty collapses [] to absent, so empty == all).
+	// Direct + non-nil empty Servers => none (distinct from nil = all).
+	empty := Desired(c, "x", config.Agent{Mode: config.ModeDirect, Servers: &[]string{}}, "/bin/mcphub")
+	if len(empty) != 0 {
+		t.Errorf("direct empty-servers desired len = %d, want 0 (none)", len(empty))
 	}
 }
 

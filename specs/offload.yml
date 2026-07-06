@@ -6,11 +6,19 @@ intent: |
   directly-configured copies of the servers mcphub proxies from each gateway-mode
   agent, leaving only the single `mcphub` gateway so the agent stops carrying every
   server's full tool list. It is a DRY RUN by default (no --write): it prints the
-  plan and changes nothing. It removes only servers mcphub actually proxies (the
-  enabled ones), never the gateway itself, and skips any agent that doesn't yet have
+  plan and changes nothing. It removes only servers mcphub BOTH proxies (enabled)
+  AND previously managed in that agent (tracked in the intelligence store since the
+  0.3.0 safety change, so a user's hand-added entry sharing a proxied name is never
+  clobbered), never the gateway itself, and skips any agent that doesn't yet have
   the gateway — so it can never strand an agent. Runs against an ISOLATED
   MCPHUB_CONFIG / MCPHUB_DB and temp agent files, so it never reads or writes the
   user's real harness configs.
+
+  The preconditions model the real-world flow: a DIRECT-mode `sync --write`
+  records codemap as managed and writes it into the agent; the user then adds
+  the mcphub gateway by hand (keeping codemap) and switches the config to
+  GATEWAY mode so codemap is now proxied. Only then does `offload` have an
+  owned+proxied server to remove — without clobbering a hand-added entry.
 
 target:
   cmd: ["./bin/mcphub", "offload"]
@@ -30,13 +38,33 @@ preconditions:
       timeoutMs: 5000
     - run: "rm -rf /tmp/glyph-mcphub-offload && mkdir -p /tmp/glyph-mcphub-offload"
       timeoutMs: 5000
-    - run: "printf 'version: 1\\nservers:\\n  codemap: {command: codemap, args: [serve], enabled: true}\\nagents:\\n  claude: {type: claude, path: /tmp/glyph-mcphub-offload/claude.json, mode: gateway}\\n  nogw: {type: claude, path: /tmp/glyph-mcphub-offload/nogw.json, mode: gateway}\\n' > /tmp/glyph-mcphub-offload/mcphub.yaml"
+    # 1. Start the agent in DIRECT mode and sync: this writes codemap into
+    #    claude.json AND records codemap as a managed entry in the store —
+    #    the ownership offload keys off of.
+    - run: "printf 'version: 1\\nservers:\\n  codemap: {command: codemap, args: [serve], enabled: true}\\nagents:\\n  claude: {type: claude, path: /tmp/glyph-mcphub-offload/claude.json, mode: direct}\\n' > /tmp/glyph-mcphub-offload/mcphub.yaml"
       timeoutMs: 5000
-    # claude agent already carries BOTH the mcphub gateway and the proxied codemap server
+    - run: "printf '{}' > /tmp/glyph-mcphub-offload/claude.json"
+      timeoutMs: 5000
+    - run: "MCPHUB_CONFIG=/tmp/glyph-mcphub-offload/mcphub.yaml MCPHUB_DB=/tmp/glyph-mcphub-offload/mcphub.db ./bin/mcphub sync --write >/dev/null"
+      timeoutMs: 10000
+    # 2. The user now adds the mcphub gateway by hand (keeping codemap in place)
+    #    and switches the config to GATEWAY mode so codemap becomes proxied.
+    #    The store still owns codemap from step 1, so offload can remove it
+    #    without clobbering a hand-added entry.
     - run: "printf '{\"mcpServers\":{\"mcphub\":{\"command\":\"mcphub\",\"args\":[\"mcp\",\"serve\"]},\"codemap\":{\"command\":\"codemap\",\"args\":[\"serve\"]}}}\\n' > /tmp/glyph-mcphub-offload/claude.json"
       timeoutMs: 5000
-    # nogw agent is gateway-mode but does NOT have the gateway yet — offload must skip it
+    - run: "printf 'version: 1\\nservers:\\n  codemap: {command: codemap, args: [serve], enabled: true}\\nagents:\\n  claude: {type: claude, path: /tmp/glyph-mcphub-offload/claude.json, mode: gateway}\\n  nogw: {type: claude, path: /tmp/glyph-mcphub-offload/nogw.json, mode: gateway}\\n' > /tmp/glyph-mcphub-offload/mcphub.yaml"
+      timeoutMs: 5000
+    # 3. nogw is gateway-mode but does NOT have the gateway yet — offload must
+    #    skip it rather than strand it.
     - run: "printf '{\"mcpServers\":{\"codemap\":{\"command\":\"codemap\",\"args\":[\"serve\"]}}}\\n' > /tmp/glyph-mcphub-offload/nogw.json"
+      timeoutMs: 5000
+    # Sanity: claude now carries BOTH the mcphub gateway and the proxied codemap.
+    - run: "jq -e '.mcpServers.codemap != null and .mcpServers.mcphub != null' /tmp/glyph-mcphub-offload/claude.json >/dev/null"
+      timeoutMs: 5000
+    # 4. Clear the backups the precondition syncs created, so the dry-run
+    #    target starts with NO .bak files (the dry run must write none).
+    - run: "rm -f /tmp/glyph-mcphub-offload/*.json.bak-*"
       timeoutMs: 5000
 
 steps:

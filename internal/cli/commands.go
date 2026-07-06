@@ -96,6 +96,18 @@ agents:
     type: hermes
     path: ~/.hermes/config.yaml
     mode: gateway
+# Per-agent routing (optional): restrict which servers/tools an agent sees.
+#   servers: [a, b]   only those enabled servers (gateway proxies just them;
+#                     direct writes just them). Omit = all enabled; [] = none.
+#   tools: [a__x]     gateway-only: only those server__tool names are advertised.
+#                     Omit = all tools of the allowed servers; [] = none.
+# Example: a token-frugal coding agent that only gets codemap's find + vecgrep search:
+#   claude:
+#     type: claude
+#     path: ~/.claude.json
+#     mode: gateway
+#     servers: [codemap, vecgrep]
+#     tools: [codemap__codemap_find, vecgrep__vecgrep_search]
 
 # Additional agent harnesses are supported but not seeded by default — add them
 # when you install the tool:
@@ -534,6 +546,23 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 					checks = append(checks, checkResult{"agent:" + name, false, "path not found: " + ap})
 				} else {
 					checks = append(checks, checkResult{"agent:" + name, true, fmt.Sprintf("%s (%s, %s)", ap, a.Type, a.ResolvedMode())})
+				}
+				// Per-agent routing: report the curated subset and warn about
+				// listed-but-disabled servers (silently skipped, probably unintended).
+				if a.HasRouting() {
+					allowed := a.AllowedServers(c.EnabledServers())
+					routingDetail := fmt.Sprintf("routes to %d/%d enabled servers", len(allowed), len(c.EnabledServers()))
+					if a.Tools != nil && len(*a.Tools) > 0 {
+						routingDetail += fmt.Sprintf(", %d tools", len(*a.Tools))
+					}
+					checks = append(checks, checkResult{"agent:" + name + ":routing", true, routingDetail})
+					if a.Servers != nil {
+						for _, s := range *a.Servers {
+							if srv, ok := c.Servers[s]; ok && !srv.Enabled {
+								checks = append(checks, checkResult{"agent:" + name + ":routing", false, "server " + s + " is listed but disabled — enable it or drop it from servers"})
+							}
+						}
+					}
 				}
 			}
 

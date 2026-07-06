@@ -212,12 +212,38 @@ agents:
     path: ~/.codex/config.toml
     mode: gateway
     # disabled: true       # skip during sync without deleting the definition
+    # Per-agent routing (optional) — restrict what this agent can reach:
+    # servers: [codemap, vecgrep]   # only these enabled servers (omit = all; [] = none)
+    # tools: [codemap__codemap_find]  # gateway-only: only these server__tool names (omit = all; [] = none)
 ```
 
 Each `server` is either a stdio server (`command` + `args` + optional `env`) **or** a remote
 server (`url` + `transport`, where `transport` is `http` or `sse`). Each `agent` has a `type`
 (`claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`,
 `kilo`, or `kimi`), a `path`, and a `mode` that defaults to `gateway`.
+
+### Per-agent routing
+
+Every enabled server normally reaches every non-disabled agent. For multi-agent setups where
+different agents should see different subsets, give an agent a `servers` list (which downstream
+servers it may reach) and/or a `tools` list (which `server__tool` names it may call — gateway mode
+only, since direct agents talk to servers themselves):
+
+```yaml
+agents:
+  codex:
+    type: codex
+    path: ~/.codex/config.toml
+    mode: gateway
+    servers: [codemap, vecgrep]
+    tools: [codemap__codemap_find, vecgrep__vecgrep_search]
+```
+
+In gateway mode a scoped agent's harness entry is launched as `mcphub mcp serve --agent <name>`,
+so the gateway advertises only that subset and refuses out-of-scope calls. In direct mode only
+the listed servers are written. An agent with no `servers`/`tools` (omitted) sees everything,
+as before; an explicit empty list (`servers: []` / `tools: []`) means **none** — a deliberately
+minimal agent. This is curation (a leaner context), not a hard security boundary.
 
 Set top-level `expose: lazy` to have the gateway advertise only its meta-tools (saving tokens —
 agents discover with `mcphub_search_tools` and run a tool with `mcphub_call_tool`), and use

@@ -6,6 +6,48 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-06
+
+### Added
+
+ - **Per-agent server & tool routing.** Each agent may now declare a `servers`
+   allowlist (which enabled downstream servers it may reach) and/or a `tools`
+   allowlist (which `server__tool` names a gateway-mode agent may call). In
+   direct mode only the listed servers are written; in gateway mode the
+   spawned `mcphub mcp serve --agent <name>` advertises only the allowed
+   subset and refuses out-of-scope calls through `mcphub_call_tool` /
+   `mcphub_describe_tool` / `mcphub_search_tools` / `mcphub_list_servers`.
+   `doctor` reports each agent's scope and warns about listed-but-disabled
+   servers; the Studio Agents tab renders the routing config. An omitted
+   `servers`/`tools` is unscoped (sees everything — the default); an explicit
+   empty list (`servers: []` / `tools: []`) means **none** (a deliberately
+   minimal agent), kept distinct from "all" by storing the allowlists as
+   pointers. Curation, not a security isolation boundary.
+
+### Fixed
+
+ - **`specs/offload.yml`** — the end-to-end spec for `mcphub offload` now models
+   the real register-then-offload flow (a direct-mode `sync --write` records the
+   server as managed, the gateway is then added by hand), so the spec passes
+   instead of reporting "nothing to offload" against a hand-seeded agent file.
+
+## [0.5.0] - 2026-07-03
+
+### Added
+
+ - **Five new agent adapters** — Copilot CLI, Qwen Code, Gemini CLI, Kilo Code,
+   and Kimi Code CLI, bringing the total to eleven supported harnesses.
+   `mcphub sync`, `init --from-agents`, and the Studio TUI cover all eleven;
+   `mcphub agents` lists every supported type with its configured / available /
+   not-installed status.
+ - **`mcphub agents`** command — list all supported harness types and their
+   status (configured / available / not installed).
+
+### Fixed
+
+ - **Enabled-flag round-trip** — a managed server with an explicit
+   `enabled: false` survives a sibling change without being reset.
+
 ## [0.4.0] - 2026-06-29
 
 ### Added
@@ -164,7 +206,9 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   `config.mts` and set the package type. `npm run docs:build` (and `task
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.1.0...v0.2.0

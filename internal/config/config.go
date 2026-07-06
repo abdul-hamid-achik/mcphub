@@ -218,6 +218,64 @@ type Agent struct {
 	Mode Mode `yaml:"mode,omitempty" toml:"mode,omitempty" json:"mode,omitempty"`
 	// Disabled skips this agent during sync without deleting its definition.
 	Disabled bool `yaml:"disabled,omitempty" toml:"disabled,omitempty" json:"disabled,omitempty"`
+	// Servers restricts which downstream servers this agent may reach. A nil
+	// pointer (the default, omitted from the config) means every enabled
+	// server. A non-nil slice — even empty — means only those servers: in
+	// direct mode only they are written, in gateway mode the spawned
+	// `mcphub mcp serve --agent <name>` proxies only them. An empty non-nil
+	// slice means "no servers" (a deliberately minimal agent). Unknown names
+	// are rejected by Validate; a listed-but-disabled server is silently
+	// skipped. The pointer distinguishes "absent" (all) from "empty" (none),
+	// which a plain []string with omitempty cannot.
+	Servers *[]string `yaml:"servers,omitempty" toml:"servers,omitempty" json:"servers,omitempty"`
+	// Tools restricts which `server__tool` names a gateway-mode agent may call.
+	// A nil pointer (omitted) means every tool of the allowed servers; a
+	// non-nil slice — even empty — means only those tools (empty = no tools).
+	// Gateway-only: in direct mode the agent talks to each server itself, so
+	// per-tool filtering isn't possible and Validate rejects it.
+	Tools *[]string `yaml:"tools,omitempty" toml:"tools,omitempty" json:"tools,omitempty"`
+}
+
+// HasRouting reports whether the agent restricts its server or tool set —
+// i.e. whether a gateway spawned for it needs the `--agent <name>` scope. A
+// non-nil but empty slice still counts as routing (it means "none of these").
+func (a Agent) HasRouting() bool { return a.Servers != nil || a.Tools != nil }
+
+// AllowedServers returns the enabled servers this agent may reach, preserving
+// the order of `all`. When Servers is nil the agent is unscoped and all enabled
+// servers are returned. When Servers is a non-nil empty slice the agent gets
+// none. A listed server that is disabled or absent from `all` is dropped
+// silently.
+func (a Agent) AllowedServers(all []string) []string {
+	if a.Servers == nil {
+		return all
+	}
+	want := make(map[string]bool, len(*a.Servers))
+	for _, s := range *a.Servers {
+		want[s] = true
+	}
+	out := make([]string, 0, len(all))
+	for _, s := range all {
+		if want[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// ToolScope returns the agent's per-tool allowlist as a set of `server__tool`
+// names. The bool is false when Tools is nil, meaning "every tool of the
+// allowed servers" (no per-tool restriction). A non-nil empty slice returns
+// an empty set with restricted=true, meaning "no tools at all".
+func (a Agent) ToolScope() (map[string]bool, bool) {
+	if a.Tools == nil {
+		return nil, false
+	}
+	set := make(map[string]bool, len(*a.Tools))
+	for _, t := range *a.Tools {
+		set[t] = true
+	}
+	return set, true
 }
 
 // ResolvedMode returns the agent's mode, defaulting to gateway.
@@ -430,6 +488,57 @@ func (c *Config) Validate() error {
 			problems = append(problems, fmt.Sprintf("agent %q: missing type", name))
 		} else if !validAgentTypes[a.Type] {
 			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi)", name, a.Type))
+		}
+		// Per-agent routing: Servers must name known servers; Tools is
+		// gateway-only and each entry must be a clean `server__tool` whose
+		// server is reachable from this agent's Servers list.
+		if a.Servers != nil {
+			for _, s := range *a.Servers {
+				if _, ok := c.Servers[s]; !ok {
+					problems = append(problems, fmt.Sprintf("agent %q: servers references unknown server %q", name, s))
+				}
+			}
+		}
+		if a.ResolvedMode() == ModeDirect && a.Tools != nil {
+			problems = append(problems, fmt.Sprintf("agent %q: tools routing is gateway-only (direct agents call servers directly)", name))
+		}
+		if a.Tools != nil {
+			for _, t := range *a.Tools {
+				if t == "" {
+					problems = append(problems, fmt.Sprintf("agent %q: tools entries must not be empty", name))
+					continue
+				}
+				if strings.Contains(t, "*") {
+					problems = append(problems, fmt.Sprintf("agent %q: tool %q: wildcards are not supported (list exact server__tool names)", name, t))
+					continue
+				}
+				i := strings.Index(t, "__")
+				if i <= 0 || i == len(t)-2 {
+					problems = append(problems, fmt.Sprintf("agent %q: tool %q: must be a `server__tool` name", name, t))
+					continue
+				}
+				srv, tool := t[:i], t[i+2:]
+				if tool == "" {
+					problems = append(problems, fmt.Sprintf("agent %q: tool %q: trailing %q matches no tool", name, t, "__"))
+					continue
+				}
+				if _, ok := c.Servers[srv]; !ok {
+					problems = append(problems, fmt.Sprintf("agent %q: tool %q references unknown server %q", name, t, srv))
+					continue
+				}
+				if a.Servers != nil {
+					allowed := false
+					for _, s := range *a.Servers {
+						if s == srv {
+							allowed = true
+							break
+						}
+					}
+					if !allowed {
+						problems = append(problems, fmt.Sprintf("agent %q: tool %q references server %q not in its servers list", name, t, srv))
+					}
+				}
+			}
 		}
 	}
 	if c.ConnectTimeout != "" {

@@ -25,11 +25,11 @@ type Server struct {
 	hub   *hub.Hub
 	store *store.Store
 	cfg   *config.Config
+	scope *agentScope // nil = unscoped (advertise everything)
 }
 
 // NewServer builds the gateway server. The hub must already be connected (or
-// will be connected by Run) so its tools can be mounted.
-func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store) *Server {
+func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScope) *Server {
 	impl := &sdk.Implementation{Name: "mcphub", Version: version.Version}
 	instructions := "mcphub is a gateway that fronts many MCP servers behind one connection. " +
 		"Downstream tools are exposed as `server__tool`. Use mcphub_list_servers to see what is " +
@@ -48,7 +48,7 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store) *Server {
 		}
 	}
 	opts := &sdk.ServerOptions{Instructions: instructions}
-	s := &Server{srv: sdk.NewServer(impl, opts), hub: h, store: st, cfg: cfg}
+	s := &Server{srv: sdk.NewServer(impl, opts), hub: h, store: st, cfg: cfg, scope: scope}
 	s.registerManagement()
 	return s
 }
@@ -64,12 +64,17 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.cfg.Lazy() {
 		// Lazy: advertise only the meta-tools, plus any pinned tools so the
 		// agent's most-used tools stay directly callable. Pins may name a whole
-		// server, a `server__*` wildcard, or an exact `server__tool`.
+		// server, a `server__*` wildcard, or an exact `server__tool`. A pin
+		// outside this agent's scope is silently skipped.
 		if len(s.cfg.Pin) > 0 {
-			s.hub.MountMatching(s.srv, s.cfg.PinMatches)
+			s.hub.MountMatching(s.srv, func(ns string) bool {
+				return s.cfg.PinMatches(ns) && s.scope.allowsNS(ns)
+			})
 		}
 	} else {
-		s.hub.Mount(s.srv)
+		// expose: all — mount every downstream tool the agent's scope permits
+		// (nil scope = everything, the unscoped default).
+		s.hub.MountMatching(s.srv, s.scope.allowsNS)
 	}
 	return s.srv.Run(ctx, &sdk.StdioTransport{})
 }
@@ -154,6 +159,9 @@ func (s *Server) handleListServers(_ context.Context, _ *sdk.CallToolRequest, _ 
 	}
 	out := make([]serverInfo, 0, len(s.cfg.Servers))
 	for _, name := range s.cfg.ServerNames() {
+		if !s.scope.allowsServer(name) {
+			continue
+		}
 		srv := s.cfg.Servers[name]
 		info := serverInfo{
 			Name:        name,
@@ -188,11 +196,14 @@ func (s *Server) handleSearchTools(_ context.Context, _ *sdk.CallToolRequest, in
 	q := strings.ToLower(strings.TrimSpace(in.Query))
 	var matches []toolMatch
 	for _, d := range s.hub.Downstreams() {
-		if !d.Connected() {
+		if !d.Connected() || !s.scope.allowsServer(d.Name) {
 			continue
 		}
 		for _, t := range d.Tools {
 			ns := d.Name + "__" + t.Name
+			if !s.scope.allowsNS(ns) {
+				continue
+			}
 			if q == "" || strings.Contains(strings.ToLower(ns), q) || strings.Contains(strings.ToLower(t.Description), q) {
 				matches = append(matches, toolMatch{Namespaced: ns, Server: d.Name, Tool: t.Name, Description: t.Description})
 			}
@@ -205,6 +216,9 @@ func (s *Server) handleDescribeTool(_ context.Context, _ *sdk.CallToolRequest, i
 	server, tool := splitNamespaced(in.Server, in.Tool)
 	if server == "" || tool == "" {
 		return result(map[string]any{"error": "need server and tool (or a server__tool name)"})
+	}
+	if !s.scope.allows(server, tool) {
+		return nil, nil, fmt.Errorf("tool %s__%s is out of scope for this agent", server, tool)
 	}
 	t, ok := s.hub.FindTool(server, tool)
 	if !ok {
@@ -223,6 +237,9 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 	server, tool := splitNamespaced(in.Server, in.Tool)
 	if server == "" || tool == "" {
 		return nil, nil, fmt.Errorf("need server and tool (or a server__tool name)")
+	}
+	if !s.scope.allows(server, tool) {
+		return nil, nil, fmt.Errorf("tool %s__%s is out of scope for this agent", server, tool)
 	}
 	var args json.RawMessage
 	if in.Arguments != nil {

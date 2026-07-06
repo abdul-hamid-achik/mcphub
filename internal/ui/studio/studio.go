@@ -462,6 +462,13 @@ func (m Model) renderAgents() string {
 				dimStyle.Render(fmt.Sprintf("%-8s", a.Type)),
 				onStyle.Render(string(a.ResolvedMode())),
 				dimStyle.Render(fmt.Sprintf("manages %d · %s", managed, a.Path))))
+			if a.HasRouting() {
+				scope := subtleStyle.Render(fmt.Sprintf("      routes: servers=%v", *a.Servers))
+				if a.Tools != nil {
+					scope += subtleStyle.Render(fmt.Sprintf(" tools=%v", *a.Tools))
+				}
+				b.WriteString(scope + "\n")
+			}
 		}
 	}
 	// Show available-but-unconfigured agents.

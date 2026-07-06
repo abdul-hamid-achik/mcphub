@@ -72,6 +72,145 @@ func TestResolvedModeDefaultsGateway(t *testing.T) {
 	}
 }
 
+func TestAgentRoutingHelpers(t *testing.T) {
+	all := []string{"a", "b", "c", "d"}
+
+	// Unscoped agent: no routing, sees everything.
+	plain := Agent{}
+	if plain.HasRouting() {
+		t.Error("empty agent should have no routing")
+	}
+	if got := plain.AllowedServers(all); !equalStrings(got, all) {
+		t.Errorf("AllowedServers unscoped = %v, want %v", got, all)
+	}
+	if set, restricted := plain.ToolScope(); restricted || set != nil {
+		t.Errorf("ToolScope unscoped = %v,%v, want nil,false", set, restricted)
+	}
+
+	// Servers-only agent: subset, all tools of those servers.
+	srvOnly := Agent{Servers: &[]string{"b", "d", "ghost"}}
+	if !srvOnly.HasRouting() {
+		t.Error("Servers set should count as routing")
+	}
+	if got, want := srvOnly.AllowedServers(all), []string{"b", "d"}; !equalStrings(got, want) {
+		t.Errorf("AllowedServers subset = %v, want %v (unknown/dropped silently)", got, want)
+	}
+	if _, restricted := srvOnly.ToolScope(); restricted {
+		t.Error("Servers-only agent should not restrict tools")
+	}
+
+	// Tools agent: per-tool allowlist.
+	tools := Agent{Tools: &[]string{"a__x", "c__y"}}
+	if set, restricted := tools.ToolScope(); !restricted || len(set) != 2 || !set["a__x"] || !set["c__y"] {
+		t.Errorf("ToolScope = %v,%v, want {a__x,c__y},true", set, restricted)
+	}
+	// A non-nil empty slice IS routing — it means "none of these" and is
+	// distinct from a nil pointer (omitted = all). The pointer carries intent.
+	emptyTools := Agent{Tools: &[]string{}}
+	if !emptyTools.HasRouting() {
+		t.Error("non-nil empty Tools slice should count as routing (means none)")
+	}
+	if set, restricted := emptyTools.ToolScope(); !restricted || len(set) != 0 {
+		t.Errorf("empty Tools ToolScope = %v,%v, want empty set,true", set, restricted)
+	}
+	// A nil pointer (omitted) is not routing.
+	if (Agent{}).HasRouting() {
+		t.Error("nil Servers/Tools should not count as routing")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestValidateRejectsBadRouting(t *testing.T) {
+	servers := map[string]Server{"a": {Command: "a", Enabled: true}, "b": {Command: "b", Enabled: true}}
+	cases := map[string]*Config{
+		"unknown server in list": {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Servers: &[]string{"a", "nope"}}}},
+		"tools on direct agent":  {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Mode: ModeDirect, Tools: &[]string{"a__x"}}}},
+		"tool no separator":      {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{"justaname"}}}},
+		"tool trailing __":       {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{"a__"}}}},
+		"tool wildcard":          {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{"a__*"}}}},
+		"tool unknown server":    {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{"zzz__x"}}}},
+		"tool server not listed": {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Servers: &[]string{"a"}, Tools: &[]string{"b__x"}}}},
+		"empty tool entry":       {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{""}}}},
+	}
+	for name, c := range cases {
+		if err := c.Validate(); err == nil {
+			t.Errorf("%s: expected validation error", name)
+		}
+	}
+}
+
+func TestValidateAcceptsGoodRouting(t *testing.T) {
+	c := &Config{
+		Servers: map[string]Server{"a": {Command: "a", Enabled: true}, "b": {Command: "b", Enabled: true}},
+		Agents: map[string]Agent{
+			"servers-only":       {Type: "claude", Path: "~/x", Servers: &[]string{"a"}},
+			"servers+tools":      {Type: "claude", Path: "~/y", Servers: &[]string{"a", "b"}, Tools: &[]string{"a__x", "b__y"}},
+			"tools-all-servers":  {Type: "claude", Path: "~/z", Tools: &[]string{"a__x"}},
+			"empty-servers-none": {Type: "claude", Path: "~/e", Servers: &[]string{}}, // no servers (valid: minimal agent)
+			"empty-tools-none":   {Type: "claude", Path: "~/t", Tools: &[]string{}},   // no tools (valid)
+		},
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("valid routing config rejected: %v", err)
+	}
+}
+
+// TestRoutingEmptyVsAbsentRoundTrip guards the key pointer semantics: an
+// absent `servers`/`tools` key (nil pointer = all) must stay distinguishable
+// from an explicit empty list (non-nil empty = none) across a YAML save+load.
+func TestRoutingEmptyVsAbsentRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcphub.yaml")
+	c := &Config{
+		Version: 1,
+		Servers: map[string]Server{"a": {Command: "a", Enabled: true}},
+		Agents: map[string]Agent{
+			"absent": {Type: "claude", Path: "~/p"},                                           // nil = all
+			"empty":  {Type: "claude", Path: "~/p", Servers: &[]string{}, Tools: &[]string{}}, // non-nil empty = none
+			"set":    {Type: "claude", Path: "~/p", Servers: &[]string{"a"}, Tools: &[]string{"a__x"}},
+		},
+	}
+	if err := Save(path, c); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Agents["absent"].Servers != nil || loaded.Agents["absent"].Tools != nil {
+		t.Errorf("absent should stay nil, got Servers=%v Tools=%v", loaded.Agents["absent"].Servers, loaded.Agents["absent"].Tools)
+	}
+	e := loaded.Agents["empty"]
+	if e.Servers == nil || len(*e.Servers) != 0 {
+		t.Errorf("empty Servers should be non-nil empty, got %v", e.Servers)
+	}
+	if e.Tools == nil || len(*e.Tools) != 0 {
+		t.Errorf("empty Tools should be non-nil empty, got %v", e.Tools)
+	}
+	// Empty = none: AllowedServers returns nothing.
+	if got := e.AllowedServers([]string{"a"}); len(got) != 0 {
+		t.Errorf("empty Servers AllowedServers = %v, want none", got)
+	}
+	if set, restricted := e.ToolScope(); !restricted || len(set) != 0 {
+		t.Errorf("empty Tools ToolScope = %v,%v, want empty,true", set, restricted)
+	}
+	s := loaded.Agents["set"]
+	if s.Servers == nil || len(*s.Servers) != 1 || (*s.Servers)[0] != "a" {
+		t.Errorf("set Servers wrong after round-trip: %v", s.Servers)
+	}
+}
+
 func TestPinMatchesAndValidation(t *testing.T) {
 	servers := map[string]Server{
 		"codemap": {Command: "codemap", Enabled: true},
