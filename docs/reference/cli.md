@@ -35,19 +35,19 @@ the current directory, then `~/.config/mcphub/mcphub.yaml`.
 | -------------------------------- | ------------------------------------------------------- |
 | [`init`](#init)                  | Write a starter `mcphub.yaml` (or `--from-agents` to import existing). |
 | [`list`](#list) (`ls`)           | List configured servers.                                |
-| `add`                            | Register a server (`add <name> [cmd args...]` or `--url`). |
+| [`add`](#add)                    | Register a server (`add <name> [cmd args...]` or `--url`; `--enabled`/`--disabled`). |
 | `remove` (`rm`)                  | Offload a server from `mcphub.yaml`.                   |
 | [`enable`](#enable-disable)      | Enable a server in `mcphub.yaml`.                       |
 | [`disable`](#enable-disable)     | Disable a server in `mcphub.yaml`.                      |
 | `groups`                         | List server groups.                                     |
 | `use`                            | Enable every server in a group (`--only` to disable the rest). |
 | [`pin`](#pin-unpin) / `unpin`    | Keep tools directly callable in lazy mode (`--top N` auto-pins most-used). |
-| [`status`](#status)              | Per-agent sync drift + usage intelligence at a glance.  |
+| [`status`](#status)              | Per-agent sync drift + usage intelligence (`--server` scopes to one server). |
 | [`sync`](#sync)                  | Write server config into agent harnesses (dry-run by default). |
 | [`offload`](#offload)            | Remove gateway-proxied servers from agents, leaving just `mcphub`. |
 | [`studio`](#studio) (`tui`)      | Launch the interactive TUI.                            |
 | [`stats`](#stats)                | Show local tool-call intelligence (`--tools`, `--recent N`). |
-| [`doctor`](#doctor)              | Diagnose config, server availability, and agent targets. |
+| [`doctor`](#doctor)              | Diagnose config, servers, and agents (`--server` scopes to one, `--probe` connects). |
 | [`mcp serve`](#mcp-serve)        | Run the gateway MCP stdio server.                      |
 | `completion`                     | Generate a shell autocompletion script.                |
 | `help`                           | Help about any command.                                |
@@ -88,6 +88,38 @@ The table shows each server's `SERVER`, `STATE` (`on`/`off`), `KIND`
 (`stdio`/`remote`), `TARGET` (the command or url), and `DESCRIPTION`. With
 `--json`, the raw server map is printed instead.
 
+
+---
+
+## `add`
+
+Register a server in `mcphub.yaml`. For a local stdio server pass a command and
+its args; for a remote one pass `--url` instead.
+
+```sh
+mcphub add codemap codemap serve            # stdio server
+mcphub add ctx7 --url https://mcp.ctx7.io   # remote (http) server
+mcphub add db pg-mcp --env DSN=postgres://… --tag data
+mcphub add gh gh-mcp --vault github         # secrets injected via tvault
+```
+
+| Flag | Description |
+| --- | --- |
+| `--url <u>` | Register a remote server (instead of a command). |
+| `--transport http\|sse` | Remote transport (default `http`). |
+| `--description <d>` | Human description. |
+| `--env K=V` | Environment variable (repeatable). |
+| `--tag <t>` | Tag (repeatable). |
+| `--vault <p>` | tvault project to inject secrets from at spawn. |
+| `--vault-only <k>` | Inject only these secret keys (repeatable). |
+| `--enabled` | Add the server enabled (the default; accepted for compatibility with ecosystem docs). |
+| `--disabled` | Add but leave the server disabled. |
+| `--force` | Overwrite an existing server. |
+
+Servers are added **enabled** by default. `--enabled` is a no-op alias for the
+default, accepted so onboarding commands like `mcphub add <name> <cmd> --enabled`
+— common across ecosystem docs — work instead of erroring. `--enabled` and
+`--disabled` are mutually exclusive.
 ---
 
 ## `enable` / `disable`
@@ -193,6 +225,7 @@ disable so your agents carry less context.
 ```sh
 mcphub status
 mcphub status --json
+mcphub status --server cortex   # scope to one server: routing + proxied calls
 ```
 
 ```
@@ -208,6 +241,16 @@ Usage:   142 calls, 3 errors, ~38500 est. tokens
 Unused:  monitor, vidtrace (enabled but never called)
          → consider `mcphub disable <name>` to shrink agent context.
 ```
+
+### `--server`
+
+`--server <name>` scopes `status` to one server — a cheap "am I wired into the
+gateway?" answer in a single call. Instead of fetching and joining the full
+`list`, `doctor`, and `status` inventories, it returns just that server's
+registration, enabled state, PATH availability, the agents that route to it,
+and how many calls the gateway has proxied to it (`proxied_calls`). With
+`--json` the [scoped object](#doctor---server) is the same shape `doctor
+--server` emits (without the probe fields).
 
 ---
 
@@ -253,6 +296,7 @@ Diagnose your setup. mcphub checks, in order:
 mcphub doctor
 mcphub doctor --probe   # also connect to each server for real
 mcphub doctor --json
+mcphub doctor --server cortex --probe --json   # one server, real handshake
 ```
 
 Each check prints a `✔`/`✗` mark and a detail line. If any check fails, doctor
@@ -272,6 +316,27 @@ line with the tool count (or the connection error). It's the difference between
 
 Because it launches every server, `--probe` is slower than a plain `doctor` —
 use it when you suspect a server is misconfigured or failing to start.
+
+### `--server`
+
+`--server <name>` scopes `doctor` to a single server — a cheap "am I wired into
+the gateway correctly?" answer in one call instead of fetching and joining the
+full `list`, `doctor`, and `status` JSON inventories. It reports the server's
+registration, enabled state, PATH availability, the agents that route to it,
+and how many calls the gateway has proxied to it. With `--probe` it also
+performs the real handshake and adds `handshake_ok` + `tool_count`. With
+`--json`, the scoped object is:
+
+```json
+{"server":"cortex","registered":true,"enabled":true,"on_path":true,
+ "handshake_ok":true,"tool_count":8,
+ "agents":[{"agent":"claude","mode":"gateway","state":"in sync"}],
+ "proxied_calls":0}
+```
+
+`handshake_ok` and `tool_count` are only present with `--probe`; an unregistered
+server yields `{"server":"<name>","registered":false}`. `status --server` emits
+the same shape without the probe fields.
 
 ---
 

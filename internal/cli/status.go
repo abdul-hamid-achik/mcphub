@@ -40,6 +40,7 @@ type statusReport struct {
 
 func newStatusCmd() *cobra.Command {
 	var markdown bool
+	var server string
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Config, per-agent sync drift, and usage intelligence at a glance",
@@ -61,9 +62,20 @@ a machine-readable one.`,
 				return err
 			}
 			defer st.Close()
-			self, _ := os.Executable()
 			ctx := context.Background()
 
+			// Scoped single-server view: which agents route to this server and
+			// how many calls the gateway has proxied to it — a cheap "am I wired
+			// in?" answer for one server.
+			if server != "" {
+				rep := buildScopedServerReport(ctx, c, st, server, false)
+				if flagJSON {
+					return printJSON(cmd, rep)
+				}
+				return renderScopedServerReport(cmd, rep)
+			}
+
+			self, _ := os.Executable()
 			results := syncer.Reconcile(ctx, c, st, self, nil, false)
 			totals, _ := st.Totals(ctx)
 			serverStats, _ := st.ServerStats(ctx)
@@ -108,6 +120,7 @@ a machine-readable one.`,
 		},
 	}
 	cmd.Flags().BoolVar(&markdown, "markdown", false, "render the report as Markdown (great for notes/issues)")
+	cmd.Flags().StringVar(&server, "server", "", "scope to one server: which agents route to it + proxied-call count")
 	return cmd
 }
 

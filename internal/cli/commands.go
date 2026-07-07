@@ -488,6 +488,7 @@ type checkResult struct {
 
 func newDoctorCmd() *cobra.Command {
 	var probe bool
+	var server string
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose config, server availability, and agent targets",
@@ -498,15 +499,28 @@ With --probe it goes further: it actually spawns each enabled server, performs
 the MCP handshake, and reports how many tools each one exposes (or why it
 failed) — a real connectivity check, not just a PATH lookup.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var checks []checkResult
-
 			c, path, err := loadConfig()
 			if err != nil {
-				checks = append(checks, checkResult{"config", false, err.Error()})
-				return reportChecks(cmd, checks)
+				return err
 			}
-			checks = append(checks, checkResult{"config", true, path})
 
+			// Scoped single-server view: a cheap "am I wired in?" answer for
+			// one server, used by downstream tools like Cortex.
+			if server != "" {
+				st, err := openStore()
+				if err != nil {
+					return err
+				}
+				defer st.Close()
+				rep := buildScopedServerReport(cmd.Context(), c, st, server, probe)
+				if flagJSON {
+					return printJSON(cmd, rep)
+				}
+				return renderScopedServerReport(cmd, rep)
+			}
+
+			var checks []checkResult
+			checks = append(checks, checkResult{"config", true, path})
 			usesVault := false
 			for _, name := range c.EnabledServers() {
 				s := c.Servers[name]
@@ -534,7 +548,6 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 					checks = append(checks, checkResult{"tvault", true, p})
 				}
 			}
-
 			for _, name := range c.AgentNames() {
 				a := c.Agents[name]
 				if _, err := harness.For(a.Type); err != nil {
@@ -547,8 +560,6 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 				} else {
 					checks = append(checks, checkResult{"agent:" + name, true, fmt.Sprintf("%s (%s, %s)", ap, a.Type, a.ResolvedMode())})
 				}
-				// Per-agent routing: report the curated subset and warn about
-				// listed-but-disabled servers (silently skipped, probably unintended).
 				if a.HasRouting() {
 					allowed := a.AllowedServers(c.EnabledServers())
 					routingDetail := fmt.Sprintf("routes to %d/%d enabled servers", len(allowed), len(c.EnabledServers()))
@@ -565,9 +576,6 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 					}
 				}
 			}
-
-			// Report available-but-unconfigured agents: supported harness
-			// types whose config file exists on disk but aren't in mcphub.yaml.
 			configuredTypes := map[string]bool{}
 			for _, name := range c.AgentNames() {
 				configuredTypes[c.Agents[name].Type] = true
@@ -580,26 +588,23 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 					checks = append(checks, checkResult{"available:" + spec.Type, true, "config file exists but not in mcphub.yaml — add it or run 'mcphub init --from-agents'"})
 				}
 			}
-
 			if st, err := openStore(); err != nil {
 				checks = append(checks, checkResult{"store", false, err.Error()})
 			} else {
 				st.Close()
 				checks = append(checks, checkResult{"store", true, dbPath()})
 			}
-
 			if self, err := os.Executable(); err == nil {
 				checks = append(checks, checkResult{"binary", true, self})
 			}
-
 			if probe {
 				checks = append(checks, probeServers(cmd.Context(), c)...)
 			}
-
 			return reportChecks(cmd, checks)
 		},
 	}
 	cmd.Flags().BoolVar(&probe, "probe", false, "actually connect to each enabled server and report its tool count")
+	cmd.Flags().StringVar(&server, "server", "", "scope to one server: a single-server registration/routing/usage summary")
 	return cmd
 }
 

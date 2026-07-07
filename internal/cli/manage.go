@@ -16,7 +16,7 @@ func newAddCmd() *cobra.Command {
 	var (
 		url, transport, description, vault string
 		env, tags, vaultOnly               []string
-		disabled, force                    bool
+		enabled, disabled, force           bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name> [command] [args...]",
@@ -36,6 +36,9 @@ func newAddCmd() *cobra.Command {
 			name := args[0]
 			if _, exists := c.Servers[name]; exists && !force {
 				return fmt.Errorf("server %q already exists (use --force to overwrite)", name)
+			}
+			if enabled && disabled {
+				return fmt.Errorf("--enabled and --disabled are mutually exclusive")
 			}
 			s := config.Server{
 				Enabled:     !disabled,
@@ -82,6 +85,7 @@ func newAddCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&vaultOnly, "vault-only", nil, "inject only these secret keys (repeatable)")
 	cmd.Flags().BoolVar(&disabled, "disabled", false, "add but leave disabled")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing server")
+	cmd.Flags().BoolVar(&enabled, "enabled", false, "add the server enabled (default; accepted for compatibility with ecosystem docs)")
 	return cmd
 }
 
