@@ -201,6 +201,33 @@ func (h *Hub) forward(d *Downstream, toolName, namespaced string) mcp.ToolHandle
 // telemetry, and returns the result verbatim. It is the single code path both
 // the directly-mounted tools (expose: all) and the mcphub_call_tool meta-tool
 // (expose: lazy) go through.
+// ReconnectOne immediately reconnects a single downstream by name. Returns
+// true if the reconnection succeeded. Used by Call() on a transport failure
+// (SPEC §8.1: immediate reconnect instead of waiting for the background watcher).
+func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
+	srv, ok := h.cfg.Servers[server]
+	if !ok {
+		return false
+	}
+	nd := h.connectOne(ctx, server, srv)
+	if !nd.Connected() {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, d := range h.downstreams {
+		if d.Name == server {
+			old := d
+			h.downstreams[i] = nd
+			if old.session != nil {
+				_ = old.session.Close()
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessage) (*mcp.CallToolResult, error) {
 	d := h.downstream(server)
 	if d == nil {
@@ -217,9 +244,46 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	res, callErr := d.session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 	h.record(ctx, server, tool, namespaced, time.Since(start), callErr, len(args), res)
 	if callErr != nil {
-		return nil, callErr
+		// Transport/protocol failure — the tool call never reached the
+		// downstream, so retrying is safe. Invalidate the stale session and
+		// attempt an immediate reconnect (SPEC §8.1: don't wait for the
+		// 30s background watcher).
+		h.invalidateDownstream(server)
+		if h.ReconnectOne(ctx, server) {
+			h.log.Info("immediate reconnect succeeded, retrying call", "server", server, "tool", tool)
+			retryStart := time.Now()
+			res2, retryErr := h.retryCall(ctx, server, tool, args)
+			h.record(ctx, server, tool, namespaced, time.Since(retryStart), retryErr, len(args), res2)
+			if retryErr != nil {
+				return nil, fmt.Errorf("call %s__%s failed after reconnect: %w (reconnect succeeded but retry failed)", server, tool, retryErr)
+			}
+			return res2, nil
+		}
+		return nil, fmt.Errorf("call %s__%s failed: %w (reconnect attempted but failed; the background watcher will retry)", server, tool, callErr)
 	}
 	return res, nil
+}
+
+// invalidateDownstream marks a downstream as disconnected so the background
+// watcher and immediate reconnect logic know to try again.
+func (h *Hub) invalidateDownstream(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, d := range h.downstreams {
+		if d.Name == name {
+			d.Err = fmt.Errorf("session invalidated after transport failure")
+			break
+		}
+	}
+}
+
+// retryCall performs a single CallTool on a freshly reconnected downstream.
+func (h *Hub) retryCall(ctx context.Context, server, tool string, args json.RawMessage) (*mcp.CallToolResult, error) {
+	d := h.downstream(server)
+	if d == nil || !d.Connected() {
+		return nil, fmt.Errorf("server %q not connected after reconnect", server)
+	}
+	return d.session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 }
 
 // downstream looks up a connected-or-not downstream by name.
