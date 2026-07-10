@@ -5,6 +5,9 @@ package syncer
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"time"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/harness"
@@ -19,6 +22,11 @@ type AgentResult struct {
 	Skipped bool // agent is disabled
 	Plan    harness.Plan
 	Err     error
+}
+
+// generatePlanID returns a short unique plan ID for a sync run.
+func generatePlanID(agent string) string {
+	return fmt.Sprintf("plan_%d_%s", time.Now().UnixNano(), agent)
 }
 
 // Desired computes the server entries mcphub wants present in an agent: in
@@ -105,10 +113,22 @@ func Reconcile(ctx context.Context, c *config.Config, st *store.Store, self stri
 			continue
 		}
 		plan, err := adapter.Apply(config.ExpandPath(agent.Path), desired, owned, !write)
+		if err == nil {
+			plan.PlanID = generatePlanID(name)
+		}
 		r.Plan, r.Err = plan, err
-		if err == nil && write {
+		if err == nil && write && plan.Applied {
+			// Post-write verification + automatic backup restore on bookkeeping
+			// failure (SPEC §8.3): if the config was written but the ownership
+			// store can't be updated, restore the backup so the config and the
+			// bookkeeping stay consistent.
 			if err := st.SetManaged(ctx, name, Names(desired)); err != nil {
-				r.Err = err
+				r.Err = fmt.Errorf("bookkeeping failed after apply: %w (backup restored)", err)
+				if plan.Backup != "" {
+					if restoreErr := restoreBackup(plan.Backup, plan.Path); restoreErr != nil {
+						r.Err = fmt.Errorf("bookkeeping failed: %w AND backup restore failed: %v", err, restoreErr)
+					}
+				}
 			} else {
 				_ = st.LogSync(ctx, name, r.Mode, Names(desired), false)
 			}
@@ -123,3 +143,17 @@ type unknownAgentError struct{ name string }
 func (e unknownAgentError) Error() string { return "no such agent " + e.name }
 
 func errUnknownAgent(name string) error { return unknownAgentError{name} }
+
+// restoreBackup copies a backup file back to the config path, undoing an
+// apply that succeeded at the file level but failed at the bookkeeping level
+// (SPEC §8.3: automatic backup restore on bookkeeping failure).
+func restoreBackup(backupPath, configPath string) error {
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return fmt.Errorf("read backup %s: %w", backupPath, err)
+	}
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		return fmt.Errorf("restore backup to %s: %w", configPath, err)
+	}
+	return nil
+}

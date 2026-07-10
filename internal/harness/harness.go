@@ -96,6 +96,7 @@ type Change struct {
 
 // Plan is the set of changes an adapter would make (or made) to one file.
 type Plan struct {
+	PlanID  string   `json:"plan_id,omitempty"` // durable plan ID (SPEC §8.3) for resume/rollback
 	Agent   string   `json:"agent"`
 	Kind    string   `json:"kind"`
 	Path    string   `json:"path"`
