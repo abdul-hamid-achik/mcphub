@@ -11,8 +11,11 @@ package hub
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -103,6 +106,17 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 	cctx, cancel := context.WithTimeout(ctx, h.connectTimeout)
 	defer cancel()
 
+	// Resolve tvault:// references in remote-server headers before creating
+	// the transport. Fail fast with a clear error if a secret can't be fetched.
+	if len(srv.Headers) > 0 {
+		resolved, err := resolveVaultHeaders(srv.Headers)
+		if err != nil {
+			d.Err = fmt.Errorf("resolve vault headers: %w", err)
+			return d
+		}
+		srv.Headers = resolved
+	}
+
 	client := mcp.NewClient(&mcp.Implementation{Name: "mcphub", Version: version.Version}, nil)
 	transport := transportFor(srv)
 	session, err := client.Connect(cctx, transport, nil)
@@ -123,17 +137,70 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 
 func transportFor(srv config.Server) mcp.Transport {
 	if srv.IsRemote() {
+		httpClient := httpClientFor(srv)
 		switch srv.Transport {
 		case "sse":
-			return &mcp.SSEClientTransport{Endpoint: srv.URL}
+			return &mcp.SSEClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}
 		default: // "http" or unset
-			return &mcp.StreamableClientTransport{Endpoint: srv.URL}
+			return &mcp.StreamableClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}
 		}
 	}
 	command, cargs := srv.SpawnCommand()
 	cmd := exec.Command(command, cargs...)
 	cmd.Env = append(os.Environ(), envPairs(srv.Env)...)
 	return &mcp.CommandTransport{Command: cmd}
+}
+
+// httpClientFor builds an *http.Client for remote transports. When the server
+// defines custom headers, a round-tripper injects them into every request.
+// For localhost HTTPS endpoints (common with local MCP servers using
+// self-signed certs), TLS verification is skipped.
+func httpClientFor(srv config.Server) *http.Client {
+	localhostTLS := isLocalhostHTTPS(srv.URL)
+	if len(srv.Headers) == 0 && !localhostTLS {
+		return nil // use http.DefaultClient
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if localhostTLS {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client := &http.Client{Transport: tr}
+	if len(srv.Headers) > 0 {
+		client.Transport = &headerRoundTripper{base: tr, headers: srv.Headers}
+	}
+	return client
+}
+
+// headerRoundTripper wraps an http.RoundTripper and sets custom headers on
+// every outgoing request before delegating.
+type headerRoundTripper struct {
+	base    http.RoundTripper
+	headers map[string]string
+}
+
+func (rt *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	for k, v := range rt.headers {
+		req.Header.Set(k, v)
+	}
+	return rt.base.RoundTrip(req)
+}
+
+// isLocalhostHTTPS reports whether rawURL is an https:// URL pointing at a
+// loopback address. Local services commonly use self-signed certificates;
+// skipping verification for loopback is safe (no DNS rebinding surface).
+func isLocalhostHTTPS(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" {
+		return false
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 func envPairs(env map[string]string) []string {

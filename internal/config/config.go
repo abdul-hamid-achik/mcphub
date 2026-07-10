@@ -158,6 +158,11 @@ type Server struct {
 	URL       string `yaml:"url,omitempty" toml:"url,omitempty" json:"url,omitempty"`
 	Transport string `yaml:"transport,omitempty" toml:"transport,omitempty" json:"transport,omitempty"`
 
+	// Headers are custom HTTP headers sent with every request to a remote
+	// (http/sse) server. Ignored for stdio servers. Useful for bearer-token
+	// authentication, e.g. the Obsidian Local REST API plugin.
+	Headers map[string]string `yaml:"headers,omitempty" toml:"headers,omitempty" json:"headers,omitempty"`
+
 	// Vault names a TinyVault (tvault) project. When set, the server is spawned
 	// via `tvault run --project <Vault> -- <command>`, so the project's secrets
 	// are injected as environment variables at launch and never live in the
@@ -454,6 +459,9 @@ func (c *Config) Validate() error {
 		}
 		if s.Vault != "" && s.URL != "" {
 			problems = append(problems, fmt.Sprintf("server %q: vault injects env into a spawned command and can't be used with a remote url", name))
+		}
+		if len(s.Headers) > 0 && s.URL == "" {
+			problems = append(problems, fmt.Sprintf("server %q: headers only apply to remote (url) servers", name))
 		}
 	}
 	for g, members := range c.Groups {

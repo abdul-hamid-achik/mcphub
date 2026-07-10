@@ -3,6 +3,8 @@ package hub
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -133,6 +135,30 @@ func TestTransportFor(t *testing.T) {
 				return ok
 			},
 		},
+		{
+			"http remote with auth headers",
+			config.Server{URL: "https://srv.example.com", Transport: "http", Headers: map[string]string{"Authorization": "Bearer tok"}},
+			func(tr mcp.Transport) bool {
+				st, ok := tr.(*mcp.StreamableClientTransport)
+				return ok && st.Endpoint == "https://srv.example.com" && st.HTTPClient != nil
+			},
+		},
+		{
+			"localhost https gets custom client (self-signed cert)",
+			config.Server{URL: "https://127.0.0.1:27124/mcp/", Transport: "http"},
+			func(tr mcp.Transport) bool {
+				st, ok := tr.(*mcp.StreamableClientTransport)
+				return ok && st.HTTPClient != nil
+			},
+		},
+		{
+			"localhost https with headers",
+			config.Server{URL: "https://localhost:9999", Transport: "http", Headers: map[string]string{"Authorization": "Bearer x"}},
+			func(tr mcp.Transport) bool {
+				st, ok := tr.(*mcp.StreamableClientTransport)
+				return ok && st.HTTPClient != nil
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -159,4 +185,48 @@ func TestTransportForVaultWrapped(t *testing.T) {
 	if !reflect.DeepEqual(ct.Command.Args, wantArgs) {
 		t.Fatalf("vault args = %v, want %v", ct.Command.Args, wantArgs)
 	}
+}
+
+func TestHeaderRoundTripper(t *testing.T) {
+	rt := &headerRoundTripper{
+		base:    &mockRoundTripper{},
+		headers: map[string]string{"Authorization": "Bearer secret", "X-Custom": "val"},
+	}
+	req := httptest.NewRequest("POST", "https://srv.example.com", nil)
+	if _, err := rt.RoundTrip(req); err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer secret" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer secret")
+	}
+	if got := req.Header.Get("X-Custom"); got != "val" {
+		t.Errorf("X-Custom = %q, want %q", got, "val")
+	}
+}
+
+func TestIsLocalhostHTTPS(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"https://127.0.0.1:27124/mcp/", true},
+		{"https://localhost:9999", true},
+		{"https://[::1]:8080", true},
+		{"http://127.0.0.1:27124", false},
+		{"https://srv.example.com", false},
+		{"https://192.168.1.1", false},
+		{"not a url", false},
+	}
+	for _, c := range cases {
+		if got := isLocalhostHTTPS(c.url); got != c.want {
+			t.Errorf("isLocalhostHTTPS(%q) = %v, want %v", c.url, got, c.want)
+		}
+	}
+}
+
+// mockRoundTripper is a no-op http.RoundTripper for testing header injection.
+type mockRoundTripper struct{}
+
+func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: 200, Body: http.NoBody, Header: make(http.Header)}, nil
 }

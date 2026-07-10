@@ -55,6 +55,7 @@ func TestValidateRejectsBadServers(t *testing.T) {
 		"no command or url": {Servers: map[string]Server{"x": {}}},
 		"both command+url":  {Servers: map[string]Server{"x": {Command: "a", URL: "b"}}},
 		"bad transport":     {Servers: map[string]Server{"x": {URL: "u", Transport: "grpc"}}},
+		"headers on stdio":  {Servers: map[string]Server{"x": {Command: "a", Headers: map[string]string{"Authorization": "Bearer tok"}}}},
 		"unknown group ref": {Servers: map[string]Server{}, Groups: map[string][]string{"g": {"missing"}}},
 		"agent no path":     {Servers: map[string]Server{}, Agents: map[string]Agent{"a": {Type: "claude"}}},
 		"agent bad type":    {Servers: map[string]Server{}, Agents: map[string]Agent{"a": {Type: "cluade", Path: "~/x"}}},
