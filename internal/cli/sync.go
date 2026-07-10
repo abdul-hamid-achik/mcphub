@@ -5,15 +5,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/harness"
 	"github.com/abdul-hamid-achik/mcphub/internal/syncer"
 )
 
 func newSyncCmd() *cobra.Command {
 	var write bool
+	var resume, rollback string
 	cmd := &cobra.Command{
 		Use:   "sync [agent...]",
 		Short: "Write server config into agent harnesses (dry-run by default)",
@@ -27,6 +32,40 @@ agents are synced.
 In gateway mode an agent is given a single 'mcphub' server that proxies the
 rest. In direct mode every enabled server is written into the agent.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --resume <planId>: extract the agent + re-sync with --write.
+			if resume != "" {
+				agent := agentFromPlanID(resume)
+				if agent == "" {
+					return fmt.Errorf("could not extract agent name from plan ID %q", resume)
+				}
+				args = []string{agent}
+				write = true
+			}
+			// --rollback <planId>: find the agent's config backup + restore it.
+			if rollback != "" {
+				agent := agentFromPlanID(rollback)
+				if agent == "" {
+					return fmt.Errorf("could not extract agent name from plan ID %q", rollback)
+				}
+				c, _, err := loadConfig()
+				if err != nil {
+					return err
+				}
+				agentCfg, ok := c.Agents[agent]
+				if !ok {
+					return fmt.Errorf("agent %q not found in config", agent)
+				}
+				path := config.ExpandPath(agentCfg.Path)
+				backup, err := latestBackup(path)
+				if err != nil {
+					return fmt.Errorf("rollback: %w", err)
+				}
+				if err := restoreBackupFile(backup, path); err != nil {
+					return fmt.Errorf("rollback restore: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "rolled back %s: restored %s from %s\n", agent, path, backup)
+				return nil
+			}
 			c, _, err := loadConfig()
 			if err != nil {
 				return err
@@ -64,7 +103,61 @@ rest. In direct mode every enabled server is written into the agent.`,
 		},
 	}
 	cmd.Flags().BoolVar(&write, "write", false, "actually edit the agent config files")
+	cmd.Flags().StringVar(&resume, "resume", "", "re-sync the agent named in a plan ID (e.g. plan_1234567890_claude)")
+	cmd.Flags().StringVar(&rollback, "rollback", "", "restore the backup for a plan ID's agent")
 	return cmd
+}
+
+// agentFromPlanID extracts the agent name from a plan ID like
+// "plan_1234567890123456789_claude". Returns "" if the format is invalid.
+func agentFromPlanID(planID string) string {
+	parts := strings.SplitN(planID, "_", 3)
+	if len(parts) != 3 || parts[0] != "plan" {
+		return ""
+	}
+	return parts[2]
+}
+
+// latestBackup finds the most recent .bak file for a config path.
+func latestBackup(configPath string) (string, error) {
+	dir := filepath.Dir(configPath)
+	base := filepath.Base(configPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("read config dir: %w", err)
+	}
+	var best string
+	var bestTime time.Time
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, base+".") || !strings.HasSuffix(name, ".bak") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestTime) {
+			best = filepath.Join(dir, name)
+			bestTime = info.ModTime()
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("no backup found for %s", configPath)
+	}
+	return best, nil
+}
+
+// restoreBackupFile copies a backup file back to the config path.
+func restoreBackupFile(backupPath, configPath string) error {
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return fmt.Errorf("read backup: %w", err)
+	}
+	return os.WriteFile(configPath, data, 0o644)
 }
 
 func printResult(out io.Writer, r syncer.AgentResult) {
