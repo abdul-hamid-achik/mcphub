@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Bounded, lossless gateway results.** Every mounted, pinned, lazy, and reconnect-retry success
+  now passes through one `Hub.Call` finalizer. Complete results over `response_budget` are stored
+  in SQLite for 24 hours under an opaque call ID, then recovered byte-for-byte through the new
+  `mcphub_get_result(callId,cursor)` management tool. Pages are bounded base64 JSON, scope-checked,
+  and restart-safe; store failures fail open to the full result instead of losing data. Small
+  results, `verbatim: true`, and `response_budget: "0"` remain exact pass-through.
+
 ## [0.6.0] - 2026-07-06
 
 ### Added

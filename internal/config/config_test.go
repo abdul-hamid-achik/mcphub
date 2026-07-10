@@ -418,7 +418,7 @@ func TestValidateAcceptsNewAgentTypes(t *testing.T) {
 // harness.Kinds(). The config.go comment explicitly warns about this.
 func TestKindsAndValidTypesInSync(t *testing.T) {
 	// Every type in Kinds() must be in validAgentTypes.
-	for _, k := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi"} {
+	for _, k := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent"} {
 		c := &Config{
 			Servers: map[string]Server{"x": {Command: "c"}},
 			Agents:  map[string]Agent{"a": {Type: k, Path: "~/x"}},
@@ -436,7 +436,7 @@ func TestKindsAndValidTypesInSync(t *testing.T) {
 func TestAllAgentTypesRoundTrip(t *testing.T) {
 	allKinds := []string{
 		"claude", "opencode", "codex", "crush", "forge", "hermes",
-		"copilot", "qwen", "gemini", "kilo", "kimi",
+		"copilot", "qwen", "gemini", "kilo", "kimi", "local-agent",
 	}
 	agents := map[string]Agent{}
 	for _, k := range allKinds {
@@ -478,5 +478,42 @@ func TestAllAgentTypesRoundTrip(t *testing.T) {
 				t.Errorf("%s: opencode mode not round-tripped as direct: %+v", ext, got.Agents["opencode"])
 			}
 		})
+	}
+}
+
+func TestValidateResponseBudget(t *testing.T) {
+	for _, value := range []string{"0", "512B", "32KB", "2 MB", "1GB"} {
+		t.Run("valid_"+value, func(t *testing.T) {
+			if err := (&Config{ResponseBudget: value}).Validate(); err != nil {
+				t.Fatalf("response_budget %q rejected: %v", value, err)
+			}
+		})
+	}
+	for _, value := range []string{"bogus", "1B", "511B", "1.5KB", "12XB", "-1", "-2KB", "9223372036854775807GB"} {
+		t.Run("invalid_"+value, func(t *testing.T) {
+			if err := (&Config{ResponseBudget: value}).Validate(); err == nil {
+				t.Fatalf("response_budget %q should fail validation", value)
+			}
+		})
+	}
+}
+
+func TestResponseBudgetBytesCompatibilityFallback(t *testing.T) {
+	tests := []struct {
+		value string
+		want  int
+	}{
+		{"", 32 * 1024},
+		{"0", 0},
+		{"512B", 512},
+		{"2KB", 2 * 1024},
+		{"bogus", 32 * 1024},
+		{"-1KB", 32 * 1024},
+		{"9223372036854775807GB", 32 * 1024},
+	}
+	for _, test := range tests {
+		if got := (&Config{ResponseBudget: test.value}).ResponseBudgetBytes(); got != test.want {
+			t.Errorf("ResponseBudgetBytes(%q) = %d, want %d", test.value, got, test.want)
+		}
 	}
 }

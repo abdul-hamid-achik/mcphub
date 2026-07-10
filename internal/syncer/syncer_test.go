@@ -200,25 +200,26 @@ func TestReconcileDriftRemoval(t *testing.T) {
 func TestReconcileAllAdapterKinds(t *testing.T) {
 	dir := t.TempDir()
 	seed := map[string]string{
-		"claude":   "{}",
-		"opencode": `{"mcp":{}}`,
-		"codex":    "",
-		"crush":    `{"mcp":{}}`,
-		"forge":    `{"mcpServers":{}}`,
-		"hermes":   "",
-		"copilot":  `{"mcpServers":{}}`,
-		"qwen":     `{"mcpServers":{}}`,
-		"gemini":   `{"mcpServers":{}}`,
-		"kilo":     `{"mcp":{}}`,
-		"kimi":     "",
+		"claude":      "{}",
+		"opencode":    `{"mcp":{}}`,
+		"codex":       "",
+		"crush":       `{"mcp":{}}`,
+		"forge":       `{"mcpServers":{}}`,
+		"hermes":      "",
+		"copilot":     `{"mcpServers":{}}`,
+		"qwen":        `{"mcpServers":{}}`,
+		"gemini":      `{"mcpServers":{}}`,
+		"kilo":        `{"mcp":{}}`,
+		"kimi":        "",
+		"local-agent": "servers: []\n",
 	}
 	ext := map[string]string{
 		"claude": ".json", "opencode": ".json", "codex": ".toml",
 		"crush": ".json", "forge": ".json", "hermes": ".yaml",
 		"copilot": ".json", "qwen": ".json", "gemini": ".json",
-		"kilo": ".jsonc", "kimi": ".toml",
+		"kilo": ".jsonc", "kimi": ".toml", "local-agent": ".yaml",
 	}
-	for _, kind := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi"} {
+	for _, kind := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent"} {
 		t.Run(kind, func(t *testing.T) {
 			path := filepath.Join(dir, kind+ext[kind])
 			if err := os.WriteFile(path, []byte(seed[kind]), 0o644); err != nil {

@@ -78,8 +78,8 @@ type Config struct {
 	Groups         map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
 	Agents         map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
 	ConnectTimeout string              `yaml:"connect_timeout,omitempty" toml:"connect_timeout,omitempty" json:"connect_timeout,omitempty"` // per-downstream connect timeout, e.g. "30s", "60s" (default 30s)
-	ResponseBudget string              `yaml:"response_budget,omitempty" toml:"response_budget,omitempty" json:"response_budget,omitempty"` // max result size before truncation, e.g. "32KB" (default 32KB, "0" = unlimited)
-	Verbatim       bool                `yaml:"verbatim,omitempty" toml:"verbatim,omitempty" json:"verbatim,omitempty"`                      // pass downstream results through without truncation
+	ResponseBudget string              `yaml:"response_budget,omitempty" toml:"response_budget,omitempty" json:"response_budget,omitempty"` // max serialized result size before lossless spooling, e.g. "32KB" (default 32KB, "0" = unlimited)
+	Verbatim       bool                `yaml:"verbatim,omitempty" toml:"verbatim,omitempty" json:"verbatim,omitempty"`                      // pass downstream results through without bounded-result spooling
 }
 
 // Exposure controls how many tools the gateway advertises up front.
@@ -302,12 +302,13 @@ var validAgentTypes = map[string]bool{
 	"codex":    true,
 	"crush":    true,
 	"forge":    true, "forgecode": true,
-	"hermes":  true,
-	"copilot": true,
-	"qwen":    true,
-	"gemini":  true,
-	"kilo":    true,
-	"kimi":    true,
+	"hermes":      true,
+	"copilot":     true,
+	"qwen":        true,
+	"gemini":      true,
+	"kilo":        true,
+	"kimi":        true,
+	"local-agent": true, "localagent": true,
 }
 
 // DefaultPath returns the config path used when unspecified. Precedence:
@@ -440,6 +441,16 @@ func (c *Config) Validate() error {
 	var problems []string
 	if c.Expose != "" && c.Expose != ExposeAll && c.Expose != ExposeLazy {
 		problems = append(problems, fmt.Sprintf("expose must be %q or %q", ExposeAll, ExposeLazy))
+	}
+	if c.ResponseBudget != "" {
+		n, err := humanReadableBytes(c.ResponseBudget)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("response_budget %q: use a non-negative byte size such as 32KB, 1MB, or 0", c.ResponseBudget))
+		} else if n < 0 {
+			problems = append(problems, "response_budget must not be negative")
+		} else if n > 0 && n < MinResponseBudgetBytes {
+			problems = append(problems, fmt.Sprintf("response_budget must be 0 (unlimited) or at least %dB so a retrieval receipt can fit", MinResponseBudgetBytes))
+		}
 	}
 	for name, s := range c.Servers {
 		if name == "mcphub" {
@@ -576,8 +587,12 @@ func (c *Config) ConnectTimeoutDuration() time.Duration {
 	return d
 }
 
+// MinResponseBudgetBytes is the smallest bounded response that can carry the
+// fixed recovery receipt and a minimally useful retrieval page envelope.
+const MinResponseBudgetBytes = 512
+
 // ResponseBudgetBytes parses the response_budget config string (e.g. "32KB",
-// "1MB", "0") into bytes. Default 32KB; "0" means unlimited (no truncation).
+// "1MB", "0") into bytes. Default 32KB; "0" means unlimited (no spooling).
 func (c *Config) ResponseBudgetBytes() int {
 	if c.ResponseBudget == "" {
 		return 32 * 1024
@@ -609,11 +624,18 @@ func humanReadableBytes(s string) (int, error) {
 	case strings.HasSuffix(s, "B"):
 		s = strings.TrimSuffix(s, "B")
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(s))
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil {
 		return 0, err
 	}
-	return n * multiplier, nil
+	if n < 0 {
+		return int(n), nil
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if n > 0 && n > maxInt/int64(multiplier) {
+		return 0, fmt.Errorf("byte size overflows int")
+	}
+	return int(n * int64(multiplier)), nil
 }
 
 // EnabledServers returns the names of enabled servers, sorted.

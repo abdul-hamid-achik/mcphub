@@ -55,25 +55,30 @@ where a tool comes from, and the original input schema is passed through
 unchanged.
 
 When an agent calls `vecgrep__search`, the gateway relays the arguments to the
-real `search` tool on the `vecgrep` session **verbatim**, times the call,
-records it, and returns the downstream result unchanged. It is a transparent
-passthrough — mcphub does not rewrite your arguments or results.
+real `search` tool on the `vecgrep` session unchanged, times the call, and records it.
+Small results pass through unchanged. If the complete serialized result exceeds
+`response_budget`, mcphub stores it for 24 hours in the local SQLite database. The database
+directory is restricted to the current user (`0700`; database `0600`). The gateway returns a
+compact recovery receipt instead of dropping bytes. Set `verbatim: true` or
+`response_budget: "0"` for transparent, unbounded pass-through.
 
 ### Management tools
 
-Beyond the proxied tools, the gateway exposes five of its own so an agent can
+Beyond the proxied tools, the gateway exposes seven of its own so an agent can
 introspect and drive the hub without scanning everything:
 
 - **`mcphub_list_servers`** — configured servers with their enabled/connected
   state, tool counts, and the current exposure mode.
 - **`mcphub_search_tools`** — search the aggregated catalog by substring across
-  tool name and description, returning matching `server__tool` names. Lets an
-  agent find a capability without loading every tool.
-- **`mcphub_describe_tool`** — a downstream tool's description and full JSON
-  input schema, so the agent can construct a valid call.
-- **`mcphub_call_tool`** — invoke any downstream tool by `{server, tool,
-  arguments}` and get its result verbatim. This is how tools are called in lazy
-  mode.
+  tool name and description, returning matching `server__tool` names.
+- **`mcphub_describe_tool`** — return one downstream tool's description and full
+  input schema.
+- **`mcphub_resolve_tool`** — rank a natural-language request and return one recommended tool,
+  required fields, an argument template, alternatives, and ambiguity status.
+- **`mcphub_call_tool`** — invoke any downstream tool by `{server, tool, arguments}`. Oversized
+  results return a lossless recovery receipt.
+- **`mcphub_get_result`** — recover a stored result by `callId` and zero-based byte `cursor`.
+  Decode each base64 `data` page and continue with `nextCursor` until `done` is true.
 - **`mcphub_stats`** — local usage intelligence: total calls, errors, estimated
   token cost, and a per-server breakdown.
 
@@ -84,11 +89,10 @@ advertises:
 
 - **`expose: all`** (default) — every downstream tool is mounted as
   `server__tool`. Simple, but a large fleet means a large tool list.
-- **`expose: lazy`** — only the five meta-tools above are advertised. The agent
-  finds a capability with `mcphub_search_tools`, optionally inspects it with
-  `mcphub_describe_tool`, and runs it with `mcphub_call_tool`. The context cost
-  is a handful of tools instead of hundreds — regardless of how many servers are
-  behind the hub.
+- **`expose: lazy`** — only the seven management tools above are advertised. The agent
+  finds a capability with `mcphub_search_tools`, optionally resolves or inspects it, and runs it
+  with `mcphub_call_tool`. The context cost is a handful of tools instead of hundreds —
+  regardless of how many servers are behind the hub.
 
 The trade-off of lazy mode: because the real tools aren't in the agent's tool
 list, the model won't *automatically* reach for them — it has to choose to call
@@ -191,7 +195,7 @@ A dozen servers can be hundreds of tool definitions loaded before you type a
 single word.
 
 In gateway mode the agent loads exactly **one** server. With `expose: lazy`
-that surface collapses to just five meta-tools no matter how many servers sit
+that surface collapses to seven management tools no matter how many servers sit
 behind the hub — the model sees `mcphub_search_tools` / `mcphub_call_tool`
 instead of every server's full catalog, and pulls a tool's schema on demand
 only when it actually needs it. (With the default `expose: all`, you still get

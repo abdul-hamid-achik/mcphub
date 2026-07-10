@@ -356,10 +356,12 @@ You normally don't run this by hand — the agent launches it, because that's wh
 stderr so they never corrupt the stdio JSON-RPC stream. It shuts down cleanly on
 `SIGINT`/`SIGTERM`.
 
-The gateway also exposes five management tools to connected agents:
+The gateway also exposes seven management tools to connected agents:
 `mcphub_list_servers`, `mcphub_search_tools`, `mcphub_describe_tool`,
-`mcphub_call_tool`, and `mcphub_stats`. With `expose: lazy` in `mcphub.yaml`
-those five are the *only* tools advertised. See
+`mcphub_resolve_tool`, `mcphub_call_tool`, `mcphub_get_result`, and `mcphub_stats`.
+With `expose: lazy` in `mcphub.yaml`, those seven plus any explicitly pinned tools are the only
+tools advertised. `mcphub_get_result` accepts `{callId, cursor}` and returns a base64 page;
+continue with `nextCursor` until `done` is true. See
 [Concepts](/guide/concepts#management-tools).
 
 ---

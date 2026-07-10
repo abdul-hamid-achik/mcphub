@@ -37,8 +37,12 @@ mcphub fixes both halves:
   timestamped `.bak`. `mcphub init --from-agents` imports what you already have.
 - **Two sync modes** — `gateway` (the agent sees only mcphub) or `direct` (every enabled server
   written verbatim), chosen per agent.
-- **Lazy exposure + pinning** — `expose: lazy` advertises only five meta-tools and serves the
-  rest on demand (huge token savings); `pin: [server__tool]` keeps your most-used tools mounted.
+- **Lazy exposure + pinning** — `expose: lazy` advertises only seven management tools and serves
+  the rest on demand (huge token savings); `pin: [server__tool]` keeps your most-used tools mounted.
+- **Bounded, lossless results** — oversized MCP responses are stored locally for 24 hours and
+  replaced with a compact `callId`; agents recover the exact serialized result in bounded pages
+  with `mcphub_get_result`. Small results pass through unchanged, and `verbatim: true` or
+  `response_budget: "0"` opts out.
 - **Local intelligence** — every proxied call is recorded to SQLite, so `mcphub stats`
   (`--tools`, `--recent`, `--since 7d`) and `mcphub status` (per-agent **sync drift** + flags
   enabled-but-unused servers) tell you which servers earn their context budget.
