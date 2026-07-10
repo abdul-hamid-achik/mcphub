@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,8 @@ type Config struct {
 	Groups         map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
 	Agents         map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
 	ConnectTimeout string              `yaml:"connect_timeout,omitempty" toml:"connect_timeout,omitempty" json:"connect_timeout,omitempty"` // per-downstream connect timeout, e.g. "30s", "60s" (default 30s)
+	ResponseBudget string              `yaml:"response_budget,omitempty" toml:"response_budget,omitempty" json:"response_budget,omitempty"` // max result size before truncation, e.g. "32KB" (default 32KB, "0" = unlimited)
+	Verbatim       bool                `yaml:"verbatim,omitempty" toml:"verbatim,omitempty" json:"verbatim,omitempty"`                      // pass downstream results through without truncation
 }
 
 // Exposure controls how many tools the gateway advertises up front.
@@ -563,6 +566,46 @@ func (c *Config) ConnectTimeoutDuration() time.Duration {
 		return 30 * time.Second
 	}
 	return d
+}
+
+// ResponseBudgetBytes parses the response_budget config string (e.g. "32KB",
+// "1MB", "0") into bytes. Default 32KB; "0" means unlimited (no truncation).
+func (c *Config) ResponseBudgetBytes() int {
+	if c.ResponseBudget == "" {
+		return 32 * 1024
+	}
+	n, err := humanReadableBytes(c.ResponseBudget)
+	if err != nil || n < 0 {
+		return 32 * 1024
+	}
+	return n
+}
+
+// humanReadableBytes parses strings like "32KB", "1MB", "512B", "0".
+func humanReadableBytes(s string) (int, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	if s == "0" || s == "" {
+		return 0, nil
+	}
+	multiplier := 1
+	switch {
+	case strings.HasSuffix(s, "KB"):
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "KB")
+	case strings.HasSuffix(s, "MB"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "MB")
+	case strings.HasSuffix(s, "GB"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "GB")
+	case strings.HasSuffix(s, "B"):
+		s = strings.TrimSuffix(s, "B")
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0, err
+	}
+	return n * multiplier, nil
 }
 
 // EnabledServers returns the names of enabled servers, sorted.

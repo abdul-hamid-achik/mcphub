@@ -253,7 +253,14 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, fmt.Errorf("call %s__%s: %w", server, tool, err)
 	}
-	// Pass the downstream result through verbatim.
+	// Apply the response budget (SPEC §8.2: bounded lossless gateway results).
+	// Verbatim mode or budget=0 passes the result through untouched.
+	if !s.cfg.Verbatim {
+		budget := s.cfg.ResponseBudgetBytes()
+		if budget > 0 {
+			res = truncateResult(res, budget, server+"__"+tool)
+		}
+	}
 	return res, nil, nil
 }
 
@@ -280,4 +287,41 @@ func result(v any) (*sdk.CallToolResult, any, error) {
 		return nil, nil, fmt.Errorf("marshal result: %w", err)
 	}
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: string(b)}}}, v, nil
+}
+
+// truncateResult caps a CallToolResult's text content to fit within a byte
+// budget (SPEC §8.2). When truncation occurs, a notice is appended so the
+// agent knows the result was capped and can re-run with verbatim=true if it
+// needs the full output.
+func truncateResult(res *sdk.CallToolResult, budget int, namespaced string) *sdk.CallToolResult {
+	totalSize := 0
+	for _, c := range res.Content {
+		if tc, ok := c.(*sdk.TextContent); ok {
+			totalSize += len(tc.Text)
+		}
+	}
+	if totalSize <= budget {
+		return res
+	}
+	// Truncate proportionally across text content blocks.
+	budgetUsed := 0
+	notice := fmt.Sprintf("\n\n[result truncated: original %d bytes, budget %d bytes - set verbatim=true in mcphub.yaml to opt out]", totalSize, budget)
+	budget -= len(notice)
+	for i, c := range res.Content {
+		if tc, ok := c.(*sdk.TextContent); ok {
+			remaining := budget - budgetUsed
+			if remaining <= 0 {
+				res.Content[i] = &sdk.TextContent{Text: notice}
+				budgetUsed += len(notice)
+				break
+			}
+			if len(tc.Text) > remaining {
+				res.Content[i] = &sdk.TextContent{Text: tc.Text[:remaining] + notice}
+				budgetUsed = budget + len(notice)
+				break
+			}
+			budgetUsed += len(tc.Text)
+		}
+	}
+	return res
 }
