@@ -77,11 +77,11 @@ Package boundaries are part of the contract — keep them clean.
 | `cmd/mcphub` | Entrypoint only. Defers to `internal/cli.Execute()`. |
 | `internal/cli` | Cobra command tree (`root.go`) plus one file per surface: `commands.go` (init/list/enable/disable/stats/doctor), `manage.go` (add/remove/groups/use), `discover.go` (`init --from-agents` import), `sync.go`, `serve.go`, `studio.go`. Handlers stay thin; logic lives in the packages below. |
 | `internal/config` | `mcphub.yaml` model, load/save, `Validate()`, path/`~` expansion, and the `expose: all\|lazy` mode (`Lazy()`). The single source of truth — the **registry** every other package reads. |
-| `internal/hub` | The aggregating **proxy** ("gateway" half). Connects to each enabled downstream as an MCP client via the go-sdk, discovers tools, and `Mount`s them under `server__tool` names. `Call`/`FindTool` are the shared invoke path used by both the mounted tools (expose: all) and `mcphub_call_tool` (expose: lazy); every call records telemetry. A downstream that fails to start is recorded and skipped, never aborting the gateway. |
-| `internal/mcp` | mcphub's **own** MCP stdio server (the endpoint agents point at). Registers five meta-tools (`mcphub_list_servers`, `mcphub_search_tools`, `mcphub_describe_tool`, `mcphub_call_tool`, `mcphub_stats`); in `expose: all` it also mounts every downstream tool, in `expose: lazy` only the meta-tools. |
-| `internal/harness` | Agent-config **adapters**: `claude.go`, `opencode.go`, `codex.go` (`[mcp_servers.*]` TOML), `crush.go`, `forge.go`, `hermes.go`, `copilot.go`, `qwen.go`, `gemini.go`, `kilo.go` (JSONC), `kimi.go` (TOML). `harness.go` holds the `Adapter` interface (`List` + `Apply`), `DefaultPath` (conventional config paths), format-neutral `MCPServer`, the `diff` planner, and `backup`; `jsonutil.go` preserves unknown keys and strips JSONC comments. `List` powers `init --from-agents`. |
-| `internal/syncer` | The reconcile **engine** shared by `mcphub sync` and the Studio sync panel — `Reconcile(cfg, store, self, agents, write)` returns per-agent `Plan`s (dry-run) or applies them. `Desired` computes the gateway-vs-direct server set. |
-| `internal/store` | The local intelligence layer: a single-file SQLite db (pure-Go `modernc.org/sqlite`, **no cgo**) recording every proxied call, every sync, and which servers mcphub owns in which agent. Hand-written ergonomic wrapper over the sqlc-generated `db/` package. |
+| `internal/hub` | The aggregating **proxy** ("gateway" half). Connects to each enabled downstream as an MCP client, discovers tools, and mounts them under `server__tool`. `Call` is the shared invoke path for mounted and lazy calls: it records telemetry, reconnects safe failures, and applies the bounded-lossless result policy once after success. |
+| `internal/mcp` | mcphub's own MCP stdio server. Registers seven management tools (`list_servers`, `search_tools`, `describe_tool`, `resolve_tool`, `call_tool`, `get_result`, `stats`); in `expose: all` it also mounts every downstream tool, while lazy mode mounts only management plus pins. |
+| `internal/harness` | Agent-config **adapters**: `claude.go`, `opencode.go`, `codex.go` (`[mcp_servers.*]` TOML), `crush.go`, `forge.go`, `hermes.go`, `copilot.go`, `qwen.go`, `gemini.go`, `kilo.go` (JSONC), `kimi.go` (TOML). `harness.go` holds the `Adapter` interface (`List` + `Apply`), `DefaultPath`, format-neutral `MCPServer`, diff planning, and backup; `jsonutil.go` preserves unknown keys and strips JSONC comments. |
+| `internal/syncer` | The reconcile engine shared by `mcphub sync` and Studio. `Reconcile` returns per-agent plans or applies them; `Desired` computes the gateway/direct server set. |
+| `internal/store` | The local SQLite intelligence layer (pure-Go `modernc.org/sqlite`, no cgo): call telemetry, sync/ownership state, and exact oversized MCP results retained for 24 hours under opaque call IDs. Generated queries live in `internal/store/db`. |
 | `internal/store/db` | sqlc-**generated** typed queries (`db.go`, `models.go`, `queries.sql.go`). Committed; do not hand-edit — regenerate (see below). |
 | `internal/ui/studio` | The `mcphub studio` TUI on `charm.land/bubbletea/v2` + `lipgloss/v2`, with `charmbracelet/harmonica` spring-animated stat bars. Three tabs (Servers/Agents/Stats), space-toggle, and a `s` → preview → `a` apply sync panel (via `internal/syncer`). |
 | `internal/version` | Build metadata (`Version`/`Commit`/`Date`) stamped via `-ldflags`. |
@@ -90,7 +90,12 @@ Package boundaries are part of the contract — keep them clean.
 
 ### Data flow in one paragraph
 
-`mcphub mcp serve` → `config.Load` validates `mcphub.yaml` → `hub.New(cfg, store, logger)` → `hub.Connect` spawns/dials every enabled server concurrently (`CommandTransport` for stdio, `StreamableClientTransport`/`SSEClientTransport` for remote) and `ListTools` each → `mcp.NewServer` registers the `mcphub_*` management tools → `hub.Mount(srv)` adds each downstream tool as `server__tool` with a `forward` handler → `srv.Run(ctx, &StdioTransport{})`. Each forwarded call relays arguments unchanged, returns the downstream result verbatim, and `store.RecordCall` persists timing/bytes/error so `mcphub stats` and the Studio Stats tab can rank servers by usage and estimated token cost.
+`mcphub mcp serve` loads and validates config, opens one SQLite store shared by `hub` and `mcp`,
+connects enabled downstreams, registers the seven management tools, mounts allowed downstream
+tools, and serves stdio. Every successful downstream result is finalized once in `hub.Call`:
+small/verbatim/unlimited results pass through unchanged; oversized results are persisted before a
+compact recovery receipt is returned. `mcphub_get_result` scope-checks the stored server/tool and
+pages the exact serialized result without loading the whole payload.
 
 ## Conventions
 

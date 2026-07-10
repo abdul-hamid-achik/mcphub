@@ -32,6 +32,32 @@ func (q *Queries) DeleteManaged(ctx context.Context, arg DeleteManagedParams) er
 	return err
 }
 
+const insertSpoolResult = `-- name: InsertSpoolResult :exec
+INSERT INTO result_spool (call_id, server, tool, created_at, expires_at, payload)
+VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertSpoolResultParams struct {
+	CallID    string `json:"call_id"`
+	Server    string `json:"server"`
+	Tool      string `json:"tool"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at"`
+	Payload   []byte `json:"payload"`
+}
+
+func (q *Queries) InsertSpoolResult(ctx context.Context, arg InsertSpoolResultParams) error {
+	_, err := q.db.ExecContext(ctx, insertSpoolResult,
+		arg.CallID,
+		arg.Server,
+		arg.Tool,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+		arg.Payload,
+	)
+	return err
+}
+
 const insertSyncRun = `-- name: InsertSyncRun :exec
 INSERT INTO sync_runs (ts, agent, mode, servers, dry_run) VALUES (?, ?, ?, ?, ?)
 `
@@ -115,6 +141,53 @@ func (q *Queries) ListManagedForAgent(ctx context.Context, agent string) ([]Mana
 		return nil, err
 	}
 	return items, nil
+}
+
+const pageSpoolResult = `-- name: PageSpoolResult :one
+SELECT
+    server,
+    tool,
+    expires_at,
+    CAST(length(payload) AS INTEGER) AS total_bytes,
+    CAST(substr(payload, ?1 + 1, ?2) AS BLOB) AS page
+FROM result_spool
+WHERE call_id = ?3
+`
+
+type PageSpoolResultParams struct {
+	Cursor   interface{} `json:"cursor"`
+	PageSize int64       `json:"page_size"`
+	CallID   string      `json:"call_id"`
+}
+
+type PageSpoolResultRow struct {
+	Server     string `json:"server"`
+	Tool       string `json:"tool"`
+	ExpiresAt  string `json:"expires_at"`
+	TotalBytes int64  `json:"total_bytes"`
+	Page       []byte `json:"page"`
+}
+
+func (q *Queries) PageSpoolResult(ctx context.Context, arg PageSpoolResultParams) (PageSpoolResultRow, error) {
+	row := q.db.QueryRowContext(ctx, pageSpoolResult, arg.Cursor, arg.PageSize, arg.CallID)
+	var i PageSpoolResultRow
+	err := row.Scan(
+		&i.Server,
+		&i.Tool,
+		&i.ExpiresAt,
+		&i.TotalBytes,
+		&i.Page,
+	)
+	return i, err
+}
+
+const pruneExpiredSpoolResults = `-- name: PruneExpiredSpoolResults :exec
+DELETE FROM result_spool WHERE expires_at <= ?
+`
+
+func (q *Queries) PruneExpiredSpoolResults(ctx context.Context, expiresAt string) error {
+	_, err := q.db.ExecContext(ctx, pruneExpiredSpoolResults, expiresAt)
+	return err
 }
 
 const recentSyncRuns = `-- name: RecentSyncRuns :many

@@ -37,6 +37,12 @@ tasks:
     deps: [release]
     cmds:
       - cp {{.BINARY}} {{.INSTALL_PATH}}
+      - |-
+        if [ "$(uname -s)" = "Darwin" ]; then
+          target="{{.INSTALL_PATH}}"
+          if [ -L "$target" ]; then target="$(readlink "$target")"; fi
+          codesign --force --sign - "$target"
+        fi
       - '{{.INSTALL_PATH}} --version'
 
   snapshot:

@@ -7,7 +7,9 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -103,8 +105,13 @@ func (s *Server) registerManagement() {
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_call_tool",
-		Description: "Invoke a downstream tool by name and return its result verbatim. Accepts {server, tool, arguments} (tool may be the combined `server__tool` form). This is how you call tools in lazy mode.",
+		Description: "Invoke a downstream tool by name. Oversized results return a lossless retrieval receipt for mcphub_get_result; small results pass through unchanged. Accepts {server, tool, arguments} (tool may be the combined `server__tool` form). This is how you call tools in lazy mode.",
 	}, s.handleCallTool)
+
+	sdk.AddTool(s.srv, &sdk.Tool{
+		Name:        "mcphub_get_result",
+		Description: "Retrieve a bounded base64 page of a complete result previously stored by mcphub. Start with cursor 0 and continue with nextCursor until done is true.",
+	}, s.handleGetResult)
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_stats",
@@ -144,6 +151,11 @@ type callInput struct {
 	Server    string         `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
 	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form"`
 	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"arguments object passed to the downstream tool"`
+}
+
+type getResultInput struct {
+	CallID string `json:"callId" jsonschema:"opaque call ID from a stored-result receipt"`
+	Cursor int64  `json:"cursor,omitempty" jsonschema:"zero-based byte cursor (default 0)"`
 }
 
 type resolveToolInput struct {
@@ -360,15 +372,76 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 	if err != nil {
 		return nil, nil, fmt.Errorf("call %s__%s: %w", server, tool, err)
 	}
-	// Apply the response budget (SPEC §8.2: bounded lossless gateway results).
-	// Verbatim mode or budget=0 passes the result through untouched.
-	if !s.cfg.Verbatim {
-		budget := s.cfg.ResponseBudgetBytes()
-		if budget > 0 {
-			res = truncateResult(res, budget, server+"__"+tool)
-		}
-	}
 	return res, nil, nil
+}
+
+const maxResultPageSize int64 = 8 * 1024
+
+func (s *Server) resultPageSize() int64 {
+	if s.cfg == nil {
+		return maxResultPageSize
+	}
+	budget := s.cfg.ResponseBudgetBytes()
+	if budget <= 0 {
+		return maxResultPageSize
+	}
+	// Data is base64-encoded into both text and structured MCP content. Reserve
+	// the observed fixed envelope plus a conservative 3x expansion factor; this
+	// keeps even the minimum valid 512-byte budget bounded.
+	const envelopeHeadroom = 448
+	available := budget - envelopeHeadroom
+	if available < 1 {
+		return 1
+	}
+	size := int64(available / 3)
+	if size > maxResultPageSize {
+		return maxResultPageSize
+	}
+	return size
+}
+
+func (s *Server) handleGetResult(ctx context.Context, _ *sdk.CallToolRequest, in getResultInput) (*sdk.CallToolResult, any, error) {
+	if strings.TrimSpace(in.CallID) == "" {
+		return nil, nil, fmt.Errorf("callId is required")
+	}
+	if in.Cursor < 0 {
+		return nil, nil, fmt.Errorf("cursor must be nonnegative")
+	}
+	if s.store == nil {
+		return nil, nil, fmt.Errorf("result store not configured")
+	}
+	page, err := s.store.ReadResultPage(ctx, in.CallID, in.Cursor, s.resultPageSize())
+	switch {
+	case errors.Is(err, store.ErrResultNotFound), errors.Is(err, store.ErrResultExpired):
+		return result(map[string]any{
+			"status": "unavailable",
+			"reason": "The callId is unknown or its stored result has expired.",
+			"callId": in.CallID,
+		})
+	case err != nil && !errors.Is(err, store.ErrResultCursorOutOfRange):
+		return nil, nil, fmt.Errorf("read stored result: %w", err)
+	}
+	if !s.scope.allows(page.Server, page.Tool) {
+		return nil, nil, fmt.Errorf("stored result for %s__%s is out of scope for this agent", page.Server, page.Tool)
+	}
+	if errors.Is(err, store.ErrResultCursorOutOfRange) {
+		return result(map[string]any{
+			"status": "cursor_out_of_range",
+			"reason": "cursor is beyond the end of the stored result",
+			"callId": in.CallID,
+			"cursor": in.Cursor,
+		})
+	}
+	return result(map[string]any{
+		"status":     "ok",
+		"callId":     in.CallID,
+		"mediaType":  "application/json",
+		"data":       base64.StdEncoding.EncodeToString(page.Data),
+		"cursor":     page.Cursor,
+		"nextCursor": page.NextCursor,
+		"done":       page.Done,
+		"totalBytes": page.TotalBytes,
+	})
 }
 
 func (s *Server) handleStats(ctx context.Context, _ *sdk.CallToolRequest, _ emptyInput) (*sdk.CallToolResult, any, error) {
@@ -394,41 +467,4 @@ func result(v any) (*sdk.CallToolResult, any, error) {
 		return nil, nil, fmt.Errorf("marshal result: %w", err)
 	}
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: string(b)}}}, v, nil
-}
-
-// truncateResult caps a CallToolResult's text content to fit within a byte
-// budget (SPEC §8.2). When truncation occurs, a notice is appended so the
-// agent knows the result was capped and can re-run with verbatim=true if it
-// needs the full output.
-func truncateResult(res *sdk.CallToolResult, budget int, namespaced string) *sdk.CallToolResult {
-	totalSize := 0
-	for _, c := range res.Content {
-		if tc, ok := c.(*sdk.TextContent); ok {
-			totalSize += len(tc.Text)
-		}
-	}
-	if totalSize <= budget {
-		return res
-	}
-	// Truncate proportionally across text content blocks.
-	budgetUsed := 0
-	notice := fmt.Sprintf("\n\n[result truncated: original %d bytes, budget %d bytes - set verbatim=true in mcphub.yaml to opt out]", totalSize, budget)
-	budget -= len(notice)
-	for i, c := range res.Content {
-		if tc, ok := c.(*sdk.TextContent); ok {
-			remaining := budget - budgetUsed
-			if remaining <= 0 {
-				res.Content[i] = &sdk.TextContent{Text: notice}
-				budgetUsed += len(notice)
-				break
-			}
-			if len(tc.Text) > remaining {
-				res.Content[i] = &sdk.TextContent{Text: tc.Text[:remaining] + notice}
-				budgetUsed = budget + len(notice)
-				break
-			}
-			budgetUsed += len(tc.Text)
-		}
-	}
-	return res
 }

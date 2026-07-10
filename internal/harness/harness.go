@@ -12,6 +12,7 @@
 //	gemini   ~/.gemini/settings.json     JSON "mcpServers" (httpUrl|url by transport)
 //	kilo     ~/.config/kilo/kilo.jsonc   JSONC "mcp" (type: local|remote, command array)
 //	kimi     ~/.kimi/config.toml         TOML "[mcp_servers.*]" (type: local|remote)
+//	local-agent ~/.config/local-agent/config.yaml YAML "servers" sequence
 //
 // Each adapter is responsible for a SAFE read-modify-write: it produces a
 // dry-run Plan (the diff) without writing, writes a timestamped .bak before
@@ -155,6 +156,8 @@ func For(kind string) (Adapter, error) {
 		return kiloAdapter, nil
 	case "kimi":
 		return kimiAdapter{}, nil
+	case "local-agent", "localagent":
+		return localAgentAdapter{}, nil
 	default:
 		return nil, fmt.Errorf("unknown harness type %q (supported: %s)", kind, strings.Join(Kinds(), ", "))
 	}
@@ -162,7 +165,7 @@ func For(kind string) (Adapter, error) {
 
 // Kinds lists the supported harness types.
 func Kinds() []string {
-	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi"}
+	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent"}
 }
 
 // DefaultPath returns the conventional config file path for a harness kind,
@@ -196,6 +199,8 @@ func DefaultPath(kind string) string {
 		return filepath.Join(xdg, "kilo", "kilo.jsonc")
 	case "kimi":
 		return filepath.Join(home, ".kimi", "config.toml")
+	case "local-agent", "localagent":
+		return filepath.Join(xdg, "local-agent", "config.yaml")
 	}
 	return ""
 }

@@ -10,6 +10,15 @@ type ManagedEntry struct {
 	AppliedAt string `json:"applied_at"`
 }
 
+type ResultSpool struct {
+	CallID    string `json:"call_id"`
+	Server    string `json:"server"`
+	Tool      string `json:"tool"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at"`
+	Payload   []byte `json:"payload"`
+}
+
 type SyncRun struct {
 	ID      int64  `json:"id"`
 	Ts      string `json:"ts"`

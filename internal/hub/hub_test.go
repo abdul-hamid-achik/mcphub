@@ -1,15 +1,21 @@
 package hub
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -42,7 +48,7 @@ func TestCallAndFindTool(t *testing.T) {
 	}
 
 	// record() with a nil store must be a no-op and never panic.
-	h.record(ctx, "live", "echo", "live__echo", 0, nil, 0, nil)
+	h.record(ctx, "live", "echo", "live__echo", 0, nil, 0, 0, nil)
 }
 
 func recordingHub(t *testing.T) (*Hub, *store.Store) {
@@ -60,8 +66,8 @@ func recordingHub(t *testing.T) (*Hub, *store.Store) {
 func TestRecordCountsToolError(t *testing.T) {
 	h, st := recordingHub(t)
 	ctx := context.Background()
-	h.record(ctx, "s", "t", "s__t", time.Millisecond, nil, 10, &mcp.CallToolResult{})
-	h.record(ctx, "s", "t", "s__t", time.Millisecond, nil, 10,
+	h.record(ctx, "s", "t", "s__t", time.Millisecond, nil, 10, 2, &mcp.CallToolResult{})
+	h.record(ctx, "s", "t", "s__t", time.Millisecond, nil, 10, 64,
 		&mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "boom"}}})
 
 	tot, err := st.Totals(ctx)
@@ -83,7 +89,7 @@ func TestRecordSurvivesCancelledContext(t *testing.T) {
 	h, st := recordingHub(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled, as on an aborted/timed-out tool call
-	h.record(ctx, "s", "t", "s__t", time.Millisecond, context.Canceled, 0, nil)
+	h.record(ctx, "s", "t", "s__t", time.Millisecond, context.Canceled, 0, 0, nil)
 
 	tot, err := st.Totals(context.Background())
 	if err != nil {
@@ -229,4 +235,299 @@ type mockRoundTripper struct{}
 
 func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Body: http.NoBody, Header: make(http.Header)}, nil
+}
+
+func openHubStore(t *testing.T) (*store.Store, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "results.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return st, path
+}
+
+func spoolRows(t *testing.T, path string) int {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	var count int
+	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM result_spool").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func connectInMemoryClient(t *testing.T, server *mcp.Server) *mcp.ClientSession {
+	t.Helper()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "hub-test", Version: "1"}, nil)
+	clientSession, err := client.Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		_ = serverSession.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = clientSession.Close()
+		_ = serverSession.Close()
+	})
+	return clientSession
+}
+
+func inMemoryDownstream(t *testing.T, result *mcp.CallToolResult) (*mcp.ClientSession, *mcp.Tool) {
+	t.Helper()
+	tool := &mcp.Tool{Name: "large", InputSchema: map[string]any{"type": "object"}}
+	server := mcp.NewServer(&mcp.Implementation{Name: "memory", Version: "1"}, nil)
+	server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return result, nil
+	})
+	return connectInMemoryClient(t, server), tool
+}
+
+func TestBoundedLosslessMountedCallReconstructsExactResult(t *testing.T) {
+	st, _ := openHubStore(t)
+	cfg := &config.Config{ResponseBudget: "900B"}
+	original := &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("世界-data-", 600)}},
+		StructuredContent: map[string]any{
+			"kind": "large",
+			"rows": []any{1, "two", true},
+		},
+		IsError: true,
+	}
+	expected, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downstreamSession, tool := inMemoryDownstream(t, original)
+	h := New(cfg, st, nil)
+	h.downstreams = []*Downstream{{Name: "memory", session: downstreamSession, Tools: []*mcp.Tool{tool}}}
+
+	gateway := mcp.NewServer(&mcp.Implementation{Name: "gateway", Version: "1"}, nil)
+	h.MountMatching(gateway, func(string) bool { return true })
+	gatewayClient := connectInMemoryClient(t, gateway)
+	receiptResult, err := gatewayClient.CallTool(context.Background(), &mcp.CallToolParams{Name: "memory__large"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !receiptResult.IsError {
+		t.Fatal("bounded receipt must preserve the downstream IsError flag")
+	}
+	receipt, ok := receiptResult.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structured receipt type = %T", receiptResult.StructuredContent)
+	}
+	callID, _ := receipt["callId"].(string)
+	if callID == "" || receipt["namespaced"] != "memory__large" {
+		t.Fatalf("receipt = %#v", receipt)
+	}
+	if got := int(receipt["originalBytes"].(float64)); got != len(expected) {
+		t.Fatalf("originalBytes = %d, want %d", got, len(expected))
+	}
+	receiptBytes, err := json.Marshal(receiptResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receiptBytes) > cfg.ResponseBudgetBytes() {
+		t.Fatalf("serialized receipt = %d bytes, budget = %d", len(receiptBytes), cfg.ResponseBudgetBytes())
+	}
+
+	var rebuilt []byte
+	var cursor int64
+	for {
+		page, err := st.ReadResultPage(context.Background(), callID, cursor, 257)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rebuilt = append(rebuilt, page.Data...)
+		cursor = page.NextCursor
+		if page.Done {
+			break
+		}
+	}
+	if !bytes.Equal(rebuilt, expected) {
+		t.Fatal("stored mounted-tool result did not reconstruct byte-for-byte")
+	}
+	recent, err := st.RecentCalls(context.Background(), 1)
+	if err != nil || len(recent) != 1 || recent[0].ResultBytes != int64(len(expected)) {
+		t.Fatalf("telemetry result bytes = %+v, err %v", recent, err)
+	}
+}
+
+func TestFinalizeCallCompactsReceiptToMinimumBudget(t *testing.T) {
+	st, _ := openHubStore(t)
+	cfg := &config.Config{ResponseBudget: "512B"}
+	h := New(cfg, st, nil)
+	res := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("payload-", 500)}}}
+	longName := strings.Repeat("downstream-", 200)
+	got := h.finalizeCall(context.Background(), longName, longName, longName+"__"+longName, 0, 0, res)
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > config.MinResponseBudgetBytes {
+		t.Fatalf("compact receipt = %d bytes, budget = %d", len(encoded), config.MinResponseBudgetBytes)
+	}
+	receipt, ok := got.StructuredContent.(resultReceipt)
+	if !ok || receipt.CallID == "" {
+		t.Fatalf("compact receipt missing retrieval call ID: %#v", got.StructuredContent)
+	}
+	if receipt.Server != "" || receipt.Tool != "" || receipt.Namespaced != "" {
+		t.Fatalf("oversized origin metadata was not removed: %+v", receipt)
+	}
+}
+
+func TestFinalizeCallCompatibilityPathsAreUnchangedAndSpoolFree(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *config.Config
+		res  *mcp.CallToolResult
+	}{
+		{
+			name: "small",
+			cfg:  &config.Config{ResponseBudget: "4KB"},
+			res:  &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "small"}}},
+		},
+		{
+			name: "verbatim",
+			cfg:  &config.Config{ResponseBudget: "1B", Verbatim: true},
+			res:  &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("v", 400)}}},
+		},
+		{
+			name: "unlimited",
+			cfg:  &config.Config{ResponseBudget: "0"},
+			res:  &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("u", 400)}}},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			st, path := openHubStore(t)
+			h := New(test.cfg, st, nil)
+			before, err := json.Marshal(test.res)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := h.finalizeCall(context.Background(), "s", "t", "s__t", time.Millisecond, 0, test.res)
+			after, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.res || !bytes.Equal(after, before) {
+				t.Fatal("compatibility path changed the original result")
+			}
+			if count := spoolRows(t, path); count != 0 {
+				t.Fatalf("spool rows = %d, want 0", count)
+			}
+		})
+	}
+}
+
+func TestFinalizeCallBudgetsSerializedNonTextAndUTF8Preview(t *testing.T) {
+	st, _ := openHubStore(t)
+	h := New(&config.Config{ResponseBudget: "900B"}, st, nil)
+	res := &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: strings.Repeat("é界", 80)},
+			&mcp.ImageContent{Data: bytes.Repeat([]byte("A"), 2048), MIMEType: "image/png"},
+		},
+	}
+	got := h.finalizeCall(context.Background(), "s", "media", "s__media", 0, 0, res)
+	receipt, ok := got.StructuredContent.(resultReceipt)
+	if !ok {
+		t.Fatalf("non-text bytes did not trigger a receipt: %T", got.StructuredContent)
+	}
+	if receipt.OriginalBytes <= 2048 || receipt.CallID == "" {
+		t.Fatalf("receipt sizes = %+v", receipt)
+	}
+	if receipt.Preview == "" {
+		t.Fatal("UTF-8 text preview was omitted despite available receipt headroom")
+	}
+	if !utf8.ValidString(receipt.Preview) {
+		t.Fatalf("preview is not valid UTF-8: %q", receipt.Preview)
+	}
+}
+
+func TestFinalizeCallMarshalAndStoreFailuresFailOpen(t *testing.T) {
+	t.Run("marshal", func(t *testing.T) {
+		st, path := openHubStore(t)
+		h := New(&config.Config{ResponseBudget: "1B"}, st, nil)
+		res := &mcp.CallToolResult{StructuredContent: make(chan int)}
+		if got := h.finalizeCall(context.Background(), "s", "t", "s__t", 0, 0, res); got != res {
+			t.Fatal("marshal failure did not return original result")
+		}
+		if count := spoolRows(t, path); count != 0 {
+			t.Fatalf("spool rows = %d, want 0", count)
+		}
+	})
+	t.Run("store", func(t *testing.T) {
+		st, err := store.Open(filepath.Join(t.TempDir(), "closed.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+		h := New(&config.Config{ResponseBudget: "1B"}, st, nil)
+		res := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("x", 200)}}}
+		if got := h.finalizeCall(context.Background(), "s", "t", "s__t", 0, 0, res); got != res {
+			t.Fatal("store failure did not return original result")
+		}
+	})
+}
+
+func TestCallRetrySuccessUsesBoundedFinalizer(t *testing.T) {
+	st, _ := openHubStore(t)
+	original := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("retry", 500)}}}
+	downstream := mcp.NewServer(&mcp.Implementation{Name: "retry", Version: "1"}, nil)
+	downstream.AddTool(
+		&mcp.Tool{Name: "large", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) { return original, nil },
+	)
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return downstream }, nil)
+	var failedFirstCall atomic.Bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "read body", http.StatusInternalServerError)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if bytes.Contains(body, []byte(`"method":"tools/call"`)) && failedFirstCall.CompareAndSwap(false, true) {
+			http.Error(w, "forced transport failure", http.StatusInternalServerError)
+			return
+		}
+		mcpHandler.ServeHTTP(w, r)
+	})
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+
+	cfg := &config.Config{
+		ResponseBudget: "700B",
+		Servers: map[string]config.Server{
+			"retry": {URL: httpServer.URL, Transport: "http", Enabled: true},
+		},
+	}
+	h := New(cfg, st, nil)
+	h.Connect(context.Background())
+	defer h.Close()
+	got, err := h.Call(context.Background(), "retry", "large", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !failedFirstCall.Load() {
+		t.Fatal("test did not exercise the reconnect retry path")
+	}
+	receipt, ok := got.StructuredContent.(resultReceipt)
+	if !ok || receipt.CallID == "" {
+		t.Fatalf("retry success bypassed bounded finalizer: %#v", got.StructuredContent)
+	}
 }

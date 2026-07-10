@@ -28,6 +28,8 @@ Generate a starter file with [`mcphub init`](/reference/cli#init).
 ```yaml
 version: 1
 expose: all   # or: lazy
+response_budget: 32KB  # complete serialized MCP result budget; 0 = unlimited
+verbatim: false        # true = never spool or replace downstream results
 pin:          # tools always mounted, even in lazy mode (optional)
   - codemap__codemap_semantic
 
@@ -49,6 +51,8 @@ agents:
 | `version` | int             | yes      | Config schema version. Currently `1`.              |
 | `expose`  | `all` \| `lazy` | no       | Gateway tool exposure. `all` (default) mounts every downstream tool as `server__tool`; `lazy` advertises only mcphub's meta-tools and serves tools on demand via `mcphub_call_tool`. |
 | `pin`     | list of strings | no       | Tools that stay mounted even in `lazy` mode, so agents call them automatically. Each entry is a bare server (`codemap` — all its tools), a wildcard (`codemap__*`), or one tool (`codemap__codemap_semantic`). Manage with `mcphub pin` / `unpin` (or `p` in Studio). |
+| `response_budget` | byte size string | no | Complete serialized MCP result budget. Default `32KB`; `0` is unlimited. Oversized results are stored locally for 24 hours and recovered with `mcphub_get_result`. |
+| `verbatim` | bool | no | Return every downstream result unchanged and disable result spooling. Default `false`. |
 | `servers` | map             | yes      | The downstream MCP servers mcphub manages.         |
 | `groups`  | map             | no       | Named bundles of server names.                     |
 | `agents`  | map             | yes      | The agent harnesses mcphub keeps in sync.          |

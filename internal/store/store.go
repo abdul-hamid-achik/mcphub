@@ -10,18 +10,20 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"embed"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"github.com/abdul-hamid-achik/mcphub/internal/store/db"
+	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
-
-	_ "modernc.org/sqlite"
-
-	"github.com/abdul-hamid-achik/mcphub/internal/store/db"
 )
 
 //go:embed migrations/*.sql
@@ -29,8 +31,14 @@ var migrationsFS embed.FS
 
 // Store wraps the SQLite connection and the sqlc-generated queries.
 type Store struct {
-	sql *sql.DB
-	q   *db.Queries
+	sql        *sql.DB
+	q          *db.Queries
+	now        func() time.Time
+	stopPruner chan struct{}
+	pruneNow   chan chan struct{}
+	prunerDone chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
 }
 
 // DefaultPath is where the intelligence DB lives unless overridden. It follows
@@ -51,8 +59,18 @@ func DefaultPath() string {
 // which the tests use.
 func Open(path string) (*Store, error) {
 	if path != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		dir := filepath.Dir(path)
+		_, statErr := os.Stat(dir)
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("inspect db dir: %w", statErr)
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create db dir: %w", err)
+		}
+		if errors.Is(statErr, os.ErrNotExist) {
+			if err := os.Chmod(dir, 0o700); err != nil {
+				return nil, fmt.Errorf("secure db dir: %w", err)
+			}
 		}
 	}
 	// busy_timeout keeps concurrent gateway writes from failing under load.
@@ -69,7 +87,23 @@ func Open(path string) (*Store, error) {
 		sqlDB.Close()
 		return nil, err
 	}
-	return &Store{sql: sqlDB, q: db.New(sqlDB)}, nil
+	if path != ":memory:" {
+		for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
+			if err := os.Chmod(candidate, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+				sqlDB.Close()
+				return nil, fmt.Errorf("secure db file %s: %w", filepath.Base(candidate), err)
+			}
+		}
+	}
+	st := &Store{
+		sql: sqlDB, q: db.New(sqlDB), now: time.Now,
+		stopPruner: make(chan struct{}), pruneNow: make(chan chan struct{}), prunerDone: make(chan struct{}),
+	}
+	// Expired result payloads are disposable. Pruning is best-effort so a
+	// cleanup failure never makes the telemetry database unavailable.
+	_ = st.pruneExpired(context.Background())
+	go st.runPruner()
+	return st, nil
 }
 
 func applyMigrations(sqlDB *sql.DB) error {
@@ -97,7 +131,144 @@ func applyMigrations(sqlDB *sql.DB) error {
 }
 
 // Close closes the underlying database.
-func (s *Store) Close() error { return s.sql.Close() }
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() {
+		close(s.stopPruner)
+		<-s.prunerDone
+		s.closeErr = s.sql.Close()
+	})
+	return s.closeErr
+}
+
+const (
+	resultTTL           = 24 * time.Hour
+	resultPruneInterval = time.Hour
+	spoolTimeFormat     = "2006-01-02T15:04:05.000000000Z"
+)
+
+var (
+	// ErrResultNotFound means the call ID is unknown (or was already pruned).
+	ErrResultNotFound = errors.New("spooled result not found")
+	// ErrResultExpired means the call ID exists but its fixed retention window
+	// has elapsed.
+	ErrResultExpired = errors.New("spooled result expired")
+	// ErrResultCursorOutOfRange means the zero-based cursor is negative or
+	// beyond the payload. A cursor exactly at totalBytes is a valid empty final
+	// page.
+	ErrResultCursorOutOfRange = errors.New("result cursor out of range")
+)
+
+// ResultPage is one bounded byte range from a complete serialized MCP result.
+// Cursor and NextCursor are zero-based byte offsets into the stored payload.
+type ResultPage struct {
+	CallID     string
+	Server     string
+	Tool       string
+	Data       []byte
+	Cursor     int64
+	NextCursor int64
+	Done       bool
+	TotalBytes int64
+}
+
+// PutResult persists one complete serialized MCP result for the fixed 24-hour
+// retention window and returns an opaque 128-bit identifier.
+func (s *Store) PutResult(ctx context.Context, server, tool string, payload []byte) (string, error) {
+	var idBytes [16]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		return "", fmt.Errorf("generate result call ID: %w", err)
+	}
+	callID := hex.EncodeToString(idBytes[:])
+	now := s.now().UTC()
+
+	// Cleanup is deliberately opportunistic: failure to prune old rows must not
+	// prevent the current complete result from being saved.
+	_ = s.pruneExpired(ctx)
+	if err := s.q.InsertSpoolResult(ctx, db.InsertSpoolResultParams{
+		CallID:    callID,
+		Server:    server,
+		Tool:      tool,
+		CreatedAt: formatSpoolTime(now),
+		ExpiresAt: formatSpoolTime(now.Add(resultTTL)),
+		Payload:   payload,
+	}); err != nil {
+		return "", fmt.Errorf("insert spooled result: %w", err)
+	}
+	return callID, nil
+}
+
+// ReadResultPage returns at most pageSize bytes using SQLite's BLOB substr
+// operation, so paging never materializes the full payload in Go.
+func (s *Store) ReadResultPage(ctx context.Context, callID string, cursor, pageSize int64) (ResultPage, error) {
+	if cursor < 0 || pageSize <= 0 {
+		return ResultPage{}, ErrResultCursorOutOfRange
+	}
+	row, err := s.q.PageSpoolResult(ctx, db.PageSpoolResultParams{
+		CallID:   callID,
+		Cursor:   cursor,
+		PageSize: pageSize,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return ResultPage{}, ErrResultNotFound
+	}
+	if err != nil {
+		return ResultPage{}, fmt.Errorf("page spooled result: %w", err)
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, row.ExpiresAt)
+	if err != nil {
+		return ResultPage{}, fmt.Errorf("parse spooled result expiry: %w", err)
+	}
+	if !s.now().UTC().Before(expiresAt) {
+		return ResultPage{}, ErrResultExpired
+	}
+	if cursor > row.TotalBytes {
+		return ResultPage{
+			CallID:     callID,
+			Server:     row.Server,
+			Tool:       row.Tool,
+			Cursor:     cursor,
+			NextCursor: row.TotalBytes,
+			Done:       true,
+			TotalBytes: row.TotalBytes,
+		}, ErrResultCursorOutOfRange
+	}
+	next := cursor + int64(len(row.Page))
+	return ResultPage{
+		CallID:     callID,
+		Server:     row.Server,
+		Tool:       row.Tool,
+		Data:       row.Page,
+		Cursor:     cursor,
+		NextCursor: next,
+		Done:       next >= row.TotalBytes,
+		TotalBytes: row.TotalBytes,
+	}, nil
+}
+
+func (s *Store) pruneExpired(ctx context.Context) error {
+	return s.q.PruneExpiredSpoolResults(ctx, formatSpoolTime(s.now()))
+}
+
+func formatSpoolTime(value time.Time) string {
+	return value.UTC().Format(spoolTimeFormat)
+}
+
+func (s *Store) runPruner() {
+	defer close(s.prunerDone)
+	ticker := time.NewTicker(resultPruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopPruner:
+			return
+		case <-ticker.C:
+			_ = s.pruneExpired(context.Background())
+		case done := <-s.pruneNow:
+			_ = s.pruneExpired(context.Background())
+			close(done)
+		}
+	}
+}
 
 // --- tool-call telemetry --------------------------------------------------
 

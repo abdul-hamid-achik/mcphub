@@ -19,8 +19,10 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/log"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -265,9 +267,9 @@ func (h *Hub) forward(d *Downstream, toolName, namespaced string) mcp.ToolHandle
 }
 
 // Call forwards a tool invocation to a downstream server by name, records the
-// telemetry, and returns the result verbatim. It is the single code path both
-// the directly-mounted tools (expose: all) and the mcphub_call_tool meta-tool
-// (expose: lazy) go through.
+// telemetry, and applies the configured bounded-lossless result policy. It is
+// the single code path used by directly mounted, pinned, and lazy meta-tool
+// calls.
 // ReconnectOne immediately reconnects a single downstream by name. Returns
 // true if the reconnection succeeded. Used by Call() on a transport failure
 // (SPEC §8.1: immediate reconnect instead of waiting for the background watcher).
@@ -309,8 +311,8 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	namespaced := server + "__" + tool
 	start := time.Now()
 	res, callErr := d.session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
-	h.record(ctx, server, tool, namespaced, time.Since(start), callErr, len(args), res)
 	if callErr != nil {
+		h.record(ctx, server, tool, namespaced, time.Since(start), callErr, len(args), 0, res)
 		// Transport/protocol failure — the tool call never reached the
 		// downstream, so retrying is safe. Invalidate the stale session and
 		// attempt an immediate reconnect (SPEC §8.1: don't wait for the
@@ -320,15 +322,15 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 			h.log.Info("immediate reconnect succeeded, retrying call", "server", server, "tool", tool)
 			retryStart := time.Now()
 			res2, retryErr := h.retryCall(ctx, server, tool, args)
-			h.record(ctx, server, tool, namespaced, time.Since(retryStart), retryErr, len(args), res2)
 			if retryErr != nil {
+				h.record(ctx, server, tool, namespaced, time.Since(retryStart), retryErr, len(args), 0, res2)
 				return nil, fmt.Errorf("call %s__%s failed after reconnect: %w (reconnect succeeded but retry failed)", server, tool, retryErr)
 			}
-			return res2, nil
+			return h.finalizeCall(ctx, server, tool, namespaced, time.Since(retryStart), len(args), res2), nil
 		}
 		return nil, fmt.Errorf("call %s__%s failed: %w (reconnect attempted but failed; the background watcher will retry)", server, tool, callErr)
 	}
-	return res, nil
+	return h.finalizeCall(ctx, server, tool, namespaced, time.Since(start), len(args), res), nil
 }
 
 // invalidateDownstream marks a downstream as disconnected so the background
@@ -379,15 +381,123 @@ func (h *Hub) FindTool(server, tool string) (*mcp.Tool, bool) {
 	return nil, false
 }
 
-func (h *Hub) record(ctx context.Context, server, tool, namespaced string, dur time.Duration, callErr error, argsBytes int, res *mcp.CallToolResult) {
+type resultReceipt struct {
+	Status        string `json:"status"`
+	CallID        string `json:"callId"`
+	Server        string `json:"server,omitempty"`
+	Tool          string `json:"tool,omitempty"`
+	Namespaced    string `json:"namespaced,omitempty"`
+	OriginalBytes int    `json:"originalBytes"`
+	BudgetBytes   int    `json:"budgetBytes"`
+	Preview       string `json:"preview,omitempty"`
+	NextAction    string `json:"nextAction,omitempty"`
+}
+
+// finalizeCall is the one successful-call exit for initial and reconnect
+// attempts. It marshals the complete result once for telemetry and spooling.
+func (h *Hub) finalizeCall(ctx context.Context, server, tool, namespaced string, dur time.Duration, argsBytes int, res *mcp.CallToolResult) *mcp.CallToolResult {
+	payload, err := json.Marshal(res)
+	resultBytes := 0
+	if err == nil {
+		resultBytes = len(payload)
+	}
+	h.record(ctx, server, tool, namespaced, dur, nil, argsBytes, resultBytes, res)
+
+	budget := h.cfg.ResponseBudgetBytes()
+	if err != nil || res == nil || h.store == nil || h.cfg.Verbatim || budget == 0 || resultBytes <= budget {
+		return res
+	}
+
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	callID, err := h.store.PutResult(sctx, server, tool, payload)
+	if err != nil {
+		h.log.Warn("result spool write failed; returning complete result", "server", server, "tool", tool, "err", err)
+		return res
+	}
+
+	receipt := resultReceipt{
+		Status:        "stored",
+		CallID:        callID,
+		Server:        server,
+		Tool:          tool,
+		Namespaced:    namespaced,
+		OriginalBytes: resultBytes,
+		BudgetBytes:   budget,
+		NextAction:    "Call mcphub_get_result with this callId and cursor 0, then continue with each nextCursor until done is true.",
+	}
+	out := receiptResult(receipt, res.IsError)
+
+	// A preview is optional recovery context. If origin metadata makes the
+	// base receipt exceed the budget, fall back to the fixed compact receipt;
+	// callId is the only field retrieval requires.
+	base, marshalErr := json.Marshal(out)
+	if marshalErr == nil && len(base) > budget {
+		receipt.Server = ""
+		receipt.Tool = ""
+		receipt.Namespaced = ""
+		receipt.NextAction = ""
+		out = receiptResult(receipt, res.IsError)
+		base, marshalErr = json.Marshal(out)
+	}
+	if marshalErr == nil {
+		for maxPreview := (budget - len(base)) / 6; maxPreview >= utf8.UTFMax; maxPreview /= 2 {
+			preview := textPreview(res, maxPreview)
+			if preview == "" {
+				break
+			}
+			candidateReceipt := receipt
+			candidateReceipt.Preview = preview
+			candidate := receiptResult(candidateReceipt, res.IsError)
+			encoded, candidateErr := json.Marshal(candidate)
+			if candidateErr == nil && len(encoded) <= budget {
+				return candidate
+			}
+		}
+	}
+	return out
+}
+
+func receiptResult(receipt resultReceipt, isError bool) *mcp.CallToolResult {
+	text := fmt.Sprintf(
+		"Result stored: %d bytes exceeded the %d-byte response budget. Retrieve it with mcphub_get_result using callId %s and cursor 0.",
+		receipt.OriginalBytes, receipt.BudgetBytes, receipt.CallID,
+	)
+	return &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+		StructuredContent: receipt,
+		IsError:           isError,
+	}
+}
+
+func textPreview(res *mcp.CallToolResult, maxBytes int) string {
+	for _, content := range res.Content {
+		text, ok := content.(*mcp.TextContent)
+		if !ok || text.Text == "" {
+			continue
+		}
+		value := strings.ToValidUTF8(text.Text, "\uFFFD")
+		if len(value) <= maxBytes {
+			return value
+		}
+		if maxBytes <= len("…") {
+			return ""
+		}
+		end := maxBytes - len("…")
+		for end > 0 && !utf8.RuneStart(value[end]) {
+			end--
+		}
+		if end == 0 {
+			return ""
+		}
+		return value[:end] + "…"
+	}
+	return ""
+}
+
+func (h *Hub) record(ctx context.Context, server, tool, namespaced string, dur time.Duration, callErr error, argsBytes, resultBytes int, res *mcp.CallToolResult) {
 	if h.store == nil {
 		return
-	}
-	resultBytes := 0
-	if res != nil {
-		if b, err := json.Marshal(res); err == nil {
-			resultBytes = len(b)
-		}
 	}
 	// A tool that fails its own execution returns (res, nil) with res.IsError —
 	// the go-sdk only sets callErr for protocol/transport failures. Count those

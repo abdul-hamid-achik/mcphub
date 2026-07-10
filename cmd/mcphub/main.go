@@ -3,8 +3,17 @@
 // sync them into every agent harness.
 package main
 
-import "github.com/abdul-hamid-achik/mcphub/internal/cli"
+import (
+	"fmt"
+	"os"
+
+	"github.com/abdul-hamid-achik/mcphub/internal/cli"
+	"github.com/abdul-hamid-achik/mcphub/internal/runtimepath"
+)
 
 func main() {
+	if err := runtimepath.Apply(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "mcphub: configure runtime PATH: %v\n", err)
+	}
 	cli.Execute()
 }

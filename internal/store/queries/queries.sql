@@ -59,3 +59,20 @@ INSERT INTO sync_runs (ts, agent, mode, servers, dry_run) VALUES (?, ?, ?, ?, ?)
 
 -- name: RecentSyncRuns :many
 SELECT * FROM sync_runs ORDER BY id DESC LIMIT ?;
+
+-- name: InsertSpoolResult :exec
+INSERT INTO result_spool (call_id, server, tool, created_at, expires_at, payload)
+VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: PageSpoolResult :one
+SELECT
+    server,
+    tool,
+    expires_at,
+    CAST(length(payload) AS INTEGER) AS total_bytes,
+    CAST(substr(payload, sqlc.arg(cursor) + 1, sqlc.arg(page_size)) AS BLOB) AS page
+FROM result_spool
+WHERE call_id = sqlc.arg(call_id);
+
+-- name: PruneExpiredSpoolResults :exec
+DELETE FROM result_spool WHERE expires_at <= ?;
