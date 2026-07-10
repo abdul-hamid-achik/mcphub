@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -96,6 +97,11 @@ func (s *Server) registerManagement() {
 	}, s.handleDescribeTool)
 
 	sdk.AddTool(s.srv, &sdk.Tool{
+		Name:        "mcphub_resolve_tool",
+		Description: "Find the best tool for a task and return it with required fields + an argument template, so you can call it directly without separate search + describe steps. Returns one recommendation, alternatives, and an ambiguity flag.",
+	}, s.handleResolveTool)
+
+	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_call_tool",
 		Description: "Invoke a downstream tool by name and return its result verbatim. Accepts {server, tool, arguments} (tool may be the combined `server__tool` form). This is how you call tools in lazy mode.",
 	}, s.handleCallTool)
@@ -138,6 +144,11 @@ type callInput struct {
 	Server    string         `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
 	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form"`
 	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"arguments object passed to the downstream tool"`
+}
+
+type resolveToolInput struct {
+	Query   string `json:"query" jsonschema:"natural-language description of what you want to do"`
+	MaxHits int    `json:"max_hits,omitempty" jsonschema:"max alternatives to return (default 5)"`
 }
 
 // --- handlers -------------------------------------------------------------
@@ -231,6 +242,102 @@ func (s *Server) handleDescribeTool(_ context.Context, _ *sdk.CallToolRequest, i
 		"description":  t.Description,
 		"input_schema": t.InputSchema,
 	})
+}
+
+func (s *Server) handleResolveTool(_ context.Context, _ *sdk.CallToolRequest, in resolveToolInput) (*sdk.CallToolResult, any, error) {
+	q := strings.ToLower(strings.TrimSpace(in.Query))
+	maxHits := in.MaxHits
+	if maxHits <= 0 || maxHits > 10 {
+		maxHits = 5
+	}
+	var matches []toolMatch
+	for _, d := range s.hub.Downstreams() {
+		if !d.Connected() || !s.scope.allowsServer(d.Name) {
+			continue
+		}
+		for _, t := range d.Tools {
+			ns := d.Name + "__" + t.Name
+			if !s.scope.allowsNS(ns) {
+				continue
+			}
+			if q == "" || strings.Contains(strings.ToLower(ns), q) || strings.Contains(strings.ToLower(t.Name), q) || strings.Contains(strings.ToLower(t.Description), q) {
+				matches = append(matches, toolMatch{Namespaced: ns, Server: d.Name, Tool: t.Name, Description: t.Description})
+			}
+		}
+	}
+	if len(matches) == 0 {
+		return result(map[string]any{"query": in.Query, "recommendation": nil, "ambiguous": false, "alternatives": []toolMatch{}, "hint": "no tools matched — try a broader query or use mcphub_search_tools"})
+	}
+	// Rank: exact name match > name substring > description substring.
+	sort.Slice(matches, func(i, j int) bool {
+		return resolveRank(q, matches[i]) > resolveRank(q, matches[j])
+	})
+	top := matches[0]
+	alts := matches[1:]
+	if len(alts) > maxHits {
+		alts = alts[:maxHits]
+	}
+	ambiguous := len(matches) > 1 && resolveRank(q, top) == resolveRank(q, matches[1])
+	// Extract required fields + build an argument template from the tool's schema.
+	t, ok := s.hub.FindTool(top.Server, top.Tool)
+	required, template := []string{}, map[string]any{}
+	if ok && t.InputSchema != nil {
+		var schema map[string]any
+		// InputSchema is `any` — marshal then unmarshal to normalize.
+		b, mErr := json.Marshal(t.InputSchema)
+		if mErr == nil {
+			json.Unmarshal(b, &schema)
+		}
+		if req, ok := schema["required"].([]any); ok {
+			for _, r := range req {
+				if s, ok := r.(string); ok {
+					required = append(required, s)
+					template[s] = "<value>"
+				}
+			}
+		}
+		if props, ok := schema["properties"].(map[string]any); ok {
+			for k := range props {
+				if _, exists := template[k]; !exists {
+					template[k] = nil
+				}
+			}
+		}
+	}
+	return result(map[string]any{
+		"query": in.Query,
+		"recommendation": map[string]any{
+			"server":            top.Server,
+			"tool":              top.Tool,
+			"namespaced":        top.Namespaced,
+			"description":       top.Description,
+			"required_fields":   required,
+			"argument_template": template,
+		},
+		"ambiguous":    ambiguous,
+		"alternatives": alts,
+		"hint":         resolveHint(ambiguous, top.Namespaced),
+	})
+}
+
+// resolveRank scores a match: 3 = exact name, 2 = name substring, 1 = description only.
+func resolveRank(q string, m toolMatch) int {
+	nameLower := strings.ToLower(m.Tool)
+	switch {
+	case nameLower == q:
+		return 3
+	case strings.Contains(nameLower, q):
+		return 2
+	default:
+		return 1
+	}
+}
+
+func resolveHint(ambiguous bool, namespaced string) string {
+	if ambiguous {
+		return "multiple tools ranked equally — review the alternatives and pick the one whose description best matches your intent"
+	}
+	return "call mcphub_call_tool with server + tool (or the namespaced name) + the argument_template filled in"
 }
 
 func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in callInput) (*sdk.CallToolResult, any, error) {
