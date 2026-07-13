@@ -175,5 +175,6 @@ directory, then the XDG config path.
 - [Concepts](/guide/concepts) — gateway vs. direct, namespacing, and how the
   proxy saves tokens.
 - [Sync to your agents](/guide/sync) — how each harness adapter merges.
+- [Connect Bob](/guide/bob) — expose Bob's repository inspection and planning tools safely.
 - [CLI reference](/reference/cli) — every command and flag.
 - [Configuration reference](/reference/config) — the full `mcphub.yaml` schema.

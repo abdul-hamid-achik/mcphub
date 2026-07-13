@@ -174,6 +174,12 @@ servers:
     enabled: true
     description: Semantic code search
     tags: [code, search]
+  bob:
+    command: /Users/abdulachik/go/bin/bob
+    args: [mcp, serve, --allow-any-workspace]
+    enabled: true
+    description: Deterministic repository factory and lifecycle reconciler
+    tags: [builder, code]
   glyph:
     command: glyph
     args: [mcp]
@@ -225,6 +231,11 @@ Each `server` is either a stdio server (`command` + `args` + optional `env`) **o
 server (`url` + `transport`, where `transport` is `http` or `sse`). Each `agent` has a `type`
 (`claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`,
 `kilo`, or `kimi`), a `path`, and a `mode` that defaults to `gateway`.
+
+The Bob entry uses `--allow-any-workspace`, which grants its read-only MCP tools
+access to any workspace readable by the Bob process. Use that flag only in a
+trusted, local, single-user gateway. For a least-privilege setup and the six
+available Bob tools, see the [Bob integration guide](docs/guide/bob.md).
 
 ### Per-agent routing
 

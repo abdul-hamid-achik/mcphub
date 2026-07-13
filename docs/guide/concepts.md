@@ -51,8 +51,9 @@ To keep tool names unique across servers, the gateway exposes each downstream
 tool under a **namespaced** name: the server's name, two underscores, then the
 tool's original name. A tool named `search` on a server named `vecgrep` becomes
 `vecgrep__search`. The description is prefixed with `[server]` so agents can see
-where a tool comes from, and the original input schema is passed through
-unchanged.
+where a tool comes from. The gateway preserves the downstream title, input and
+output schemas, annotations, icons, and `_meta`, so clients retain the tool's
+display, validation, and safety hints after namespacing.
 
 When an agent calls `vecgrep__search`, the gateway relays the arguments to the
 real `search` tool on the `vecgrep` session unchanged, times the call, and records it.

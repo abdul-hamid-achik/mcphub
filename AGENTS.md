@@ -119,6 +119,10 @@ pages the exact serialized result without loading the whole payload.
 - **stdio hygiene**: in `mcp serve`, logs go to **stderr** (`log.NewWithOptions(os.Stderr, ...)`)
   so they never corrupt the stdout JSON-RPC stream. Keep it that way. Use the
   go-sdk `StdioTransport` as-is (newline-delimited JSON-RPC, not Content-Length).
+- **Tool metadata is part of the proxy contract**: namespacing copies the whole
+  downstream `mcp.Tool` and changes only `Name` and the description prefix.
+  Never rebuild a partial tool that drops output schemas, annotations, icons,
+  `_meta`, or future SDK fields.
 - Comment exported types and non-obvious unexported functions — comments are
   part of the docs. Prefer value receivers; use pointer receivers only when the
   type owns mutable state (e.g. `*Hub`, `*Store`).

@@ -51,6 +51,9 @@ records telemetry and which servers mcphub owns. TUI: `internal/ui/studio`
 - **stdio framing**: in `mcp serve`, logs go to **stderr**; stdout is the
   JSON-RPC stream. Use the go-sdk `StdioTransport` as-is (newline-delimited, not
   Content-Length). Never `fmt.Println` to stdout from the gateway.
+- **Namespacing preserves the whole tool contract.** Copy the downstream
+  `mcp.Tool` and change only its protocol name and description prefix; do not
+  drop output schemas, annotations, icons, `_meta`, or future SDK fields.
 - **`sync` is sacred.** It is dry-run by default, writes a timestamped `.bak`
   before any write, only touches the MCP-server section of each file, and prunes
   only entries mcphub previously *owned* (the `managed_entries` table) so

@@ -28,6 +28,7 @@ export default defineConfig({
           text: 'Guide',
           items: [
             { text: 'Getting started', link: '/guide/getting-started' },
+            { text: 'Connect Bob', link: '/guide/bob' },
             { text: 'Concepts', link: '/guide/concepts' },
             { text: 'Sync to your agents', link: '/guide/sync' },
             { text: 'Studio (TUI)', link: '/guide/studio' },
@@ -54,6 +55,7 @@ export default defineConfig({
           text: 'Guide',
           items: [
             { text: 'Getting started', link: '/guide/getting-started' },
+            { text: 'Connect Bob', link: '/guide/bob' },
             { text: 'Concepts', link: '/guide/concepts' },
             { text: 'Sync to your agents', link: '/guide/sync' },
             { text: 'Studio (TUI)', link: '/guide/studio' },

@@ -292,6 +292,89 @@ func inMemoryDownstream(t *testing.T, result *mcp.CallToolResult) (*mcp.ClientSe
 	return connectInMemoryClient(t, server), tool
 }
 
+func TestMountPreservesDownstreamToolMetadata(t *testing.T) {
+	destructive := false
+	openWorld := false
+	downstreamServer := mcp.NewServer(&mcp.Implementation{Name: "bob", Version: "1"}, nil)
+	downstreamServer.AddTool(&mcp.Tool{
+		Meta:        mcp.Meta{"audience": []any{"agent", "human"}},
+		Name:        "inspect",
+		Title:       "Inspect a Bob workspace",
+		Description: "Inspect repository state without changing it.",
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"workspace": map[string]any{"type": "string"}},
+		},
+		OutputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+		},
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Inspect workspace",
+			ReadOnlyHint:    true,
+			DestructiveHint: &destructive,
+			IdempotentHint:  true,
+			OpenWorldHint:   &openWorld,
+		},
+		Icons: []mcp.Icon{{
+			Source:   "data:image/svg+xml;base64,PHN2Zy8+",
+			MIMEType: "image/svg+xml",
+			Sizes:    []string{"any"},
+		}},
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{StructuredContent: map[string]any{"ok": true}}, nil
+	})
+	downstreamSession := connectInMemoryClient(t, downstreamServer)
+	downstreamList, err := downstreamSession.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(downstreamList.Tools) != 1 {
+		t.Fatalf("downstream tools = %d, want 1", len(downstreamList.Tools))
+	}
+	source := downstreamList.Tools[0]
+
+	h := New(&config.Config{}, nil, nil)
+	h.downstreams = []*Downstream{{Name: "bob", session: downstreamSession, Tools: downstreamList.Tools}}
+	gateway := mcp.NewServer(&mcp.Implementation{Name: "gateway", Version: "1"}, nil)
+	if mounted := h.Mount(gateway); mounted != 1 {
+		t.Fatalf("mounted tools = %d, want 1", mounted)
+	}
+	gatewaySession := connectInMemoryClient(t, gateway)
+	gatewayList, err := gatewaySession.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gatewayList.Tools) != 1 {
+		t.Fatalf("gateway tools = %d, want 1", len(gatewayList.Tools))
+	}
+	got := gatewayList.Tools[0]
+	if got.Name != "bob__inspect" {
+		t.Errorf("name = %q, want bob__inspect", got.Name)
+	}
+	if got.Description != "[bob] "+source.Description {
+		t.Errorf("description = %q, want prefixed downstream description", got.Description)
+	}
+	if got.Title != source.Title {
+		t.Errorf("title = %q, want %q", got.Title, source.Title)
+	}
+	if !reflect.DeepEqual(got.InputSchema, source.InputSchema) {
+		t.Errorf("input schema changed: got %#v, want %#v", got.InputSchema, source.InputSchema)
+	}
+	if !reflect.DeepEqual(got.OutputSchema, source.OutputSchema) {
+		t.Errorf("output schema changed: got %#v, want %#v", got.OutputSchema, source.OutputSchema)
+	}
+	if !reflect.DeepEqual(got.Annotations, source.Annotations) {
+		t.Errorf("annotations changed: got %#v, want %#v", got.Annotations, source.Annotations)
+	}
+	if !reflect.DeepEqual(got.Icons, source.Icons) {
+		t.Errorf("icons changed: got %#v, want %#v", got.Icons, source.Icons)
+	}
+	if !reflect.DeepEqual(got.Meta, source.Meta) {
+		t.Errorf("meta changed: got %#v, want %#v", got.Meta, source.Meta)
+	}
+}
+
 func TestBoundedLosslessMountedCallReconstructsExactResult(t *testing.T) {
 	st, _ := openHubStore(t)
 	cfg := &config.Config{ResponseBudget: "900B"}

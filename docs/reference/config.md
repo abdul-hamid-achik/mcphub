@@ -252,6 +252,12 @@ servers:
     enabled: true
     description: Semantic code search
     tags: [code, search]
+  bob:
+    command: /Users/abdulachik/go/bin/bob
+    args: [mcp, serve, --allow-any-workspace]
+    enabled: true
+    description: Deterministic repository factory and lifecycle reconciler
+    tags: [builder, code]
   glyph:
     command: glyph
     args: [mcp]
@@ -259,7 +265,7 @@ servers:
     description: TUI behavior testing
 
 groups:
-  coding: [codemap, vecgrep]
+  coding: [bob, codemap, vecgrep]
 
 agents:
   claude:
@@ -276,8 +282,13 @@ agents:
     mode: gateway
 ```
 
+The Bob example grants broad read authority with `--allow-any-workspace`. Use
+that flag only with a trusted local gateway; the [Bob integration guide](/guide/bob)
+shows the repeatable `--allow-workspace` least-privilege alternative.
+
 ## See also
 
 - [CLI reference](/reference/cli) — every command and flag.
 - [Sync to your agents](/guide/sync) — how each harness adapter merges.
 - [Concepts](/guide/concepts) — gateway vs. direct, namespacing, token savings.
+- [Connect Bob](/guide/bob) — register the repository builder with the right workspace authority.

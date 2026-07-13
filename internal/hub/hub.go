@@ -243,15 +243,22 @@ func (h *Hub) mount(srv *mcp.Server, want func(namespaced string) bool) int {
 			if !want(namespaced) {
 				continue
 			}
-			srv.AddTool(&mcp.Tool{
-				Name:        namespaced,
-				Description: fmt.Sprintf("[%s] %s", d.Name, tool.Description),
-				InputSchema: tool.InputSchema,
-			}, h.forward(d, tool.Name, namespaced))
+			srv.AddTool(namespacedTool(d.Name, tool), h.forward(d, tool.Name, namespaced))
 			count++
 		}
 	}
 	return count
+}
+
+// namespacedTool copies a downstream tool definition, changing only the
+// protocol name and description needed by the gateway. Copying the complete
+// SDK value preserves titles, input/output schemas, annotations, icons, _meta,
+// and fields added by future SDK releases instead of rebuilding a partial tool.
+func namespacedTool(server string, tool *mcp.Tool) *mcp.Tool {
+	mounted := *tool
+	mounted.Name = server + "__" + tool.Name
+	mounted.Description = fmt.Sprintf("[%s] %s", server, tool.Description)
+	return &mounted
 }
 
 // forward returns a raw passthrough handler used when a tool is mounted
