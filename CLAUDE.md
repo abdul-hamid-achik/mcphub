@@ -28,8 +28,8 @@ them before declaring a change done. Single test:
 (`mcphub.yaml`, the registry) → `internal/hub` dials each enabled server as a
 go-sdk MCP **client** and `Mount`s their tools as `server__tool` onto
 `internal/mcp` (mcphub's own gateway MCP server) → `internal/harness` adapters
-sync that into 11 agent configs (Claude, opencode, Codex, Crush, Forge, Hermes,
-Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI) → `internal/store`
+sync that into 12 agent configs (Claude, opencode, Codex, Crush, Forge, Hermes,
+Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI, local-agent) → `internal/store`
 records telemetry and which servers mcphub owns. TUI: `internal/ui/studio`
 (charm.land v2). Keep these boundaries clean.
 

@@ -118,7 +118,11 @@ func agentFromPlanID(planID string) string {
 	return parts[2]
 }
 
-// latestBackup finds the most recent .bak file for a config path.
+// latestBackup finds the most recent backup for a config path. Backups are
+// written by harness.backup as <path>.bak-<timestamp> (with a -N suffix on
+// same-second collisions), so match on the ".bak" prefix rather than a
+// suffix. Ties on mtime (one-second timestamp resolution) fall back to the
+// lexically greatest name, which sorts the -N collision suffixes last.
 func latestBackup(configPath string) (string, error) {
 	dir := filepath.Dir(configPath)
 	base := filepath.Base(configPath)
@@ -133,16 +137,17 @@ func latestBackup(configPath string) (string, error) {
 			continue
 		}
 		name := e.Name()
-		if !strings.HasPrefix(name, base+".") || !strings.HasSuffix(name, ".bak") {
+		if !strings.HasPrefix(name, base+".bak") {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		if best == "" || info.ModTime().After(bestTime) {
+		mt := info.ModTime()
+		if best == "" || mt.After(bestTime) || (mt.Equal(bestTime) && name > filepath.Base(best)) {
 			best = filepath.Join(dir, name)
-			bestTime = info.ModTime()
+			bestTime = mt
 		}
 	}
 	if best == "" {

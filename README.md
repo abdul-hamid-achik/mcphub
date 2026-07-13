@@ -12,10 +12,10 @@ you can see which servers actually earn their place in your context window.
 ## Why
 
 Every coding agent — Claude Code, opencode, Codex, Copilot CLI, Qwen Code, Gemini CLI,
-Kilo Code, Kimi Code CLI, Crush, Forge, Hermes — wants its MCP servers configured in its
-own bespoke file, in its own format, by hand. Add a server and you edit eleven configs.
-Each agent then loads the full tool list of every server you gave it, burning context
-on tools it will rarely call.
+Kilo Code, Kimi Code CLI, Crush, Forge, Hermes, local-agent — wants its MCP servers
+configured in its own bespoke file, in its own format, by hand. Add a server and you
+edit twelve configs. Each agent then loads the full tool list of every server you gave
+it, burning context on tools it will rarely call.
 
 mcphub fixes both halves:
 
@@ -31,10 +31,11 @@ mcphub fixes both halves:
 - **Single gateway** — `mcphub mcp serve` connects to every enabled downstream server as an
   MCP client, aggregates their tools under `server__tool` names, and re-exposes them on one
   stdio connection.
-- **Syncs to eleven harnesses** — push your config into Claude Code, opencode, Codex,
-  Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI, Crush, Forge, and Hermes
-  with a non-destructive merge. Dry-run by default; `--write` applies after saving a
-  timestamped `.bak`. `mcphub init --from-agents` imports what you already have.
+- **Syncs to twelve harnesses** — push your config into Claude Code, opencode, Codex,
+  Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI, Crush, Forge, Hermes,
+  and local-agent with a non-destructive merge. Dry-run by default; `--write` applies
+  after saving a timestamped `.bak`. `mcphub init --from-agents` imports what you
+  already have.
 - **Two sync modes** — `gateway` (the agent sees only mcphub) or `direct` (every enabled server
   written verbatim), chosen per agent.
 - **Lazy exposure + pinning** — `expose: lazy` advertises only seven management tools and serves
@@ -230,7 +231,7 @@ agents:
 Each `server` is either a stdio server (`command` + `args` + optional `env`) **or** a remote
 server (`url` + `transport`, where `transport` is `http` or `sse`). Each `agent` has a `type`
 (`claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`,
-`kilo`, or `kimi`), a `path`, and a `mode` that defaults to `gateway`.
+`kilo`, `kimi`, or `local-agent`), a `path`, and a `mode` that defaults to `gateway`.
 
 The Bob entry uses `--allow-any-workspace`, which grants its read-only MCP tools
 access to any workspace readable by the Bob process. Use that flag only in a
@@ -299,6 +300,7 @@ mcphub sync --write       # apply (a .bak is saved first)
 | Crush | `~/.config/crush/crush.json` | JSON `mcp` |
 | Forge (forgecode) | `~/forge/.mcp.json` | JSON `mcpServers` |
 | Hermes | `~/.hermes/config.yaml` | YAML `mcp_servers` |
+| local-agent | `~/.config/local-agent/config.yaml` | YAML `servers` sequence |
 
 ## Studio TUI
 

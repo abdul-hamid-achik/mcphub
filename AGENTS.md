@@ -27,7 +27,7 @@ disagree, **AGENTS.md wins**.
   timed and recorded in a local SQLite db.
 - **`mcphub sync`** writes the right MCP config into every agent harness (Claude
   Code, opencode, Codex, Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi
-  Code CLI, Crush, Forge, Hermes). Non-destructive merge, writes a timestamped
+  Code CLI, Crush, Forge, Hermes, local-agent). Non-destructive merge, writes a timestamped
   `.bak`, and is **dry-run by default** (needs `--write` to apply).
 - **`mcphub studio`** (alias `tui`) is a bubbletea v2 TUI to browse/toggle
   servers and view usage stats.
