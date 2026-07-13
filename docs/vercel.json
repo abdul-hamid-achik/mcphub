@@ -1,9 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vitepress",
-  "installCommand": "bun install",
-  "buildCommand": "bun run docs:build",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run docs:build",
   "outputDirectory": ".vitepress/dist",
   "cleanUrls": true,
-  "trailingSlash": false
+  "trailingSlash": false,
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- ."
 }

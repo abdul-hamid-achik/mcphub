@@ -1,0 +1,154 @@
+/* mcphub brand — "control room" direction.
+   Graphite chassis, signal-amber brand, per-server cable colors as accents. */
+
+:root {
+  --mh-amber: #f5a524;
+  --mh-amber-deep: #b36b00;
+  --mh-ink: #0b0f14;
+  --mh-panel: #10161d;
+  --mh-panel-edge: #232d38;
+  --mh-teal: #2dd4bf;
+  --mh-violet: #a78bfa;
+  --mh-rose: #fb7185;
+  --mh-sky: #38bdf8;
+  --mh-lime: #a3e635;
+
+  --vp-c-brand-1: var(--mh-amber-deep);
+  --vp-c-brand-2: #96590a;
+  --vp-c-brand-3: var(--mh-amber);
+  --vp-c-brand-soft: rgba(245, 165, 36, 0.14);
+
+  --vp-button-brand-bg: var(--mh-amber);
+  --vp-button-brand-text: #1a1104;
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-hover-bg: #ffb945;
+  --vp-button-brand-hover-text: #1a1104;
+  --vp-button-brand-active-bg: #d98f13;
+
+  --vp-font-family-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular,
+    Menlo, Consolas, monospace;
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(115deg, var(--mh-amber) 30%, #ff7e47);
+}
+
+.dark {
+  --vp-c-brand-1: var(--mh-amber);
+  --vp-c-brand-2: #ffb945;
+  --vp-c-brand-3: var(--mh-amber);
+  --vp-c-brand-soft: rgba(245, 165, 36, 0.16);
+  --vp-c-bg: #0d1319;
+  --vp-c-bg-alt: var(--mh-ink);
+  --vp-c-bg-soft: #131a22;
+  --vp-c-divider: #1f2933;
+}
+
+/* ---------- typography ---------- */
+
+:root {
+  --mh-display: 'Space Grotesk', var(--vp-font-family-base);
+}
+
+h1, h2, h3, h4,
+.VPHero .name,
+.VPHero .text,
+.VPFeature .title,
+.mh-display {
+  font-family: var(--mh-display);
+  letter-spacing: -0.015em;
+}
+
+.VPHero .name .clip {
+  font-weight: 700;
+}
+
+.VPHero .tagline {
+  max-width: 620px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ---------- home layout ---------- */
+
+/* centered hero (no image slot used) */
+.VPHome .VPHero .main {
+  margin: 0 auto;
+  text-align: center;
+  max-width: 720px;
+}
+.VPHome .VPHero .actions {
+  justify-content: center;
+}
+
+/* feature cards: chassis look */
+.VPHome .VPFeature {
+  border: 1px solid var(--vp-c-divider);
+  transition: border-color 0.25s, transform 0.25s;
+}
+.VPHome .VPFeature:hover {
+  border-color: var(--mh-amber);
+  transform: translateY(-2px);
+}
+.VPHome .VPFeature .icon {
+  background: var(--vp-c-brand-soft);
+  border-radius: 8px;
+  font-size: 22px;
+}
+
+/* ---------- shared chassis panels (PatchBay / terminal) ---------- */
+
+.mh-chassis {
+  background: var(--mh-ink);
+  border: 1px solid var(--mh-panel-edge);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 48px -22px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.mh-section {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+@media (min-width: 640px) {
+  .mh-section { padding: 0 48px; }
+}
+@media (min-width: 960px) {
+  .mh-section { padding: 0 64px; }
+}
+
+.mh-kicker {
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vp-c-brand-1);
+}
+
+.mh-h2 {
+  font-family: var(--mh-display);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 6px 0 10px;
+  border: none;
+  padding: 0;
+}
+
+.mh-sub {
+  color: var(--vp-c-text-2);
+  max-width: 640px;
+  margin: 0 0 28px;
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mh-chassis *, .mh-anim {
+    animation: none !important;
+    transition: none !important;
+  }
+}

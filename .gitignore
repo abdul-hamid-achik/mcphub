@@ -26,3 +26,5 @@ docs/.vitepress/dist/
 
 # Claude Code local artifacts
 .claude/
+.vercel
+.env*

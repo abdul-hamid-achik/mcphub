@@ -335,9 +335,9 @@ The SQLite store is generated with [sqlc](https://sqlc.dev) from `internal/store
 [glyphrun](https://github.com/abdul-hamid-achik/glyphrun) specs under `specs/` (config in
 `glyphrun.config.yml`).
 
-The docs site (`docs/`) is a self-contained VitePress project and is deploy-ready
-(`docs/vercel.json`): point a Vercel project at the `docs/` directory, or run
-`cd docs && vercel deploy`. Releases are built with [GoReleaser](https://goreleaser.com)
+The website + docs live at **[mcphubcli.dev](https://mcphubcli.dev)** — a
+self-contained VitePress project under `docs/`, auto-deployed by Vercel on every
+push to `main` that touches `docs/` (`docs/vercel.json` skips builds otherwise). Releases are built with [GoReleaser](https://goreleaser.com)
 (`.goreleaser.yaml`) and published to the Homebrew tap on a `v*` tag.
 
 ```sh

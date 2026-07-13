@@ -85,7 +85,7 @@ Package boundaries are part of the contract — keep them clean.
 | `internal/store/db` | sqlc-**generated** typed queries (`db.go`, `models.go`, `queries.sql.go`). Committed; do not hand-edit — regenerate (see below). |
 | `internal/ui/studio` | The `mcphub studio` TUI on `charm.land/bubbletea/v2` + `lipgloss/v2`, with `charmbracelet/harmonica` spring-animated stat bars. Three tabs (Servers/Agents/Stats), space-toggle, and a `s` → preview → `a` apply sync panel (via `internal/syncer`). |
 | `internal/version` | Build metadata (`Version`/`Commit`/`Date`) stamped via `-ldflags`. |
-| `docs/` | VitePress product docs (`guide/`, `reference/`); served by `task docs`, built by `task docs-build`. |
+| `docs/` | **The public website + documentation site at <https://mcphubcli.dev>** (VitePress: landing page, `guide/`, `reference/`, custom theme in `.vitepress/theme/`). Served by `task docs`, built by `task docs-build`. Vercel auto-deploys it on every push to `main` that touches `docs/` (other pushes skip the build via `docs/vercel.json` `ignoreCommand`). Treat it as a product surface: do **not** dump scratch notes, reports, or arbitrary Markdown here — every page ships to the live site. |
 | `specs/` | glyphrun behavioral specs (CLI + live-TUI); run by `task specs`. |
 
 ### Data flow in one paragraph
@@ -219,3 +219,6 @@ agents:
 - Touching real `~/.claude.json` / `opencode.json` / `config.toml` from tests.
 - Writing scratch `.md` reports into the repo. Repo-root Markdown is limited to
   `README`, `AGENTS`, `CLAUDE`.
+- Treating `docs/` as a scratchpad. It is the live website + docs site
+  (mcphubcli.dev), auto-deployed on every push to `main` that touches `docs/`.
+  Only real, reviewed documentation belongs there.

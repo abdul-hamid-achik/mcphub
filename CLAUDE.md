@@ -69,3 +69,7 @@ records telemetry and which servers mcphub owns. TUI: `internal/ui/studio`
 - Comment exported types. Value receivers unless the type owns mutable state.
 - Don't write scratch `.md` into the repo — repo-root Markdown is limited to
   `README`, `AGENTS`, `CLAUDE`.
+- **`docs/` is the live website** — <https://mcphubcli.dev>, the landing page
+  and documentation site (VitePress). Vercel auto-deploys it on every push to
+  `main` that touches `docs/`. Never park scratch Markdown, reports, or notes
+  there; every file under `docs/` ships to production.

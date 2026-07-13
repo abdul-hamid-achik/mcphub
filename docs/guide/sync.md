@@ -1,8 +1,14 @@
+---
+title: Sync to your agents
+description: How mcphub sync reconciles mcphub.yaml into every agent config — dry-run by default, timestamped backups, surgical merges, and safe ownership tracking.
+---
+
 # Sync to your agents
 
 `mcphub sync` reconciles every agent harness with `mcphub.yaml`. It is how you
-stop hand-editing each agent's config file one by one: edit the single
-source of truth, then push it everywhere.
+stop hand-editing `~/.claude.json`, `~/.codex/config.toml`, and the rest one by
+one: edit the single source of truth, preview the diff, then push it
+everywhere.
 
 ```sh
 mcphub sync                 # dry run: print the diff, change nothing
@@ -12,195 +18,206 @@ mcphub sync claude codex    # limit scope to named agents
 
 ## Dry run by default
 
-`sync` is a **dry run** unless you pass `--write`. A dry run prints the exact
-plan it *would* apply — which entries it would add, update, or remove in each
-agent — and writes nothing. This is deliberate: you always see the change before
-it happens.
+`sync` is a **dry run** unless you pass `--write`. It computes the plan — which
+entries it would add, update, or remove in each agent — prints it, and writes
+nothing:
 
 ```
 » claude  (claude, gateway) → /Users/you/.claude.json
     add      mcphub
 » opencode  (opencode, direct) → /Users/you/.config/opencode/opencode.json
-    unchanged
+    up to date
 
 Dry run. Re-run with --write to apply (a .bak is saved first).
 ```
 
-Each line shows the agent, its type, its resolved mode, and the target file,
-followed by one row per change. `unchanged` rows are listed but count as no-ops.
+Each line shows the agent, its type, its resolved
+[mode](/guide/concepts#gateway-vs-direct), and the target file, followed by one
+row per change:
 
-## Backups
+| Action       | Meaning                                                      |
+| ------------ | ------------------------------------------------------------- |
+| `add`        | a desired server is not present in the file yet               |
+| `update`     | the server is present but its definition differs              |
+| `remove`     | mcphub previously wrote this server, but no longer wants it   |
+| `up to date` | nothing differs for this agent; no per-server rows are listed |
 
-When you run with `--write`, each adapter writes a **timestamped backup** of the
-target file *before* mutating it, named:
+This diff logic is shared by every adapter — the semantics are identical
+across harnesses — and it's the same engine the Studio TUI uses for its
+preview-and-apply sync panel.
+
+## Applying: `--write` and the backup
+
+Pass `--write` to actually edit the files. Before mutating anything, each
+adapter copies the current file to a timestamped backup next to it:
 
 ```
 <path>.bak-<YYYYMMDD-HHMMSS>
 ```
 
-(for example `~/.claude.json.bak-20260628-143012`, in UTC). If the target file
-does not exist yet, there is nothing to back up and the adapter simply creates
-it. The applied plan reports the backup path it wrote.
+for example `~/.claude.json.bak-20260628-143012` (UTC). The timestamp has
+one-second resolution, so two syncs in the same second don't clobber each
+other's backup — a `-1`, `-2`, … suffix is appended instead. If the target
+file doesn't exist yet, there's nothing to back up and the adapter just
+creates it. A successful apply reports the backup path it wrote.
 
 ## What gets written, per mode
 
-The set of servers mcphub wants present in an agent depends on the agent's
+The set of servers mcphub wants present in an agent depends on its
 [`mode`](/guide/concepts#gateway-vs-direct):
 
 - **`gateway`** (default) — a single entry named `mcphub` whose command is the
-  mcphub binary itself with `mcp serve`. The agent sees one MCP server; mcphub
-  proxies the rest.
-- **`direct`** — one entry for **every enabled server** in `mcphub.yaml`, copied
-  verbatim (command, args, env, url, transport).
+  mcphub binary itself with `mcp serve`. The agent sees one MCP server;
+  mcphub proxies the rest.
+- **`direct`** — one entry for **every enabled server** in `mcphub.yaml`,
+  copied verbatim (command, args, env, url, transport).
 
-## Non-destructive merge
+## Surgical merge, not a rewrite
 
-Every adapter does a **safe read-modify-write**. It only ever touches the
-MCP-servers section of the file and leaves every other key alone. It also tracks
-**which entries mcphub itself wrote** (recorded in the local store), so a later
-sync can prune an entry it previously owned — for example a server you disabled,
-or all the direct entries after you switch an agent to gateway mode — **without
-clobbering servers you added by hand**.
+Every adapter does a **read-modify-write**, not a wholesale rewrite. It parses
+the file, touches only its MCP-servers section — `mcpServers`, `mcp`,
+`mcp_servers`, or `[mcp_servers.*]` depending on the harness — and leaves
+every other key in the file exactly as it was: your settings, UI state, other
+top-level config, all preserved verbatim.
 
-The diff semantics are identical across harnesses (the adapters share one diff
-core):
+## Ownership: why hand-added servers survive
 
-| Action      | Meaning                                                              |
-| ----------- | ------------------------------------------------------------------- |
-| `add`       | a desired server is not present in the file yet                     |
-| `update`    | the server is present but its definition differs                    |
-| `remove`    | mcphub previously wrote this server, but no longer wants it          |
-| `unchanged` | already matches; nothing to do                                      |
+A `remove` only ever targets servers mcphub itself previously wrote. Every
+`--write` sync records **which entries it owns per agent** in the local
+store's `managed_entries` table. The next sync prunes only entries in that
+set — for example a server you disabled, or the old direct entries after you
+flip an agent to `gateway` mode — and never touches a server you added to
+that file by hand, even one whose name happens to collide. See
+[Intelligence](/guide/intelligence#the-store) for the store's schema.
 
-## The harness adapters
-
-Each agent `type` maps to an adapter that knows that harness's on-disk format.
-Supported types: **`claude`**, **`opencode`**, **`codex`**, **`crush`**, **`forge`**, **`hermes`**, **`copilot`**, **`qwen`**, **`gemini`**, **`kilo`**, **`kimi`**.
-
-### Claude Code (`type: claude`)
-
-Target: `~/.claude.json`. MCP servers live under the top-level **`mcpServers`**
-object. Only that object is touched; every other key (projects, history, UI
-state, …) is preserved verbatim. A stdio server is written as `command` + `args`
-+ `env`; a remote server as a `type` (the transport, defaulting to `http`) plus
-a `url`.
-
-### opencode (`type: opencode`)
-
-Target: `opencode.json` (commonly `~/.config/opencode/opencode.json`). MCP
-servers live under the top-level **`mcp`** object. opencode flattens
-command + args into a single `command` **array**, marks each entry with
-`type: "local"` or `type: "remote"`, carries an `enabled` flag, and uses
-`environment` for env vars.
-
-### Codex (`type: codex`)
-
-Target: `~/.codex/config.toml`. MCP servers live under the
-**`[mcp_servers.*]`** tables. mcphub round-trips the TOML through a generic map,
-so — heads up — **comments and key ordering in that file are not preserved**.
-Only the `mcp_servers` subtree is logically changed; a timestamped `.bak` is
-always written first, and sync defaults to dry-run, so this is safe but worth
-knowing.
-
-### Crush (`type: crush`)
-
-Target: `~/.config/crush/crush.json`. MCP servers live under the top-level
-**`mcp`** object. Each entry carries an explicit `type` (`"stdio"` | `"http"` |
-`"sse"`) alongside `command`/`args` or `url`. As with the other JSON adapters,
-every other key is preserved byte-for-byte.
-
-### Forge / forgecode (`type: forge`)
-
-Target: `~/forge/.mcp.json` (Forge's own convention is a project-local
-`.mcp.json`, but mcphub's default path is the home-relative
-`~/forge/.mcp.json` — set the agent's `path` if you keep it elsewhere). MCP
-**`mcpServers`** object — the same shape Claude uses — except each entry carries
-a `disable` boolean rather than a `type` tag. Other JSON keys are preserved
-byte-for-byte.
-
-### Hermes (`type: hermes`)
-
-Target: `~/.hermes/config.yaml`. MCP servers live under the top-level
-**`mcp_servers`** map; each entry carries an `enabled` flag. Only the
-`mcp_servers` subtree is logically changed and a timestamped `.bak` is always
-written first. **Caveat (like Codex):** the YAML is round-tripped through a
-generic map, so on a write the whole file is reserialized — every key's *value*
-is preserved, but comments and key ordering elsewhere are not.
-
-### GitHub Copilot CLI (`type: copilot`)
-
-Target: `~/.copilot/mcp-config.json`. MCP servers live under the top-level
-**`mcpServers`** object — the same shape Claude uses — except every entry
-carries an explicit `type` (`"local"`/`"stdio"` | `"http"` | `"sse"`). Entries
-may also include `tools`, `headers`, and `timeout` keys; these are left
-untouched as unmodeled. Other JSON keys are preserved byte-for-byte.
-
-### Qwen Code (`type: qwen`)
-
-Target: `~/.qwen/settings.json`. MCP servers live under the top-level
-**`mcpServers`** object. Qwen distinguishes transport by field name rather than
-a type tag: stdio uses `command`+`args`, HTTP uses `httpUrl`, and SSE uses
-`url`. Extra keys (`headers`, `timeout`, `trust`, …) are preserved as
-unmodeled. Other JSON keys are preserved byte-for-byte.
-
-### Gemini CLI (`type: gemini`)
-
-Target: `~/.gemini/settings.json`. MCP servers live under the top-level
-**`mcpServers`** object. Gemini uses the same field-name convention as Qwen:
-stdio → `command`+`args`, HTTP → `httpUrl`, SSE → `url`. Extra keys (`headers`,
-`timeout`, `trust`, `includeTools`, …) are preserved as unmodeled. Other JSON
-keys are preserved byte-for-byte.
-
-### Kilo Code (`type: kilo`)
-
-Target: `~/.config/kilo/kilo.jsonc`. MCP servers live under the top-level
-**`mcp`** object. Kilo uses `type: "local"`/`"remote"`, flattens command+args
-into a single `command` **array**, and names the env map `environment` — the
-same entry shape as opencode. **Caveat:** the file is JSONC (JSON with
-comments); mcphub strips comments before parsing so `.jsonc` reads the same as
-`.json`, but **comments are not preserved on write** (a `.bak` is taken first,
-matching the codex/hermes caveat). Other JSON keys are preserved byte-for-byte.
-
-### Kimi Code CLI (`type: kimi`)
-
-Target: `~/.kimi/config.toml`. MCP servers live under the **`[mcp_servers.*]`**
-tables. Kimi uses `type: "local"`/`"remote"`, flattens command+args into a
-`command` **array**, and names the env map `environment` — the same entry shape
-as opencode/kilo but in TOML. **Caveat (like Codex):** TOML is round-tripped
-through a generic map, so comments and key ordering in the file are not
-preserved. A timestamped `.bak` is always written before mutating, and `sync`
-defaults to dry-run, so this is safe but worth knowing.
-
-### The five newer types
-
-`claude`, `opencode`, `codex`, `crush`, `forge`, and `hermes` are the original
-harnesses that `mcphub init` seeds into a starter `mcphub.yaml`. The five
-newer types — **`copilot`**, **`qwen`**, **`gemini`**, **`kilo`**, and **`kimi`**
-— are registered and fully supported (they sync just like the others) but are
-**not seeded by default**. To use one, add an `agents:` entry for it to
-`mcphub.yaml` when you install the corresponding tool, or run
-`mcphub init --from-agents` to auto-discover any whose config files already
-exist on disk. `mcphub agents` lists every type with its status
-(configured / available / not_installed), and `mcphub doctor` reports
-`available:` entries for types that have a config file but are not yet in
-`mcphub.yaml`.
+::: tip
+This is what makes `sync` safe to run repeatedly and unattended: it can only
+ever converge the file toward what `mcphub.yaml` wants among servers it
+manages. Everything else in the file is invisible to it.
+:::
 
 ## Scoping and skipping
 
-- With **no agent names**, sync targets all agents in `mcphub.yaml`.
-- Pass one or more **agent names** to limit the scope: `mcphub sync claude`.
-- An agent marked `disabled: true` is skipped (and reported as skipped) without
-  removing its definition from the config.
+- With **no agent names**, sync targets every agent in `mcphub.yaml`.
+- Pass one or more names to limit the run: `mcphub sync claude codex`.
+- An agent marked `disabled: true` in `mcphub.yaml` is **skipped** — reported
+  as disabled, not touched — without removing its definition from the config.
+
+## The harness adapters
+
+Each agent `type` maps to an adapter that knows that harness's on-disk
+format and section key:
+
+| Type      | Target                                | MCP-servers key    |
+| --------- | -------------------------------------- | ------------------ |
+| `claude`  | `~/.claude.json`                       | `mcpServers`        |
+| `opencode`| `~/.config/opencode/opencode.json`     | `mcp`               |
+| `codex`   | `~/.codex/config.toml`                 | `[mcp_servers.*]`   |
+| `crush`   | `~/.config/crush/crush.json`           | `mcp`               |
+| `forge`   | `~/forge/.mcp.json`                    | `mcpServers`        |
+| `hermes`  | `~/.hermes/config.yaml`                | `mcp_servers`       |
+| `copilot` | `~/.copilot/mcp-config.json`           | `mcpServers`        |
+| `qwen`    | `~/.qwen/settings.json`                | `mcpServers`        |
+| `gemini`  | `~/.gemini/settings.json`              | `mcpServers`        |
+| `kilo`    | `~/.config/kilo/kilo.jsonc`            | `mcp`               |
+| `kimi`    | `~/.kimi/config.toml`                  | `[mcp_servers.*]`   |
+
+`claude`, `opencode`, `codex`, `crush`, `forge`, and `hermes` are the harnesses
+`mcphub init` seeds by default; `copilot`, `qwen`, `gemini`, `kilo`, and `kimi`
+are fully supported but not seeded — add an `agents:` entry for one yourself,
+or run `mcphub init --from-agents` to auto-discover any whose config already
+exists on disk. See [Configuration reference](/reference/config#agents) for
+each adapter's exact entry shape (which fields it reads, `command`+`args` vs.
+a flattened `command` array, `httpUrl` vs. `url`, and so on).
+
+### The Codex (and TOML/YAML/JSONC) round-trip caveat
+
+Codex and Kimi Code CLI store MCP servers under TOML `[mcp_servers.*]` tables;
+Hermes uses YAML; Kilo Code uses JSONC. mcphub merges all four by
+round-tripping the file through a generic map, so **on a write, comments and
+key ordering are not preserved** — every key's *value* survives, but the
+file's formatting doesn't. The JSON-native harnesses (Claude, opencode,
+Copilot CLI, Qwen Code, Gemini CLI, Crush, Forge) are gentler: every unknown
+key's *value* is carried through verbatim, though the file is re-emitted as
+two-space-indented JSON, so whitespace and top-level key order can still
+shift on the first write.
+
+::: warning
+None of this is destructive — the `.bak` written before every apply is a
+byte-for-byte copy of the original file, comments and all, so nothing is
+actually lost. It's just worth knowing before you go looking for a comment
+you swear you wrote in `config.toml`.
+:::
+
+## Replaying or undoing a sync: `--resume` / `--rollback`
+
+Every plan `sync` computes carries a **plan ID** shaped like
+`plan_<timestamp>_<agent>` (e.g. `plan_1234567890_claude`) — the part that
+actually matters to `--resume`/`--rollback` is the agent name: everything
+after the second underscore (so agent names containing underscores work).
+
+```sh
+mcphub sync --resume plan_1234567890_claude     # re-sync just that agent, with --write
+mcphub sync --rollback plan_1234567890_claude   # restore that agent's config from backup
+```
+
+- **`--resume <planId>`** extracts the agent name and re-runs sync for just
+  that agent with `--write` forced on — equivalent to
+  `mcphub sync <agent> --write`, re-applying the current desired config.
+- **`--rollback <planId>`** extracts the agent name, looks up its `path` in
+  `mcphub.yaml`, finds the most recent `.bak-<timestamp>` file next to it, and
+  copies it back over the live config — undoing the last write.
+
+::: warning
+`--rollback` has to locate the backup file itself; it does not consult the
+`managed_entries` store. If it reports `no backup found for <path>`, restore
+by hand instead — the timestamped `<path>.bak-<timestamp>` file is a plain
+copy sitting right next to the config, so `cp` it back over the original.
+:::
+
+## Removing the redundant direct copies: `offload`
+
+`sync --write` gives a gateway-mode agent the `mcphub` entry, but it doesn't
+by itself remove any servers you'd previously written into that agent
+directly. `mcphub offload` is the second half of "register and offload": it
+strips out the direct copies of servers mcphub now proxies, so the agent
+relies purely on the single `mcphub` gateway — this is where the token
+savings actually land, since the agent stops carrying every proxied server's
+full tool list.
+
+```sh
+mcphub offload            # dry-run: show what would be removed from each agent
+mcphub offload claude     # scope to named agents, same as sync
+mcphub offload --write    # apply (a .bak is saved per file first)
+```
+
+It only removes a server if mcphub both **proxies** it (enabled in
+`mcphub.yaml`) and **previously managed** it in that agent (tracked in the
+intelligence store) — so a hand-added entry that happens to share a name with
+a proxied server is never touched. Anything mcphub doesn't proxy (disabled
+servers, or agent-internal ones it never wrote) is left alone, and the
+`mcphub` gateway entry itself is never removed. Like `sync`, it is dry-run by
+default; `--write` applies after saving a timestamped `.bak` and updates the
+`managed_entries` bookkeeping to match.
+
+::: tip
+Run `mcphub sync --write` first so each agent actually has the `mcphub`
+gateway entry — `offload` skips any agent that doesn't.
+:::
 
 ## Audit trail
 
-Every `--write` sync also appends a row to the local store's audit log (agent,
-mode, the server set, and timestamp) and updates mcphub's record of which
-entries it manages for that agent. That bookkeeping is what makes the
-non-destructive prune above possible. See [Intelligence](/guide/intelligence).
+Every `--write` sync appends a row to the local store's audit log (agent,
+mode, the server set, and timestamp) and updates the `managed_entries` record
+for that agent. That bookkeeping is what makes the non-destructive prune above
+possible — so it must never drift from what's on disk. If updating the
+ownership store fails *after* a file was written, sync automatically restores
+the `.bak` it just took, keeping the config and the bookkeeping consistent.
+See [Intelligence](/guide/intelligence).
 
 ## Next
 
-- [Concepts](/guide/concepts) — gateway vs. direct and token savings.
-- [CLI reference](/reference/cli#sync) — the full `sync` surface.
-- [Configuration reference](/reference/config#agents) — agent fields.
+- [Concepts](/guide/concepts) — gateway vs. direct and where the token savings come from.
+- [Intelligence](/guide/intelligence) — the `managed_entries` and `tool_calls` tables.
+- [CLI reference](/reference/cli#sync) — the full `sync` and `offload` flag surface.
+- [Configuration reference](/reference/config#agents) — per-harness `type`, `path`, and format table.
