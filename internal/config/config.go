@@ -509,7 +509,7 @@ func (c *Config) Validate() error {
 		if a.Type == "" {
 			problems = append(problems, fmt.Sprintf("agent %q: missing type", name))
 		} else if !validAgentTypes[a.Type] {
-			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi)", name, a.Type))
+			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi, local-agent)", name, a.Type))
 		}
 		// Per-agent routing: Servers must name known servers; Tools is
 		// gateway-only and each entry must be a clean `server__tool` whose

@@ -76,3 +76,10 @@ WHERE call_id = sqlc.arg(call_id);
 
 -- name: PruneExpiredSpoolResults :exec
 DELETE FROM result_spool WHERE expires_at <= ?;
+
+-- name: InsertPlanBackup :exec
+INSERT INTO plan_backups (plan_id, agent, config_path, backup_path, created_at)
+VALUES (?, ?, ?, ?, ?);
+
+-- name: GetPlanBackup :one
+SELECT * FROM plan_backups WHERE plan_id = ?;

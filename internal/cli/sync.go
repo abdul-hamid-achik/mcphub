@@ -41,7 +41,9 @@ rest. In direct mode every enabled server is written into the agent.`,
 				args = []string{agent}
 				write = true
 			}
-			// --rollback <planId>: find the agent's config backup + restore it.
+			// --rollback <planId>: restore the exact backup recorded for that
+			// plan; fall back to the newest backup for the agent (with an
+			// explicit note) when the plan predates backup tracking.
 			if rollback != "" {
 				agent := agentFromPlanID(rollback)
 				if agent == "" {
@@ -56,14 +58,29 @@ rest. In direct mode every enabled server is written into the agent.`,
 					return fmt.Errorf("agent %q not found in config", agent)
 				}
 				path := config.ExpandPath(agentCfg.Path)
+				out := cmd.OutOrStdout()
+
+				st, err := openStore()
+				if err != nil {
+					return err
+				}
+				defer st.Close()
+				if _, recordedPath, backup, err := st.PlanBackup(context.Background(), rollback); err == nil {
+					if err := restoreBackupFile(backup, recordedPath); err != nil {
+						return fmt.Errorf("rollback restore: %w", err)
+					}
+					fmt.Fprintf(out, "rolled back %s: restored %s from %s\n", agent, recordedPath, backup)
+					return nil
+				}
 				backup, err := latestBackup(path)
 				if err != nil {
-					return fmt.Errorf("rollback: %w", err)
+					return fmt.Errorf("rollback: plan %s has no recorded backup and %w", rollback, err)
 				}
 				if err := restoreBackupFile(backup, path); err != nil {
 					return fmt.Errorf("rollback restore: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "rolled back %s: restored %s from %s\n", agent, path, backup)
+				fmt.Fprintf(out, "note: plan %s has no recorded backup (dry run, no-op apply, or pre-tracking); restoring the most recent backup instead\n", rollback)
+				fmt.Fprintf(out, "rolled back %s: restored %s from %s\n", agent, path, backup)
 				return nil
 			}
 			c, _, err := loadConfig()
@@ -191,5 +208,8 @@ func printResult(out io.Writer, r syncer.AgentResult) {
 		} else {
 			fmt.Fprintln(out, "    applied")
 		}
+	}
+	if r.Plan.PlanID != "" {
+		fmt.Fprintf(out, "    plan: %s\n", r.Plan.PlanID)
 	}
 }

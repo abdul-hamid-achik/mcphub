@@ -131,6 +131,12 @@ func Reconcile(ctx context.Context, c *config.Config, st *store.Store, self stri
 				}
 			} else {
 				_ = st.LogSync(ctx, name, r.Mode, Names(desired), false)
+				if plan.Backup != "" {
+					// Ties the plan ID to the exact pre-apply backup so
+					// `sync --rollback <planId>` restores that file, not
+					// whatever backup happens to be newest.
+					_ = st.RecordPlanBackup(ctx, plan.PlanID, name, plan.Path, plan.Backup)
+				}
 			}
 		}
 		results = append(results, r)

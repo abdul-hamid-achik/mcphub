@@ -91,3 +91,41 @@ func TestLocalAgentAdapterDryRunDoesNotWrite(t *testing.T) {
 		t.Fatalf("dry run changed file: %q", got)
 	}
 }
+
+// Regression: a remote server with env and no explicit transport must
+// converge — the write path used to drop env for remotes and never default
+// the transport, so every sync reported "update" forever.
+func TestLocalAgentRemoteEnvAndTransportConverge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("servers: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	desired := []MCPServer{
+		{Name: "r", URL: "http://127.0.0.1:9000/mcp", Env: map[string]string{"TOKEN": "abc"}},
+	}
+
+	adapter := localAgentAdapter{}
+	plan, err := adapter.Apply(path, desired, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Applied {
+		t.Fatalf("plan = %+v, want applied", plan)
+	}
+
+	servers, err := adapter.List(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 || servers[0].Env["TOKEN"] != "abc" {
+		t.Fatalf("List after write = %+v, want env TOKEN=abc", servers)
+	}
+
+	again, err := adapter.Apply(path, desired, []string{"r"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.HasChanges() {
+		t.Fatalf("second dry-run not converged: %+v", again.Changes)
+	}
+}

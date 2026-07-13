@@ -470,6 +470,30 @@ func (s *Store) LogSync(ctx context.Context, agent, mode string, servers []strin
 	})
 }
 
+// RecordPlanBackup remembers which backup file captured the pre-apply state
+// of an agent config for a given sync plan, so --rollback <planId> can
+// restore that exact backup.
+func (s *Store) RecordPlanBackup(ctx context.Context, planID, agent, configPath, backupPath string) error {
+	return s.q.InsertPlanBackup(ctx, db.InsertPlanBackupParams{
+		PlanID:     planID,
+		Agent:      agent,
+		ConfigPath: configPath,
+		BackupPath: backupPath,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	})
+}
+
+// PlanBackup returns the recorded backup for a plan ID. An error wrapping
+// sql.ErrNoRows means the plan was never recorded — e.g. a dry run, an apply
+// that needed no backup, or a plan from before this table existed.
+func (s *Store) PlanBackup(ctx context.Context, planID string) (agent, configPath, backupPath string, err error) {
+	row, err := s.q.GetPlanBackup(ctx, planID)
+	if err != nil {
+		return "", "", "", err
+	}
+	return row.Agent, row.ConfigPath, row.BackupPath, nil
+}
+
 // asInt64 coerces sqlc's interface{} aggregate columns (COALESCE/SUM defeat
 // its type inference under SQLite) into a plain int64. modernc returns int64
 // for integer SUMs and float64 for averaged/real values; both are handled.

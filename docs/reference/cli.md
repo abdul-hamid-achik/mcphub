@@ -327,7 +327,7 @@ mcphub sync claude codex     # limit scope to named agents
 | `[agent...]`    | One or more agent names to sync. With none, all enabled agents are synced. |
 | `--write`       | Actually edit the agent config files (a `.bak` is saved first). |
 | `--resume <planId>` | Re-sync the agent named in a plan ID (e.g. `plan_1234567890_claude`). |
-| `--rollback <planId>` | Restore the backup for a plan ID's agent. |
+| `--rollback <planId>` | Restore the exact backup recorded for that plan (falls back to the agent's newest backup, with a note, if the plan was never recorded). |
 
 In **gateway** mode an agent is given a single `mcphub` server that proxies the
 rest. In **direct** mode every enabled server is written into the agent. Agents
@@ -338,8 +338,8 @@ how each harness adapter merges.
 `sync` only ever touches the MCP-server section of each agent's file and
 preserves every other key verbatim. Pruning is scoped to entries mcphub
 previously *owned* (tracked in the intelligence store), so servers you added by
-hand are never clobbered. Every write is preceded by a timestamped `.bak` —
-which is what `--rollback` restores.
+hand are never clobbered. Every write is preceded by a timestamped `.bak`,
+recorded against the printed plan ID — which is what `--rollback` restores.
 :::
 
 ---

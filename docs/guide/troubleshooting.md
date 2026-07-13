@@ -222,25 +222,23 @@ ls ~/.claude.json.bak-*                      # find the one you want
 cp ~/.claude.json.bak-20260628-143012 ~/.claude.json
 ```
 
-`sync --rollback <planId>` is meant to do exactly this automatically, keyed
-off the plan ID a sync run reports (`plan_<timestamp>_<agent>`):
+`sync --rollback <planId>` does exactly this automatically, keyed off the
+plan ID printed on each sync result (`plan: plan_<timestamp>_<agent>`). Each
+applied write records its plan ID together with the exact backup it took, so
+rollback restores that plan's own pre-apply state:
 
 ```sh
-mcphub sync --rollback plan_1234567890_claude   # restore that agent's backup
-mcphub sync --resume plan_1234567890_claude     # re-sync that agent, with --write
+mcphub sync --rollback plan_1783926023922898000_claude   # restore that plan's backup
+mcphub sync --resume plan_1783926023922898000_claude     # re-sync that agent, with --write
 ```
 
-::: danger `--rollback` may fail with "no backup found"
-In testing, `--rollback` reported `no backup found for <path>` even though
-the matching `.bak-<timestamp>` file was sitting right there — see the
-[full explanation in Sync](/guide/sync#replaying-or-undoing-a-sync-resume-rollback).
-Until it's fixed, use the manual `cp` above; it always works, since it
-doesn't depend on the same lookup.
+::: tip Unrecorded plans
+If the plan ID was never recorded (a dry run, a no-op apply, or a plan from
+before backup tracking existed), `--rollback` prints a note and restores the
+agent's most recent backup instead — and the manual `cp` above always works
+as a last resort. See
+[the details in Sync](/guide/sync#replaying-or-undoing-a-sync-resume-rollback).
 :::
-
-`--resume` isn't affected by that issue — it only needs the agent name
-embedded in the plan ID, which it uses to re-run `mcphub sync <agent>
---write`.
 
 ## FAQ
 

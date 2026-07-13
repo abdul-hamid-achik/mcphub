@@ -10,6 +10,14 @@ type ManagedEntry struct {
 	AppliedAt string `json:"applied_at"`
 }
 
+type PlanBackup struct {
+	PlanID     string `json:"plan_id"`
+	Agent      string `json:"agent"`
+	ConfigPath string `json:"config_path"`
+	BackupPath string `json:"backup_path"`
+	CreatedAt  string `json:"created_at"`
+}
+
 type ResultSpool struct {
 	CallID    string `json:"call_id"`
 	Server    string `json:"server"`

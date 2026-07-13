@@ -34,6 +34,9 @@ export default defineConfig({
         href: 'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap',
       },
     ],
+    // Vercel Web Analytics (enabled on the Vercel project; script is a no-op locally).
+    ['script', {}, 'window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };'],
+    ['script', { defer: '', src: '/_vercel/insights/script.js' }],
     [
       'script',
       { type: 'application/ld+json' },

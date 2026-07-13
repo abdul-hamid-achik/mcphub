@@ -152,27 +152,32 @@ you swear you wrote in `config.toml`.
 ## Replaying or undoing a sync: `--resume` / `--rollback`
 
 Every plan `sync` computes carries a **plan ID** shaped like
-`plan_<timestamp>_<agent>` (e.g. `plan_1234567890_claude`) — the part that
-actually matters to `--resume`/`--rollback` is the agent name: everything
-after the second underscore (so agent names containing underscores work).
+`plan_<timestamp>_<agent>`, printed on the last line of each agent's result
+(`plan: plan_1783926023922898000_claude`) in both dry runs and writes. When a
+write actually changes a file, the plan ID is recorded in the local store
+together with the exact `.bak-<timestamp>` backup that captured the pre-apply
+state.
 
 ```sh
-mcphub sync --resume plan_1234567890_claude     # re-sync just that agent, with --write
-mcphub sync --rollback plan_1234567890_claude   # restore that agent's config from backup
+mcphub sync --resume plan_1783926023922898000_claude     # re-sync just that agent, with --write
+mcphub sync --rollback plan_1783926023922898000_claude   # restore that plan's own backup
 ```
 
-- **`--resume <planId>`** extracts the agent name and re-runs sync for just
-  that agent with `--write` forced on — equivalent to
+- **`--resume <planId>`** extracts the agent name (everything after the
+  second underscore, so agent names containing underscores work) and re-runs
+  sync for just that agent with `--write` forced on — equivalent to
   `mcphub sync <agent> --write`, re-applying the current desired config.
-- **`--rollback <planId>`** extracts the agent name, looks up its `path` in
-  `mcphub.yaml`, finds the most recent `.bak-<timestamp>` file next to it, and
-  copies it back over the live config — undoing the last write.
+- **`--rollback <planId>`** looks the plan up in the store and restores the
+  **exact backup recorded for that plan** — not just whatever backup happens
+  to be newest — so rolling back an older plan undoes to that plan's
+  pre-apply state.
 
-::: warning
-`--rollback` has to locate the backup file itself; it does not consult the
-`managed_entries` store. If it reports `no backup found for <path>`, restore
-by hand instead — the timestamped `<path>.bak-<timestamp>` file is a plain
-copy sitting right next to the config, so `cp` it back over the original.
+::: warning Unrecorded plans fall back to the newest backup
+A plan is only recorded when a write actually changed the file. If the ID
+names a dry run, a no-op apply, or a plan from before backup tracking,
+`--rollback` says so and restores the agent's most recent
+`<path>.bak-<timestamp>` instead. The backups are plain copies sitting next
+to the config, so a manual `cp` back over the original always works too.
 :::
 
 ## Removing the redundant direct copies: `offload`

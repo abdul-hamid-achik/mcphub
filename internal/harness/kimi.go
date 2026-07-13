@@ -15,14 +15,18 @@ type kimiAdapter struct{}
 func (kimiAdapter) Kind() string { return "kimi" }
 
 func kimiEntryFrom(s MCPServer) map[string]any {
+	var e map[string]any
 	if s.isRemote() {
-		return map[string]any{"type": "remote", "url": s.URL}
+		e = map[string]any{"type": "remote", "url": s.URL}
+	} else {
+		e = map[string]any{"type": "local"}
+		if s.Command != "" {
+			cmd := append([]string{s.Command}, s.Args...)
+			e["command"] = toAnySlice(cmd)
+		}
 	}
-	e := map[string]any{"type": "local"}
-	if s.Command != "" {
-		cmd := append([]string{s.Command}, s.Args...)
-		e["command"] = toAnySlice(cmd)
-	}
+	// environment applies to both shapes: the parser reads it back for every
+	// entry, so omitting it on remotes would drop env and churn every sync.
 	if len(s.Env) > 0 {
 		envMap := map[string]any{}
 		for k, v := range s.Env {

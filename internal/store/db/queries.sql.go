@@ -32,6 +32,47 @@ func (q *Queries) DeleteManaged(ctx context.Context, arg DeleteManagedParams) er
 	return err
 }
 
+const getPlanBackup = `-- name: GetPlanBackup :one
+SELECT plan_id, agent, config_path, backup_path, created_at FROM plan_backups WHERE plan_id = ?
+`
+
+func (q *Queries) GetPlanBackup(ctx context.Context, planID string) (PlanBackup, error) {
+	row := q.db.QueryRowContext(ctx, getPlanBackup, planID)
+	var i PlanBackup
+	err := row.Scan(
+		&i.PlanID,
+		&i.Agent,
+		&i.ConfigPath,
+		&i.BackupPath,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertPlanBackup = `-- name: InsertPlanBackup :exec
+INSERT INTO plan_backups (plan_id, agent, config_path, backup_path, created_at)
+VALUES (?, ?, ?, ?, ?)
+`
+
+type InsertPlanBackupParams struct {
+	PlanID     string `json:"plan_id"`
+	Agent      string `json:"agent"`
+	ConfigPath string `json:"config_path"`
+	BackupPath string `json:"backup_path"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func (q *Queries) InsertPlanBackup(ctx context.Context, arg InsertPlanBackupParams) error {
+	_, err := q.db.ExecContext(ctx, insertPlanBackup,
+		arg.PlanID,
+		arg.Agent,
+		arg.ConfigPath,
+		arg.BackupPath,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const insertSpoolResult = `-- name: InsertSpoolResult :exec
 INSERT INTO result_spool (call_id, server, tool, created_at, expires_at, payload)
 VALUES (?, ?, ?, ?, ?, ?)

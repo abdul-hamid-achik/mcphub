@@ -959,3 +959,40 @@ func TestKindsReturnsExactSet(t *testing.T) {
 		t.Errorf("Kinds() = %v, want %v", got, want)
 	}
 }
+
+// Regression: kimi dropped `environment` for remote entries on write while
+// reading it back for every entry, losing env and churning on every sync.
+func TestKimiRemoteEnvConverges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	desired := []MCPServer{
+		{Name: "r", URL: "http://127.0.0.1:9000/mcp", Env: map[string]string{"TOKEN": "abc"}},
+	}
+
+	adapter := kimiAdapter{}
+	plan, err := adapter.Apply(path, desired, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Applied {
+		t.Fatalf("plan = %+v, want applied", plan)
+	}
+
+	servers, err := adapter.List(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 || servers[0].Env["TOKEN"] != "abc" {
+		t.Fatalf("List after write = %+v, want env TOKEN=abc", servers)
+	}
+
+	again, err := adapter.Apply(path, desired, []string{"r"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.HasChanges() {
+		t.Fatalf("second dry-run not converged: %+v", again.Changes)
+	}
+}

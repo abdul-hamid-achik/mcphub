@@ -403,3 +403,26 @@ func TestResultSpoolPrunerUsesChronologicalExpiryWhileGatewayRuns(t *testing.T) 
 		t.Fatalf("live pruner left expired payload on disk: %v", err)
 	}
 }
+
+func TestPlanBackupRoundTrip(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	if err := s.RecordPlanBackup(ctx, "plan_1_claude", "claude", "/tmp/c.json", "/tmp/c.json.bak-1"); err != nil {
+		t.Fatal(err)
+	}
+	agent, cfg, bak, err := s.PlanBackup(ctx, "plan_1_claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agent != "claude" || cfg != "/tmp/c.json" || bak != "/tmp/c.json.bak-1" {
+		t.Fatalf("PlanBackup = %q %q %q", agent, cfg, bak)
+	}
+	if _, _, _, err := s.PlanBackup(ctx, "plan_missing_x"); err == nil {
+		t.Fatal("expected error for unrecorded plan")
+	}
+}

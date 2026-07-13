@@ -20,13 +20,14 @@ func localAgentEntryFrom(server MCPServer) map[string]any {
 		} else {
 			entry["transport"] = "streamable-http"
 		}
-		return entry
+	} else {
+		entry["command"] = server.Command
+		if len(server.Args) > 0 {
+			entry["args"] = toAnySlice(server.Args)
+		}
 	}
-
-	entry["command"] = server.Command
-	if len(server.Args) > 0 {
-		entry["args"] = toAnySlice(server.Args)
-	}
+	// env applies to both shapes: the parser reads it back for remote entries
+	// too, so omitting it there would drop env and churn every sync.
 	if len(server.Env) > 0 {
 		keys := make([]string, 0, len(server.Env))
 		for key := range server.Env {
@@ -99,6 +100,10 @@ func (localAgentAdapter) Apply(path string, desired []MCPServer, owned []string,
 	if err != nil {
 		return plan, err
 	}
+	// The parser never yields an empty transport for a remote entry, so
+	// normalize the desired side the same way or an omitted transport in
+	// mcphub.yaml would report "update" on every sync.
+	desired = defaultHTTPTransport(desired)
 	existing := localAgentServers(root)
 	plan.Changes = diff(existing, desired, owned)
 	if dryRun || !plan.HasChanges() {
