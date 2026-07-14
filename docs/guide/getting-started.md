@@ -98,12 +98,14 @@ servers:
     enabled: true
     description: Code knowledge graph
     tags: [code, search]
+    use_when: ["understand symbols and references in a codebase"]
   vecgrep:
     command: vecgrep
     args: [serve, --mcp]
     enabled: true
     description: Semantic code search
     tags: [code, search]
+    use_when: ["find code by meaning when exact names are unknown"]
 
 agents:
   claude:

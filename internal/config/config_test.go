@@ -397,6 +397,78 @@ func TestValidateRejectsBadConnectTimeout(t *testing.T) {
 	}
 }
 
+func TestValidateUseWhenBounds(t *testing.T) {
+	base := func(hints []string) *Config {
+		return &Config{Servers: map[string]Server{
+			"router": {Command: "router", Enabled: true, UseWhen: hints},
+		}}
+	}
+	valid := make([]string, MaxUseWhenHints)
+	for i := range valid {
+		valid[i] = strings.Repeat("x", MaxUseWhenHintBytes)
+	}
+	if err := base(valid).Validate(); err != nil {
+		t.Fatalf("valid maximum use_when rejected: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		hints []string
+		want  string
+	}{
+		{"too many", append(append([]string(nil), valid...), "extra"), "at most"},
+		{"empty", []string{"  \t"}, "must not be empty"},
+		{"too long", []string{strings.Repeat("x", MaxUseWhenHintBytes+1)}, "exceeds"},
+		{"multiline", []string{"capture a page\nthen save it"}, "single line"},
+		{"invalid utf8", []string{string([]byte{0xff})}, "valid UTF-8"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := base(test.hints).Validate()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateToolUseWhenBounds(t *testing.T) {
+	valid := &Config{Servers: map[string]Server{
+		"router": {
+			Command: "router", Enabled: true,
+			ToolUseWhen: map[string][]string{
+				"analyze_video": {"inspect an external video file"},
+			},
+		},
+	}}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid tool_use_when rejected: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		key   string
+		hints []string
+		want  string
+	}{
+		{"blank tool", " ", []string{"inspect video"}, "bounded tool name"},
+		{"empty hint", "analyze_video", []string{""}, "must not be empty"},
+		{"multiline hint", "analyze_video", []string{"inspect\nvideo"}, "single line"},
+		{"long hint", "analyze_video", []string{strings.Repeat("x", MaxUseWhenHintBytes+1)}, "exceeds"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &Config{Servers: map[string]Server{
+				"router": {Command: "router", Enabled: true, ToolUseWhen: map[string][]string{test.key: test.hints}},
+			}}
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
 // TestValidateAcceptsNewAgentTypes guards against accidental removal of the
 // 5 new agent types from validAgentTypes.
 func TestValidateAcceptsNewAgentTypes(t *testing.T) {

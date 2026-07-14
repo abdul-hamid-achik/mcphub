@@ -8,10 +8,21 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ### Added
 
+- **Context-aware lazy discovery.** Servers can declare bounded `use_when`
+  routing hints, and `mcphub_resolve_tool` / `mcphub_search_tools` now rank
+  full natural-language task context across tool metadata (including bounded
+  top-level input field names), server descriptions, tags, and those hints.
+  Lazy-mode instructions expose a compact,
+  scope-aware capability summary so compatible harnesses can route work to
+  unpinned tools as a task moves from research to planning, implementation, and
+  verification. Search results are bounded by `max_hits` (20 by default).
+- **Per-tool contextual hints.** A server may add bounded `tool_use_when`
+  phrases when several tools share server vocabulary but serve different
+  activities, such as video timeline analysis versus image inspection.
 - **First-class Bob integration.** The documentation now includes a complete
   trusted-local and least-privilege registration guide for Bob's six typed
   repository tools, lazy-mode pins, local-agent routing, and local-only stats.
-- **Bounded, lossless gateway results.** Every mounted, pinned, lazy, and reconnect-retry success
+- **Bounded, lossless gateway results.** Every mounted, pinned, and lazy success
   now passes through one `Hub.Call` finalizer. Complete results over `response_budget` are stored
   in SQLite for 24 hours under an opaque call ID, then recovered byte-for-byte through the new
   `mcphub_get_result(callId,cursor)` management tool. Pages are bounded base64 JSON, scope-checked,
@@ -20,6 +31,15 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ### Changed
 
+- Contextual resolver responses now expose a versioned confidence decision and
+  content-addressed catalog revision. Weak coverage and close scores are
+  ambiguous instead of being presented as clear routes.
+- Agent server scopes are applied before downstream connection, so excluded
+  commands, network connections, and secret resolution remain inactive.
+- A downstream transport failure reconnects the server for future work but no
+  longer replays an outcome-unknown tool call.
+- The starter configuration includes the supported `local-agent` harness, so
+  `mcphub mcp serve --agent local-agent` works after a fresh `mcphub init`.
 - Namespaced downstream tools retain their complete MCP metadata, including
   titles, input/output schemas, annotations, icons, and `_meta`; MCPHub changes
   only the protocol name and description prefix.

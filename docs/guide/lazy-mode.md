@@ -14,9 +14,11 @@ definitions paid for on every session, whether or not they get used.
 `expose: lazy` flips the trade: the gateway advertises **only its seven
 meta-tools** (plus anything you [pin](#pinning-keep-hot-tools-mounted)). The
 downstream catalog stays fully available, but agents reach it on demand —
-search for a capability, inspect the one tool they need, and invoke it through
-the gateway. The context cost of connecting N servers drops to a small
-constant.
+route their current task to a capability, inspect the one tool they need, and
+invoke it through the gateway. A compact capability summary and per-server
+`use_when` hints make unpinned tools discoverable without loading their full
+schemas. The context cost of connecting N servers stays bounded and far below
+mounting every tool.
 
 ## Turning it on
 
@@ -26,8 +28,8 @@ Set the top-level `expose` key in `mcphub.yaml`:
 version: 1
 
 # all  (default) — mount every downstream tool as 'server__tool'
-# lazy           — advertise only mcphub's meta-tools; agents discover via
-#                  mcphub_search_tools and invoke through mcphub_call_tool
+# lazy           — advertise only mcphub's meta-tools; agents resolve or search
+#                  capabilities and invoke through mcphub_call_tool
 expose: lazy
 ```
 
@@ -51,41 +53,79 @@ In lazy mode this is the entire advertised surface:
 | Tool | What it does |
 | --- | --- |
 | `mcphub_list_servers` | List configured downstream servers with enabled/connected state and tool counts. |
-| `mcphub_search_tools` | Substring search across tool names and descriptions; returns matching `server__tool` names. |
+| `mcphub_search_tools` | Ranked natural-language search across tool and server metadata; returns up to 20 matching `server__tool` names by default. |
 | `mcphub_describe_tool` | Return one tool's description and full JSON input schema. |
-| `mcphub_resolve_tool` | Find the best tool for a task in one call: a recommendation with required fields and an argument template, plus alternatives and an ambiguity flag. |
+| `mcphub_resolve_tool` | Route the current goal or activity to the best tool in one call, with match evidence, required fields, an argument template, alternatives, and an ambiguity flag. |
 | `mcphub_call_tool` | Invoke a downstream tool by name — how everything gets called in lazy mode. |
 | `mcphub_get_result` | Page through an oversized result the gateway stored locally (see below). |
 | `mcphub_stats` | Local usage intelligence: calls, errors, estimated token cost, per-server breakdown. |
 
-The gateway's MCP instructions tell the connecting model it is in lazy mode
-and that the underlying tools *are* available — so a capable agent discovers
-and calls tools proactively without you prompting it to.
+The gateway's MCP instructions tell the connecting model it is in lazy mode,
+include a compact summary of its in-scope capability families, and ask it to
+resolve context at the start of a non-trivial task and whenever work changes
+phase (research → planning → implementation → verification). Harnesses that
+pass MCP server instructions to their model can therefore discover and call
+unpinned tools proactively.
+
+Give each server one or more concise routing hints when its name or tool names
+do not communicate the user outcome:
+
+```yaml
+servers:
+  hitspec:
+    command: hitspec
+    args: [mcp, serve, --workspace, /absolute/api-workspace]
+    enabled: true
+    description: Bounded HTTP fetches and saved-request validation
+    tags: [http, api, markdown]
+    use_when:
+      - fetch a public HTTP URL as raw, text, Markdown, or JSON
+      - list or validate saved .http and .hitspec requests
+```
+
+These hints do not mount or pin anything. They are lightweight vocabulary for
+the resolver and search index.
 
 ## The discovery loop
 
 A lazy-mode agent works the catalog in three steps.
 
-**1. Discover.** Search by keyword:
+**1. Route or browse.** Prefer the contextual resolver when the agent knows
+what it is doing but not which server owns the capability:
+
+```json
+// mcphub_resolve_tool
+{ "query": "fetch this public URL as Markdown for research" }
+```
+
+It tokenizes the full sentence and ranks the connected, in-scope catalog
+across tool names, titles, descriptions, bounded top-level input field names,
+plus server names, descriptions, tags, and `use_when` hints. For browsing, use
+the same natural-language query with `mcphub_search_tools`:
 
 ```json
 // mcphub_search_tools
-{ "query": "semantic search" }
+{ "query": "semantic search across this repository", "max_hits": 10 }
 ```
 
-The response lists matches with their `namespaced` (`server__tool`) name,
-server, tool, and description.
+The response reports total `count`, bounded `returned`, `truncated`, and ranked
+matches with their `namespaced` (`server__tool`) name, server/tool metadata,
+score, and matched terms. `max_hits` defaults to 20 and is capped at 100. A
+2,048-byte query cap and 12 KiB compact match-array budget prevent discovery
+itself from becoming a context spike; `byte_limited` and
+`metadata_truncated` report those bounds.
 
 **2. Inspect.** Two options, depending on how much the agent already knows:
 
 - `mcphub_describe_tool` takes `{server, tool}` — or just `tool` in the
   combined `server__tool` form — and returns the tool's description and full
   JSON `input_schema`, enough to construct a valid call.
-- `mcphub_resolve_tool` collapses search + describe into one round trip: give
-  it a natural-language `query` (and optionally `max_hits`, default 5) and it
+- `mcphub_resolve_tool` already collapses route + describe into one round trip:
+  give it a natural-language `query` (and optionally `max_hits`, default 5) and it
   returns one recommendation with `required_fields` and a ready-to-fill
   `argument_template`, a list of alternatives, and an `ambiguous` flag when
-  several tools ranked equally.
+  several tools ranked equally. If `argument_template_truncated` is true, use
+  `mcphub_describe_tool` for the complete schema before the call.
 
 **3. Invoke.** Call through the gateway:
 
@@ -166,10 +206,13 @@ shifting.
 
 ## See also
 
+- [Contextual routing for harnesses](/guide/contextual-routing) — when a
+  harness should resolve, how a host-assisted advisor behaves, and the safety
+  contract around recommendations.
 - [Gateway meta-tools](/reference/meta-tools) — full reference for all seven
   meta-tools, including their exact call shapes.
 - [Bounded, lossless results](/guide/results) — the `callId` receipt and
   `mcphub_get_result` paging contract behind oversized calls.
 - [Per-agent routing](/guide/routing) — scoping servers and tools per agent,
   which also filters what a lazy-mode agent can discover and pin.
-- [Configuration reference](/reference/config) — the `expose` and `pin` fields.
+- [Configuration reference](/reference/config) — `expose`, `pin`, and per-server `use_when` hints.

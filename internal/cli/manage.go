@@ -15,7 +15,7 @@ import (
 func newAddCmd() *cobra.Command {
 	var (
 		url, transport, description, vault string
-		env, tags, vaultOnly               []string
+		env, tags, useWhen, vaultOnly      []string
 		enabled, disabled, force           bool
 	)
 	cmd := &cobra.Command{
@@ -44,6 +44,7 @@ func newAddCmd() *cobra.Command {
 				Enabled:     !disabled,
 				Description: description,
 				Tags:        tags,
+				UseWhen:     useWhen,
 				Vault:       vault,
 				VaultOnly:   vaultOnly,
 			}
@@ -81,6 +82,7 @@ func newAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&description, "description", "", "human description")
 	cmd.Flags().StringArrayVar(&env, "env", nil, "environment variable KEY=VALUE (repeatable)")
 	cmd.Flags().StringArrayVar(&tags, "tag", nil, "tag (repeatable)")
+	cmd.Flags().StringArrayVar(&useWhen, "use-when", nil, "natural-language routing hint (repeatable)")
 	cmd.Flags().StringVar(&vault, "vault", "", "tvault project to inject secrets from at spawn")
 	cmd.Flags().StringArrayVar(&vaultOnly, "vault-only", nil, "inject only these secret keys (repeatable)")
 	cmd.Flags().BoolVar(&disabled, "disabled", false, "add but leave disabled")

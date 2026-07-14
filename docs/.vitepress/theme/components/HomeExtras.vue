@@ -16,7 +16,7 @@ const steps = [
   },
   {
     cmd: 'mcphub mcp serve',
-    text: 'Your agent connects to one gateway that proxies everything — and every call is recorded locally.',
+    text: 'Your agent gets one gateway. Lazy mode resolves unpinned tools from use_when hints and live metadata, then records every call locally.',
   },
 ]
 
@@ -64,14 +64,15 @@ const harnesses = [
 <span class="d">Dry run. Re-run with --write to apply (a .bak is saved first).</span></code></pre>
 
       <pre v-else-if="active === 'list'" class="term-body"><code><span class="p">$</span> mcphub list
-<span class="d">SERVER      STATE  KIND    TARGET                    TAGS</span>
-<span class="s">bob</span>         <span class="ok">on</span>     stdio   /opt/homebrew/bin/bob     builder,code
-<span class="s">codemap</span>     <span class="ok">on</span>     stdio   codemap                   code,search
-<span class="s">cortex</span>      <span class="ok">on</span>     stdio   ~/go/bin/cortex           kernel,orchestration
-<span class="s">glyph</span>       <span class="ok">on</span>     stdio   glyph                     tui,testing
-<span class="s">monitor</span>     <span class="ok">on</span>     stdio   ~/bin/monitor             ops
-<span class="s">obsidian</span>    <span class="ok">on</span>     remote  https://127.0.0.1:27124   notes,knowledge
-<span class="s">vecgrep</span>     <span class="ok">on</span>     stdio   vecgrep                   code,search</code></pre>
+<span class="d">SERVER      STATE  KIND    TARGET                    TAGS                  DESCRIPTION</span>
+<span class="s">bob</span>         <span class="ok">on</span>     stdio   /opt/homebrew/bin/bob     builder,code          Repository factory
+<span class="s">codemap</span>     <span class="ok">on</span>     stdio   codemap                   code,search           Code knowledge graph
+<span class="s">cortex</span>      <span class="ok">on</span>     stdio   ~/go/bin/cortex           kernel,orchestration  Evidence-guided agent kernel
+<span class="s">glyph</span>       <span class="ok">on</span>     stdio   glyph                     tui,testing           TUI behavior testing
+<span class="s">hitspec</span>     <span class="ok">on</span>     stdio   ~/projects/hitspec/bin/hitspec  http,api,markdown  Bounded HTTP fetch + validation
+<span class="s">monitor</span>     <span class="ok">on</span>     stdio   ~/bin/monitor             ops                   Local system observability
+<span class="s">obsidian</span>    <span class="ok">on</span>     remote  https://127.0.0.1:27124   notes,knowledge       Vault notes
+<span class="s">vecgrep</span>     <span class="ok">on</span>     stdio   vecgrep                   code,search           Semantic code search</code></pre>
 
       <pre v-else class="term-body"><code><span class="p">$</span> mcphub stats
 Totals (all time): <span class="ok">474 calls</span>, 32 errors, ~622k tokens
@@ -108,10 +109,10 @@ Totals (all time): <span class="ok">474 calls</span>, 32 errors, ~622k tokens
 
     <!-- cta -->
     <div class="cta mh-chassis">
-      <h2 class="cta-title">Stop hand-editing agent configs.</h2>
-      <p class="cta-sub mono">n servers → 1 hub → every agent</p>
+      <h2 class="cta-title">Give every agent the whole catalog — without loading all of it.</h2>
+      <p class="cta-sub mono">one registry → the right capability → one gateway</p>
       <div class="cta-actions">
-        <a class="cta-btn brand" href="/guide/getting-started">Get started</a>
+        <a class="cta-btn brand" href="/guide/getting-started">Build your hub</a>
         <a class="cta-btn alt" href="https://github.com/abdul-hamid-achik/mcphub" rel="noopener">GitHub</a>
       </div>
     </div>
@@ -143,6 +144,11 @@ Totals (all time): <span class="ok">474 calls</span>, 32 errors, ~622k tokens
 }
 .term-tab:hover { color: #dbe4ec; }
 .term-tab.on { color: var(--mh-amber); background: rgba(245, 165, 36, 0.1); }
+.term-tab:focus-visible,
+.cta-btn:focus-visible {
+  outline: 2px solid var(--mh-amber);
+  outline-offset: 2px;
+}
 
 .term-body {
   margin: 0;

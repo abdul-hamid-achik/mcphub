@@ -1,6 +1,6 @@
 ---
 title: Configuration reference
-description: Complete mcphub.yaml reference — servers, groups, agents, expose, pin, response_budget, vault secrets, headers, and per-agent routing fields.
+description: Complete mcphub.yaml reference — servers, use_when discovery hints, groups, agents, expose, pin, response budgets, secrets, and routing.
 ---
 
 # Configuration reference
@@ -112,6 +112,12 @@ servers:
     enabled: true
     description: Code knowledge graph
     tags: [code, search]
+    use_when:
+      - understand symbols, references, and structure in a codebase
+      - trace callers or dependencies before changing code
+    tool_use_when:
+      codemap_impact:
+        - estimate the blast radius of changing one symbol
 
   # remote server, with a secret injected from tvault at connect time
   obsidian:
@@ -139,6 +145,8 @@ servers:
 | `enabled` | bool | both | Whether the gateway connects to it and `sync` (direct mode) writes it. |
 | `description` | string | both | Human-readable note shown in `list`, Studio, and `mcphub_list_servers`. |
 | `tags` | list of strings | both | Free-form labels. |
+| `use_when` | list of strings | both | Natural-language situations in which this server is useful. `mcphub_resolve_tool` and `mcphub_search_tools` index these hints so lazy-mode agents can find unpinned tools even when their names are opaque. Up to 8 non-empty, single-line UTF-8 hints, 256 bytes each. |
+| `tool_use_when` | map of tool name to list of strings | gateway | Higher-precision situations for individual tools. These receive more routing weight than server-wide hints. Up to 128 tool entries and 8 bounded hints per tool. |
 
 ### Rules (validated on load)
 
@@ -155,6 +163,13 @@ servers:
   with a remote `url`.
 - Only **enabled** servers are connected by the gateway and written by `sync`
   in direct mode.
+- `use_when` accepts at most 8 non-empty, single-line UTF-8 hints of at most 256 bytes each.
+  Write them as outcomes or situations (for example, “capture a URL as clean
+  Markdown”), not as tool names; tool names and descriptions are indexed
+  automatically.
+- `tool_use_when` uses the same hint bounds and accepts at most 128 tool names
+  per server. Unknown names remain inert until the downstream exposes a matching
+  tool, which lets configuration survive optional or versioned capabilities.
 
 ### stdio vs. remote
 
@@ -253,13 +268,17 @@ agents:
     # disabled: true                 # skip during sync without deleting the definition
     # servers: [codemap, vecgrep]    # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__codemap_find] # gateway-only: only these server__tool names (omit = all; [] = none)
+  local-agent:
+    type: local-agent
+    path: ~/.config/local-agent/config.yaml
+    mode: gateway
 ```
 
 ### Fields
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `type` | string | yes | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`, `kilo`, or `kimi`. |
+| `type` | string | yes | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`, `kilo`, `kimi`, or `local-agent`. |
 | `path` | string | yes | The harness config file. Supports leading `~` expansion. |
 | `mode` | string | no | `gateway` (default) or `direct`. |
 | `disabled` | bool | no | Skip this agent during `sync` without deleting its definition. |
@@ -284,6 +303,7 @@ the harness's on-disk format:
 | `gemini` | `~/.gemini/settings.json` | `mcpServers` |
 | `kilo` | `~/.config/kilo/kilo.jsonc` | `mcp` |
 | `kimi` | `~/.kimi/config.toml` | `[mcp_servers.*]` |
+| `local-agent` | `~/.config/local-agent/config.yaml` | YAML `servers` sequence |
 
 See [Supported harnesses](/guide/harnesses) for each adapter's format details,
 including the note that the Codex and Kimi TOML round-trips do not preserve
@@ -382,6 +402,7 @@ servers:
     enabled: true
     description: Code knowledge graph
     tags: [code, search]
+    use_when: ["understand symbols and references in a codebase"]
   vecgrep:
     command: vecgrep
     args: [serve, --mcp]
@@ -390,12 +411,14 @@ servers:
     enabled: true
     description: Semantic code search
     tags: [code, search]
+    use_when: ["find code by meaning when exact names are unknown"]
   bob:
     command: /Users/abdulachik/go/bin/bob
     args: [mcp, serve, --allow-any-workspace]
     enabled: true
     description: Deterministic repository factory and lifecycle reconciler
     tags: [builder, code]
+    use_when: ["inspect or plan a repository feature"]
   glyph:
     command: glyph
     args: [mcp]

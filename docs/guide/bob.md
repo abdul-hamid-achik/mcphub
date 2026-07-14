@@ -29,6 +29,9 @@ servers:
     enabled: true
     description: Deterministic repository factory and lifecycle reconciler
     tags: [builder, code]
+    use_when:
+      - inspect or plan a repository feature before implementation
+      - validate repository state against a Bob manifest
 ```
 
 ::: warning Workspace authority
@@ -55,8 +58,8 @@ Bob exposes six tools. MCPHub prefixes each one with `bob__`:
 | `bob__bob_stats` | Summarize Bob's opt-in, local-only usage aggregates. |
 
 With `expose: all`, MCPHub advertises all six automatically. With
-`expose: lazy`, pin the tools you want agents to discover without a catalog
-search:
+`expose: lazy`, Bob remains discoverable through contextual resolution; pin
+the tools you also want advertised directly without a catalog lookup:
 
 ```sh
 mcphub pin bob__bob_inspect bob__bob_plan bob__bob_check \

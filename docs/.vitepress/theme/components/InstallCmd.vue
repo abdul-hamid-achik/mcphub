@@ -57,4 +57,21 @@ async function copy() {
   flex-shrink: 0;
 }
 .install-copy:hover { background: var(--vp-button-brand-hover-bg); }
+.install-copy:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}
+
+@media (max-width: 639px) {
+  .install {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+  }
+  .install-cmd {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
 </style>

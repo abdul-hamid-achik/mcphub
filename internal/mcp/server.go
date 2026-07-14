@@ -31,22 +31,27 @@ type Server struct {
 	scope *agentScope // nil = unscoped (advertise everything)
 }
 
-// NewServer builds the gateway server. The hub must already be connected (or
+// NewServer builds the gateway server and registers mcphub's management tools.
+// Run connects the downstream hub before it mounts or serves any proxy tools.
 func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScope) *Server {
 	impl := &sdk.Implementation{Name: "mcphub", Version: version.Version}
 	instructions := "mcphub is a gateway that fronts many MCP servers behind one connection. " +
 		"Downstream tools are exposed as `server__tool`. Use mcphub_list_servers to see what is " +
-		"connected, mcphub_search_tools to find a capability, and mcphub_stats to inspect local " +
+		"connected, mcphub_resolve_tool to route current task context to a capability, " +
+		"mcphub_search_tools to browse alternatives, and mcphub_stats to inspect local " +
 		"usage intelligence (calls, latency, token cost per server)."
 	if cfg.Lazy() {
 		instructions += " IMPORTANT: this gateway is in LAZY mode — the underlying tools are " +
-			"intentionally not listed to save context, but they ARE available. Whenever a task " +
-			"could use an external capability (code search, secrets, browser/TUI testing, system " +
-			"info, docs, ...), take the initiative: call mcphub_search_tools with a short query to " +
-			"find the right `server__tool`, then run it with mcphub_call_tool {server, tool, " +
-			"arguments}. Do this proactively without being asked; use mcphub_describe_tool first if " +
-			"you need a tool's input schema."
-		if len(cfg.Pin) > 0 {
+			"intentionally not listed to save context, but they ARE available. At the start of a " +
+			"non-trivial task and whenever work changes phase (research, planning, implementation, " +
+			"verification), proactively call mcphub_resolve_tool with the current goal or activity. " +
+			"It accepts natural language and returns a ranked `server__tool` plus a ready-to-fill " +
+			"argument template. Run the choice with mcphub_call_tool {server, tool, arguments}; use " +
+			"mcphub_search_tools to browse more candidates. Do this without waiting to be asked."
+		if summary := capabilitySummary(cfg, scope); summary != "" {
+			instructions += " Capability families configured for this agent (call mcphub_list_servers for live status): " + summary + "."
+		}
+		if len(scope.effectivePins(cfg)) > 0 {
 			instructions += " Some frequently-used tools are pinned and listed directly — call those by name as usual."
 		}
 	}
@@ -56,10 +61,12 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScop
 	return s
 }
 
-// Run connects the hub, mounts the aggregated tools (all of them unless lazy;
-// just the pinned ones in lazy mode), and serves on stdio.
+// Run connects only the servers admitted by this gateway's agent scope, mounts
+// the aggregated tools (all of them unless lazy; just the pinned ones in lazy
+// mode), and serves on stdio. Applying scope before Connect keeps excluded
+// commands, remote connections, and secret resolution inactive.
 func (s *Server) Run(ctx context.Context) error {
-	s.hub.Connect(ctx)
+	s.hub.ConnectMatching(ctx, s.scope.allowsServer)
 	defer s.hub.Close()
 	// Background watcher: reconnect downstreams that fail or die mid-session,
 	// so a crashed server self-heals without restarting the agent.
@@ -90,7 +97,7 @@ func (s *Server) registerManagement() {
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_search_tools",
-		Description: "Search the aggregated tool catalog by substring across name and description. Returns matching `server__tool` names so you can call them via mcphub_call_tool without loading every tool.",
+		Description: "Search and rank hidden downstream tools from natural-language intent. Matches tool metadata plus server descriptions, tags, and use_when routing hints; returns `server__tool` names for mcphub_call_tool.",
 	}, s.handleSearchTools)
 
 	sdk.AddTool(s.srv, &sdk.Tool{
@@ -100,7 +107,7 @@ func (s *Server) registerManagement() {
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_resolve_tool",
-		Description: "Find the best tool for a task and return it with required fields + an argument template, so you can call it directly without separate search + describe steps. Returns one recommendation, alternatives, and an ambiguity flag.",
+		Description: "Contextual capability router. Call proactively when a task starts or changes phase: describe the current goal/activity in natural language and receive the best hidden tool, why it matched, required fields, an argument template, and ranked alternatives.",
 	}, s.handleResolveTool)
 
 	sdk.AddTool(s.srv, &sdk.Tool{
@@ -139,7 +146,8 @@ func splitNamespaced(server, tool string) (string, string) {
 type emptyInput struct{}
 
 type searchInput struct {
-	Query string `json:"query" jsonschema:"substring to match against tool name and description"`
+	Query   string `json:"query" jsonschema:"natural-language capability or task context"`
+	MaxHits int    `json:"max_hits,omitempty" jsonschema:"maximum matches to return (default 20, max 100)"`
 }
 
 type describeInput struct {
@@ -172,6 +180,7 @@ type serverInfo struct {
 	Tools       int      `json:"tools"`
 	Description string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+	UseWhen     []string `json:"use_when,omitempty"`
 	Error       string   `json:"error,omitempty"`
 }
 
@@ -180,6 +189,7 @@ func (s *Server) handleListServers(_ context.Context, _ *sdk.CallToolRequest, _ 
 	for _, d := range s.hub.Downstreams() {
 		state[d.Name] = d
 	}
+	totalTools := 0
 	out := make([]serverInfo, 0, len(s.cfg.Servers))
 	for _, name := range s.cfg.ServerNames() {
 		if !s.scope.allowsServer(name) {
@@ -191,10 +201,18 @@ func (s *Server) handleListServers(_ context.Context, _ *sdk.CallToolRequest, _ 
 			Enabled:     srv.Enabled,
 			Description: srv.Description,
 			Tags:        srv.Tags,
+			UseWhen:     srv.UseWhen,
 		}
 		if d, ok := state[name]; ok {
 			info.Connected = d.Connected()
-			info.Tools = len(d.Tools)
+			for _, tool := range d.Tools {
+				if s.scope.allows(name, tool.Name) {
+					info.Tools++
+				}
+			}
+			if info.Connected {
+				totalTools += info.Tools
+			}
 			if d.Err != nil {
 				info.Error = d.Err.Error()
 			}
@@ -205,34 +223,42 @@ func (s *Server) handleListServers(_ context.Context, _ *sdk.CallToolRequest, _ 
 	if s.cfg.Lazy() {
 		expose = config.ExposeLazy
 	}
-	return result(map[string]any{"servers": out, "total_tools": s.hub.ToolCount(), "expose": expose, "pinned": s.cfg.Pin})
-}
-
-type toolMatch struct {
-	Namespaced  string `json:"namespaced"`
-	Server      string `json:"server"`
-	Tool        string `json:"tool"`
-	Description string `json:"description"`
+	catalog := s.catalog()
+	return result(map[string]any{
+		"contract_version": contextualRoutingContractVersion,
+		"catalog_revision": catalogRevision(catalog),
+		"servers":          out,
+		"total_tools":      totalTools,
+		"expose":           expose,
+		"pinned":           s.scope.effectivePins(s.cfg),
+	})
 }
 
 func (s *Server) handleSearchTools(_ context.Context, _ *sdk.CallToolRequest, in searchInput) (*sdk.CallToolResult, any, error) {
-	q := strings.ToLower(strings.TrimSpace(in.Query))
-	var matches []toolMatch
-	for _, d := range s.hub.Downstreams() {
-		if !d.Connected() || !s.scope.allowsServer(d.Name) {
-			continue
-		}
-		for _, t := range d.Tools {
-			ns := d.Name + "__" + t.Name
-			if !s.scope.allowsNS(ns) {
-				continue
-			}
-			if q == "" || strings.Contains(strings.ToLower(ns), q) || strings.Contains(strings.ToLower(t.Description), q) {
-				matches = append(matches, toolMatch{Namespaced: ns, Server: d.Name, Tool: t.Name, Description: t.Description})
-			}
-		}
+	if message := discoveryQueryError(in.Query); message != "" {
+		return result(map[string]any{"error": message, "max_query_bytes": maxDiscoveryQueryBytes})
 	}
-	return result(map[string]any{"query": in.Query, "count": len(matches), "matches": matches})
+	catalog := s.catalog()
+	matches := rankCatalog(in.Query, catalog)
+	count := len(matches)
+	maxHits := in.MaxHits
+	if maxHits <= 0 {
+		maxHits = 20
+	}
+	if maxHits > 100 {
+		maxHits = 100
+	}
+	returned, byteLimited := compactToolMatches(matches, maxHits)
+	return result(map[string]any{
+		"contract_version": contextualRoutingContractVersion,
+		"catalog_revision": catalogRevision(catalog),
+		"query":            in.Query,
+		"count":            count,
+		"returned":         len(returned),
+		"truncated":        len(returned) < count,
+		"byte_limited":     byteLimited,
+		"matches":          returned,
+	})
 }
 
 func (s *Server) handleDescribeTool(_ context.Context, _ *sdk.CallToolRequest, in describeInput) (*sdk.CallToolResult, any, error) {
@@ -257,97 +283,201 @@ func (s *Server) handleDescribeTool(_ context.Context, _ *sdk.CallToolRequest, i
 }
 
 func (s *Server) handleResolveTool(_ context.Context, _ *sdk.CallToolRequest, in resolveToolInput) (*sdk.CallToolResult, any, error) {
-	q := strings.ToLower(strings.TrimSpace(in.Query))
+	if message := discoveryQueryError(in.Query); message != "" {
+		return result(map[string]any{"error": message, "max_query_bytes": maxDiscoveryQueryBytes})
+	}
+	catalog := s.catalog()
+	revision := catalogRevision(catalog)
+	if len(intentTerms(in.Query)) == 0 {
+		return result(map[string]any{
+			"contract_version": contextualRoutingContractVersion,
+			"catalog_revision": revision,
+			"status":           "no_match",
+			"confidence":       "none",
+			"reason_codes":     []string{"query_too_generic"},
+			"query":            in.Query,
+			"recommendation":   nil,
+			"ambiguous":        false,
+			"alternatives":     []toolMatch{},
+			"hint":             "query must describe the current goal, activity, or capability",
+		})
+	}
 	maxHits := in.MaxHits
 	if maxHits <= 0 || maxHits > 10 {
 		maxHits = 5
 	}
-	var matches []toolMatch
-	for _, d := range s.hub.Downstreams() {
-		if !d.Connected() || !s.scope.allowsServer(d.Name) {
-			continue
-		}
-		for _, t := range d.Tools {
-			ns := d.Name + "__" + t.Name
-			if !s.scope.allowsNS(ns) {
-				continue
-			}
-			if q == "" || strings.Contains(strings.ToLower(ns), q) || strings.Contains(strings.ToLower(t.Name), q) || strings.Contains(strings.ToLower(t.Description), q) {
-				matches = append(matches, toolMatch{Namespaced: ns, Server: d.Name, Tool: t.Name, Description: t.Description})
-			}
-		}
-	}
+	matches := rankCatalog(in.Query, catalog)
+	assessment := assessRoute(in.Query, matches)
 	if len(matches) == 0 {
-		return result(map[string]any{"query": in.Query, "recommendation": nil, "ambiguous": false, "alternatives": []toolMatch{}, "hint": "no tools matched — try a broader query or use mcphub_search_tools"})
+		return result(map[string]any{
+			"contract_version": contextualRoutingContractVersion,
+			"catalog_revision": revision,
+			"status":           assessment.Status,
+			"confidence":       assessment.Confidence,
+			"reason_codes":     assessment.ReasonCodes,
+			"query":            in.Query,
+			"recommendation":   nil,
+			"ambiguous":        false,
+			"alternatives":     []toolMatch{},
+			"hint":             "no tools matched — describe the capability with different terms, add use_when hints to the server, or browse with mcphub_search_tools",
+		})
 	}
-	// Rank: exact name match > name substring > description substring.
-	sort.Slice(matches, func(i, j int) bool {
-		return resolveRank(q, matches[i]) > resolveRank(q, matches[j])
-	})
 	top := matches[0]
 	alts := matches[1:]
-	if len(alts) > maxHits {
-		alts = alts[:maxHits]
-	}
-	ambiguous := len(matches) > 1 && resolveRank(q, top) == resolveRank(q, matches[1])
-	// Extract required fields + build an argument template from the tool's schema.
+	compactTop := compactToolMatch(top)
+	compactAlts, alternativesByteLimited := compactToolMatches(alts, maxHits)
+	ambiguous := assessment.Status == "ambiguous"
+	// Extract a bounded top-level argument summary. Full schemas remain available
+	// through mcphub_describe_tool when fields or encoded input are omitted.
 	t, ok := s.hub.FindTool(top.Server, top.Tool)
-	required, template := []string{}, map[string]any{}
+	required, template, templateTruncated := []string{}, map[string]any{}, false
 	if ok && t.InputSchema != nil {
-		var schema map[string]any
-		// InputSchema is `any` — marshal then unmarshal to normalize.
-		b, mErr := json.Marshal(t.InputSchema)
-		if mErr == nil {
-			json.Unmarshal(b, &schema)
-		}
-		if req, ok := schema["required"].([]any); ok {
-			for _, r := range req {
-				if s, ok := r.(string); ok {
-					required = append(required, s)
-					template[s] = "<value>"
-				}
-			}
-		}
-		if props, ok := schema["properties"].(map[string]any); ok {
-			for k := range props {
-				if _, exists := template[k]; !exists {
-					template[k] = nil
-				}
-			}
-		}
+		required, template, templateTruncated = summarizeInputSchema(t.InputSchema)
 	}
 	return result(map[string]any{
-		"query": in.Query,
+		"contract_version": contextualRoutingContractVersion,
+		"catalog_revision": revision,
+		"status":           assessment.Status,
+		"confidence":       assessment.Confidence,
+		"reason_codes":     assessment.ReasonCodes,
+		"matched_fraction": assessment.MatchedFraction,
+		"score_gap":        assessment.ScoreGap,
+		"query":            in.Query,
 		"recommendation": map[string]any{
-			"server":            top.Server,
-			"tool":              top.Tool,
-			"namespaced":        top.Namespaced,
-			"description":       top.Description,
-			"required_fields":   required,
-			"argument_template": template,
+			"server":                      compactTop.Server,
+			"tool":                        compactTop.Tool,
+			"namespaced":                  compactTop.Namespaced,
+			"title":                       compactTop.Title,
+			"description":                 compactTop.Description,
+			"server_description":          compactTop.ServerDescription,
+			"use_when":                    compactTop.UseWhen,
+			"tool_use_when":               compactTop.ToolUseWhen,
+			"score":                       compactTop.Score,
+			"matched_terms":               compactTop.MatchedTerms,
+			"metadata_truncated":          compactTop.MetadataTruncated,
+			"required_fields":             required,
+			"argument_template":           template,
+			"argument_template_truncated": templateTruncated,
 		},
-		"ambiguous":    ambiguous,
-		"alternatives": alts,
-		"hint":         resolveHint(ambiguous, top.Namespaced),
+		"ambiguous":              ambiguous,
+		"alternatives":           compactAlts,
+		"alternatives_truncated": alternativesByteLimited || len(compactAlts) < len(alts),
+		"hint":                   resolveHint(ambiguous, top.Namespaced, templateTruncated),
 	})
 }
 
-// resolveRank scores a match: 3 = exact name, 2 = name substring, 1 = description only.
-func resolveRank(q string, m toolMatch) int {
-	nameLower := strings.ToLower(m.Tool)
-	switch {
-	case nameLower == q:
-		return 3
-	case strings.Contains(nameLower, q):
-		return 2
+const (
+	maxResolveTemplateFields     = 48
+	maxResolveFieldNameBytes     = 128
+	maxResolveFieldNamesBytes    = 2048
+	maxResolveSchemaInspectBytes = 256 * 1024
+)
+
+func summarizeInputSchema(input any) ([]string, map[string]any, bool) {
+	required := []string{}
+	template := map[string]any{}
+	schema, ok := inputSchemaMap(input)
+	if !ok {
+		return required, template, true
+	}
+	usedBytes := 0
+	truncated := false
+	add := func(name string, requiredField bool) {
+		if _, exists := template[name]; exists {
+			return
+		}
+		if name == "" || len(name) > maxResolveFieldNameBytes || len(template) == maxResolveTemplateFields || usedBytes+len(name) > maxResolveFieldNamesBytes {
+			truncated = true
+			return
+		}
+		usedBytes += len(name)
+		if requiredField {
+			required = append(required, name)
+			template[name] = "<value>"
+			return
+		}
+		template[name] = nil
+	}
+	addRequired := func(fields []any) {
+		limit := len(fields)
+		if limit > maxResolveTemplateFields {
+			limit = maxResolveTemplateFields
+			truncated = true
+		}
+		for _, field := range fields[:limit] {
+			name, ok := field.(string)
+			if !ok {
+				truncated = true
+				continue
+			}
+			add(name, true)
+		}
+	}
+	switch fields := schema["required"].(type) {
+	case []any:
+		addRequired(fields)
+	case []string:
+		limit := len(fields)
+		if limit > maxResolveTemplateFields {
+			limit = maxResolveTemplateFields
+			truncated = true
+		}
+		for _, name := range fields[:limit] {
+			add(name, true)
+		}
+	case nil:
 	default:
-		return 1
+		truncated = true
+	}
+	if properties, ok := schema["properties"].(map[string]any); ok {
+		if len(properties) > maxResolveTemplateFields {
+			return required, template, true
+		}
+		names := make([]string, 0, len(properties))
+		for name := range properties {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			add(name, false)
+		}
+	}
+	return required, template, truncated
+}
+
+// inputSchemaMap accepts the representation returned by MCP clients directly.
+// Raw JSON is decoded only under a fixed byte limit; arbitrary Go values are
+// deliberately not marshaled because doing so would traverse unbounded data.
+func inputSchemaMap(input any) (map[string]any, bool) {
+	switch schema := input.(type) {
+	case map[string]any:
+		return schema, true
+	case json.RawMessage:
+		return decodeInputSchema(schema)
+	case []byte:
+		return decodeInputSchema(schema)
+	default:
+		return nil, false
 	}
 }
 
-func resolveHint(ambiguous bool, namespaced string) string {
+func decodeInputSchema(encoded []byte) (map[string]any, bool) {
+	if len(encoded) == 0 || len(encoded) > maxResolveSchemaInspectBytes {
+		return nil, false
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(encoded, &schema); err != nil {
+		return nil, false
+	}
+	return schema, true
+}
+
+func resolveHint(ambiguous bool, namespaced string, templateTruncated bool) string {
 	if ambiguous {
-		return "multiple tools ranked equally — review the alternatives and pick the one whose description best matches your intent"
+		return "multiple tools ranked equally — review the alternatives and pick the one whose description best matches your intent; use mcphub_describe_tool for the complete schema"
+	}
+	if templateTruncated {
+		return fmt.Sprintf("argument template was bounded — call mcphub_describe_tool for %s before invoking it", namespaced)
 	}
 	return "call mcphub_call_tool with server + tool (or the namespaced name) + the argument_template filled in"
 }

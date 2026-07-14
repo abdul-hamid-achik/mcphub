@@ -155,7 +155,11 @@ knowing before your first `--write`.
 ### YAML — Hermes and local-agent
 
 - **local-agent** (`type: local-agent`) — servers live in a YAML `servers`
-  sequence at `~/.config/local-agent/config.yaml`.
+  sequence at `~/.config/local-agent/config.yaml`. It preserves bounded MCP
+  initialization instructions as scoped, untrusted model guidance, so a lazy
+  mcphub gateway can advertise its contextual discovery contract without
+  mounting every downstream tool. See [Contextual routing for
+  harnesses](/guide/contextual-routing).
 - **Hermes** (`type: hermes`) — servers live under a top-level `mcp_servers`
   map in `~/.hermes/config.yaml`; each entry carries an `enabled` flag. Same
   caveat as the TOML adapters: the YAML is round-tripped through a generic map,

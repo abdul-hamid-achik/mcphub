@@ -81,7 +81,24 @@ h1, h2, h3, h4,
 }
 
 /* feature cards: chassis look */
+.VPHome .VPFeatures .items {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+}
+.VPHome .VPFeatures .item {
+  width: auto;
+  padding: 0;
+}
+.VPHome .VPFeatures .item:nth-child(odd) { grid-column: span 7; }
+.VPHome .VPFeatures .item:nth-child(even) { grid-column: span 5; }
+.VPHome .VPFeatures .item:nth-child(3),
+.VPHome .VPFeatures .item:nth-child(6) { grid-column: span 5; }
+.VPHome .VPFeatures .item:nth-child(4),
+.VPHome .VPFeatures .item:nth-child(5) { grid-column: span 7; }
 .VPHome .VPFeature {
+  height: 100%;
   border: 1px solid var(--vp-c-divider);
   transition: border-color 0.25s, transform 0.25s;
 }
@@ -92,7 +109,49 @@ h1, h2, h3, h4,
 .VPHome .VPFeature .icon {
   background: var(--vp-c-brand-soft);
   border-radius: 8px;
-  font-size: 22px;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+@media (max-width: 959px) {
+  .VPHome .VPFeatures .item,
+  .VPHome .VPFeatures .item:nth-child(n) {
+    grid-column: span 6;
+  }
+}
+
+@media (max-width: 639px) {
+  .VPHome .VPHero .main {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .VPHome .VPHero .actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    width: 100%;
+    padding: 0;
+  }
+  .VPHome .VPHero .action:first-child {
+    grid-column: 1 / -1;
+  }
+  .VPHome .VPHero .action {
+    width: 100%;
+    padding: 0;
+  }
+  .VPHome .VPHero .VPButton {
+    width: 100%;
+  }
+  .VPHome .VPFeatures .items {
+    gap: 12px;
+  }
+  .VPHome .VPFeatures .item,
+  .VPHome .VPFeatures .item:nth-child(n) {
+    grid-column: 1 / -1;
+  }
 }
 
 /* ---------- shared chassis panels (PatchBay / terminal) ---------- */

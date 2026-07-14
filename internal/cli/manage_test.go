@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
@@ -87,5 +88,29 @@ func TestAddEnabledNoOp(t *testing.T) {
 	_, err = runRoot(t, "add", "qux", "echo", "--enabled", "--disabled", "--config", cfg4)
 	if err == nil {
 		t.Errorf("--enabled --disabled: expected error, got nil")
+	}
+}
+
+func TestAddPersistsUseWhenHints(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writeConfig(t, dir, minimalConfig)
+	_, err := runRoot(t,
+		"add", "hitspec", "hitspec", "mcp", "serve",
+		"--description", "HTTP research workflows",
+		"--tag", "web",
+		"--use-when", "capture a URL as Markdown",
+		"--use-when", "inspect an HTTP workflow",
+		"--config", cfg,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := c.Servers["hitspec"]
+	if !reflect.DeepEqual(server.UseWhen, []string{"capture a URL as Markdown", "inspect an HTTP workflow"}) {
+		t.Fatalf("use_when = %v", server.UseWhen)
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	toml "github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
@@ -87,9 +89,9 @@ const (
 	// ExposeAll mounts every downstream tool as `server__tool`. Simple, but a
 	// large fleet means a large tool list in every agent's context.
 	ExposeAll = "all"
-	// ExposeLazy advertises only mcphub's meta-tools (list/search/describe/call).
-	// The agent finds capabilities with mcphub_search_tools and invokes them via
-	// mcphub_call_tool — so the context cost is a handful of tools, not hundreds.
+	// ExposeLazy advertises only mcphub's seven management tools. The agent routes
+	// context with mcphub_resolve_tool (or browses with mcphub_search_tools) and
+	// invokes through mcphub_call_tool, keeping context cost nearly constant.
 	ExposeLazy = "lazy"
 )
 
@@ -174,7 +176,25 @@ type Server struct {
 	Enabled     bool     `yaml:"enabled" toml:"enabled" json:"enabled"`
 	Description string   `yaml:"description,omitempty" toml:"description,omitempty" json:"description,omitempty"`
 	Tags        []string `yaml:"tags,omitempty" toml:"tags,omitempty" json:"tags,omitempty"`
+	// UseWhen is a set of natural-language routing hints. The gateway indexes
+	// these alongside tool metadata so lazy-mode agents can discover a server
+	// from their current task even when none of its tools are pinned.
+	UseWhen []string `yaml:"use_when,omitempty" toml:"use_when,omitempty" json:"use_when,omitempty"`
+	// ToolUseWhen adds higher-precision routing hints for individual downstream
+	// tool names. Unknown names are harmless until a matching tool is discovered.
+	ToolUseWhen map[string][]string `yaml:"tool_use_when,omitempty" toml:"tool_use_when,omitempty" json:"tool_use_when,omitempty"`
 }
+
+const (
+	// MaxUseWhenHints keeps routing metadata useful without letting a single
+	// server dominate the lazy-mode MCP instructions.
+	MaxUseWhenHints = 8
+	// MaxUseWhenHintBytes bounds each hint while leaving room for a concise
+	// natural-language situation and expected outcome.
+	MaxUseWhenHintBytes = 256
+	// MaxToolUseWhenEntries bounds per-server routing configuration.
+	MaxToolUseWhenEntries = 128
+)
 
 // IsRemote reports whether the server is reached over a URL rather than spawned.
 func (s Server) IsRemote() bool { return s.URL != "" }
@@ -415,23 +435,24 @@ func Starter() *Config {
 		Version: 1,
 		Expose:  ExposeAll,
 		Servers: map[string]Server{
-			"codemap":    {Command: "codemap", Args: []string{"serve"}, Enabled: true, Description: "Code knowledge graph", Tags: []string{"code", "search"}},
-			"vecgrep":    {Command: "vecgrep", Args: []string{"serve", "--mcp"}, Enabled: true, Description: "Semantic code search", Tags: []string{"code", "search"}},
-			"monitor":    {Command: "monitor", Args: []string{"mcp", "serve"}, Enabled: true, Description: "Local system & process observability", Tags: []string{"ops"}},
-			"cairntrace": {Command: "cairn", Args: []string{"mcp"}, Enabled: false, Description: "Service discovery, audit & investigation", Tags: []string{"ops"}},
-			"glyph":      {Command: "glyph", Args: []string{"mcp"}, Enabled: false, Description: "TUI behavior testing"},
+			"codemap":    {Command: "codemap", Args: []string{"serve"}, Enabled: true, Description: "Code knowledge graph", Tags: []string{"code", "search"}, UseWhen: []string{"understand symbols, references, and structure in a codebase"}},
+			"vecgrep":    {Command: "vecgrep", Args: []string{"serve", "--mcp"}, Enabled: true, Description: "Semantic code search", Tags: []string{"code", "search"}, UseWhen: []string{"find code by meaning when exact symbol names are unknown"}},
+			"monitor":    {Command: "monitor", Args: []string{"mcp", "serve"}, Enabled: true, Description: "Local system & process observability", Tags: []string{"ops"}, UseWhen: []string{"inspect processes, ports, resources, or local machine health"}},
+			"cairntrace": {Command: "cairn", Args: []string{"mcp"}, Enabled: false, Description: "Service discovery, audit & investigation", Tags: []string{"ops"}, UseWhen: []string{"investigate services, dependencies, incidents, or audit trails"}},
+			"glyph":      {Command: "glyph", Args: []string{"mcp"}, Enabled: false, Description: "TUI behavior testing", UseWhen: []string{"exercise and verify an interactive terminal user interface"}},
 		},
 		Groups: map[string][]string{
 			"coding": {"codemap", "vecgrep"},
 			"ops":    {"monitor", "cairntrace"},
 		},
 		Agents: map[string]Agent{
-			"claude":   {Type: "claude", Path: "~/.claude.json", Mode: ModeGateway},
-			"opencode": {Type: "opencode", Path: "~/.config/opencode/opencode.json", Mode: ModeDirect},
-			"codex":    {Type: "codex", Path: "~/.codex/config.toml", Mode: ModeGateway},
-			"crush":    {Type: "crush", Path: "~/.config/crush/crush.json", Mode: ModeGateway},
-			"forge":    {Type: "forge", Path: "~/forge/.mcp.json", Mode: ModeGateway},
-			"hermes":   {Type: "hermes", Path: "~/.hermes/config.yaml", Mode: ModeGateway},
+			"claude":      {Type: "claude", Path: "~/.claude.json", Mode: ModeGateway},
+			"opencode":    {Type: "opencode", Path: "~/.config/opencode/opencode.json", Mode: ModeDirect},
+			"codex":       {Type: "codex", Path: "~/.codex/config.toml", Mode: ModeGateway},
+			"crush":       {Type: "crush", Path: "~/.config/crush/crush.json", Mode: ModeGateway},
+			"forge":       {Type: "forge", Path: "~/forge/.mcp.json", Mode: ModeGateway},
+			"hermes":      {Type: "hermes", Path: "~/.hermes/config.yaml", Mode: ModeGateway},
+			"local-agent": {Type: "local-agent", Path: "~/.config/local-agent/config.yaml", Mode: ModeGateway},
 		},
 	}
 }
@@ -473,6 +494,44 @@ func (c *Config) Validate() error {
 		}
 		if len(s.Headers) > 0 && s.URL == "" {
 			problems = append(problems, fmt.Sprintf("server %q: headers only apply to remote (url) servers", name))
+		}
+		if len(s.UseWhen) > MaxUseWhenHints {
+			problems = append(problems, fmt.Sprintf("server %q: use_when supports at most %d hints", name, MaxUseWhenHints))
+		}
+		for i, hint := range s.UseWhen {
+			switch {
+			case !utf8.ValidString(hint):
+				problems = append(problems, fmt.Sprintf("server %q: use_when[%d] must be valid UTF-8", name, i))
+			case strings.TrimSpace(hint) == "":
+				problems = append(problems, fmt.Sprintf("server %q: use_when[%d] must not be empty", name, i))
+			case len(hint) > MaxUseWhenHintBytes:
+				problems = append(problems, fmt.Sprintf("server %q: use_when[%d] exceeds %d bytes", name, i, MaxUseWhenHintBytes))
+			case strings.IndexFunc(hint, unicode.IsControl) >= 0:
+				problems = append(problems, fmt.Sprintf("server %q: use_when[%d] must be a single line without control characters", name, i))
+			}
+		}
+		if len(s.ToolUseWhen) > MaxToolUseWhenEntries {
+			problems = append(problems, fmt.Sprintf("server %q: tool_use_when supports at most %d tools", name, MaxToolUseWhenEntries))
+		}
+		for tool, hints := range s.ToolUseWhen {
+			if strings.TrimSpace(tool) == "" || strings.TrimSpace(tool) != tool || len(tool) > 256 || strings.IndexFunc(tool, unicode.IsControl) >= 0 {
+				problems = append(problems, fmt.Sprintf("server %q: tool_use_when key %q is not a valid bounded tool name", name, tool))
+			}
+			if len(hints) > MaxUseWhenHints {
+				problems = append(problems, fmt.Sprintf("server %q: tool_use_when[%q] supports at most %d hints", name, tool, MaxUseWhenHints))
+			}
+			for i, hint := range hints {
+				switch {
+				case !utf8.ValidString(hint):
+					problems = append(problems, fmt.Sprintf("server %q: tool_use_when[%q][%d] must be valid UTF-8", name, tool, i))
+				case strings.TrimSpace(hint) == "":
+					problems = append(problems, fmt.Sprintf("server %q: tool_use_when[%q][%d] must not be empty", name, tool, i))
+				case len(hint) > MaxUseWhenHintBytes:
+					problems = append(problems, fmt.Sprintf("server %q: tool_use_when[%q][%d] exceeds %d bytes", name, tool, i, MaxUseWhenHintBytes))
+				case strings.IndexFunc(hint, unicode.IsControl) >= 0:
+					problems = append(problems, fmt.Sprintf("server %q: tool_use_when[%q][%d] must be a single line without control characters", name, tool, i))
+				}
+			}
 		}
 	}
 	for g, members := range c.Groups {

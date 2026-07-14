@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/harmonica"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/harness"
@@ -34,6 +35,7 @@ var (
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	barStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	barTrack      = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
+	onDemandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).MarginTop(1)
 	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("212")).Padding(0, 1)
@@ -318,7 +320,7 @@ func (m *Model) togglePin() {
 		return
 	}
 	name := m.servers[m.cursor]
-	if m.cfg.ServerPinned(name) {
+	if m.serverFullyPinned(name) {
 		// Clear every pin that resolves to this server (bare, wildcard, exact),
 		// so the indicator and config stay consistent with CLI pins.
 		m.cfg.UnpinServer(name)
@@ -326,15 +328,26 @@ func (m *Model) togglePin() {
 			m.status = "save failed: " + err.Error()
 			return
 		}
-		m.status = name + " unpinned"
+		if m.cfg.Lazy() {
+			m.status = name + " unpinned — eligible on demand when connected and in scope"
+		} else {
+			m.status = name + " unpinned — expose: all still advertises its tools"
+		}
 		return
 	}
+	// Upgrade an exact-tool (mixed) pin set to one whole-server pin. This makes
+	// `p` a predictable two-state control: mixed/on-demand → advertised → on-demand.
+	m.cfg.UnpinServer(name)
 	m.cfg.Pin = append(m.cfg.Pin, name)
 	if err := config.Save(m.cfgPath, m.cfg); err != nil {
 		m.status = "save failed: " + err.Error()
 		return
 	}
-	m.status = name + " pinned — its tools stay directly callable in lazy mode"
+	if m.cfg.Lazy() {
+		m.status = name + " pinned — its tools are now advertised directly"
+	} else {
+		m.status = name + " pinned — its tools will stay advertised in lazy mode"
+	}
 }
 
 // serverPinned reports whether a server is pinned in any form.
@@ -400,7 +413,7 @@ func (m Model) header() string {
 		expose = config.ExposeAll
 	}
 	meta := fmt.Sprintf("%d servers · %d on · expose: %s · %d agents", len(m.servers), on, expose, len(m.agents))
-	return titleStyle.Render("mcphub studio") + "  " + subtleStyle.Render("one hub, every agent") + "\n" + subtleStyle.Render(meta)
+	return titleStyle.Render("mcphub studio") + "  " + subtleStyle.Render("one catalog, every agent") + "\n" + subtleStyle.Render(meta)
 }
 
 func (m Model) renderTabs() string {
@@ -435,13 +448,113 @@ func (m Model) renderServers() string {
 		if srv.IsRemote() {
 			kind = "remote"
 		}
-		pin := "  "
+		pin := "     "
 		if m.serverPinned(name) {
-			pin = selectedStyle.Render("📌")
+			pin = selectedStyle.Render("[pin]")
 		}
-		b.WriteString(fmt.Sprintf("%s%s %s %-16s %s %s\n", cursor, mark, pin, name, dimStyle.Render(fmt.Sprintf("%-6s", kind)), dimStyle.Render(srv.Description)))
+		route := m.serverExposure(name, srv)
+		b.WriteString(fmt.Sprintf("%s%s %s %-16s %s %s %s\n",
+			cursor, mark, pin, name,
+			dimStyle.Render(fmt.Sprintf("%-6s", kind)),
+			route,
+			dimStyle.Render(srv.Description)))
+		if i == m.cursor {
+			if len(srv.UseWhen) > 0 {
+				suffix := ""
+				if remaining := len(srv.UseWhen) - 1; remaining > 0 {
+					suffix = fmt.Sprintf(" · +%d more", remaining)
+				}
+				tail := "… (see mcphub.yaml)"
+				if suffix != "" {
+					tail = fmt.Sprintf("… (+%d more)", len(srv.UseWhen)-1)
+				}
+				b.WriteString(m.previewServerText(subtleStyle, "      ", "use when: "+srv.UseWhen[0]+suffix, 2, tail) + "\n")
+			} else {
+				b.WriteString(m.wrapServerText(dimStyle, "      ", "use when: no routing hints configured") + "\n")
+			}
+			if len(srv.Tags) > 0 {
+				b.WriteString(m.previewServerText(dimStyle, "      ", "tags: "+strings.Join(srv.Tags, ", "), 1, "…") + "\n")
+			}
+		}
+	}
+	if m.cfg.Lazy() {
+		b.WriteString("\n" + m.previewServerText(dimStyle, "  ", "gateway policy: advertised = in tool list · on-demand = resolve when connected + in scope", 3, "…"))
 	}
 	return b.String()
+}
+
+// wrapServerText wraps selected-row details and the discovery legend to the
+// current terminal width while preserving every configured routing hint.
+func (m Model) wrapServerText(style lipgloss.Style, indent, value string) string {
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+	indentWidth := lipgloss.Width(indent)
+	if indentWidth >= width {
+		indent = ""
+		indentWidth = 0
+	}
+	available := width - indentWidth
+	if available < 1 {
+		available = 1
+	}
+	lines := strings.Split(style.Width(available).Render(value), "\n")
+	for i := range lines {
+		lines[i] = indent + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// previewServerText keeps selected-row metadata useful in a short terminal.
+// The full routing metadata remains in mcphub.yaml and the MCP list response.
+func (m Model) previewServerText(style lipgloss.Style, indent, value string, maxLines int, tail string) string {
+	wrapped := m.wrapServerText(style, indent, value)
+	lines := strings.Split(wrapped, "\n")
+	if maxLines < 1 || len(lines) <= maxLines {
+		return wrapped
+	}
+	lines = lines[:maxLines]
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+	indentWidth := lipgloss.Width(indent)
+	if indentWidth >= width {
+		indent = ""
+		indentWidth = 0
+	}
+	available := max(1, width-indentWidth)
+	tail = ansi.Truncate(tail, available, "")
+	last := strings.TrimPrefix(lines[len(lines)-1], indent)
+	contentWidth := max(0, available-ansi.StringWidth(tail))
+	lines[len(lines)-1] = indent + ansi.Truncate(last, contentWidth, "") + tail
+	return strings.Join(lines, "\n")
+}
+
+// serverExposure describes configured global exposure, not live connection or
+// per-agent scope. Exact pins produce a mixed server: some tools are advertised
+// and the rest are eligible for on-demand discovery.
+func (m Model) serverExposure(name string, srv config.Server) string {
+	if !srv.Enabled {
+		return offStyle.Render(fmt.Sprintf("%-11s", "unavailable"))
+	}
+	if !m.cfg.Lazy() || m.serverFullyPinned(name) {
+		return onStyle.Render(fmt.Sprintf("%-11s", "advertised"))
+	}
+	if m.serverPinned(name) {
+		return selectedStyle.Render(fmt.Sprintf("%-11s", "mixed"))
+	}
+	return onDemandStyle.Render(fmt.Sprintf("%-11s", "on-demand"))
+}
+
+func (m Model) serverFullyPinned(name string) bool {
+	for _, pin := range m.cfg.Pin {
+		if pin == name || pin == name+"__*" {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) renderAgents() string {

@@ -12,7 +12,8 @@
 - [Getting started](https://mcphubcli.dev/guide/getting-started): install, init, first sync, point an agent at the gateway
 - [Concepts](https://mcphubcli.dev/guide/concepts): the registry, the gateway, gateway vs direct mode, expose all vs lazy
 - [Sync to your agents](https://mcphubcli.dev/guide/sync): dry-run default, .bak backups, surgical merge, ownership pruning, resume/rollback
-- [Lazy mode & pinning](https://mcphubcli.dev/guide/lazy-mode): seven meta-tools, on-demand discovery, pin --top N
+- [Lazy mode & pinning](https://mcphubcli.dev/guide/lazy-mode): context-aware discovery with use_when hints, seven meta-tools, pin --top N
+- [Contextual routing for harnesses](https://mcphubcli.dev/guide/contextual-routing): task/phase triggers, resolver contract, host-assisted advisors, deduplication, safety, and acceptance tests
 - [Oversized results](https://mcphubcli.dev/guide/results): lossless spooling, callId receipts, paged recovery
 - [Intelligence](https://mcphubcli.dev/guide/intelligence): stats, status, sync drift, token cost per server
 - [Secrets via tvault](https://mcphubcli.dev/guide/secrets): vault: spawn injection, tvault:// header refs
@@ -20,12 +21,13 @@
 - [Studio TUI](https://mcphubcli.dev/guide/studio): interactive server/agent/stats terminal UI
 - [Agent harnesses](https://mcphubcli.dev/guide/harnesses): all 12 supported harnesses, paths, formats, quirks
 - [Connect Bob](https://mcphubcli.dev/guide/bob): the Bob repository-factory integration
+- [Fetch HTTP responses with Hitspec](https://mcphubcli.dev/guide/hitspec): route bounded HTTP and saved-request tasks to Hitspec, with an explicit reviewed handoff for file.cheap persistence
 - [Troubleshooting](https://mcphubcli.dev/guide/troubleshooting): doctor, probe, common failures, FAQ
 
 ## Reference
 
 - [CLI](https://mcphubcli.dev/reference/cli): every command and flag
-- [Configuration](https://mcphubcli.dev/reference/config): the full mcphub.yaml schema
+- [Configuration](https://mcphubcli.dev/reference/config): the full mcphub.yaml schema, including use_when routing hints
 - [Gateway meta-tools](https://mcphubcli.dev/reference/meta-tools): the seven mcphub_* tools agents call
 
 ## Source

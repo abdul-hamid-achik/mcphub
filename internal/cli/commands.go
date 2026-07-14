@@ -27,8 +27,8 @@ version: 1
 
 # How the gateway advertises tools to agents:
 #   all  (default) — mount every downstream tool as 'server__tool'
-#   lazy           — advertise only mcphub's meta-tools; agents discover with
-#                    mcphub_search_tools and invoke via mcphub_call_tool (saves tokens)
+#   lazy           — advertise only mcphub's meta-tools; agents resolve or search
+#                    capabilities and invoke via mcphub_call_tool (saves tokens)
 expose: all
 
 servers:
@@ -38,29 +38,34 @@ servers:
     enabled: true
     description: Code knowledge graph
     tags: [code, search]
+    use_when: ["understand symbols, references, and structure in a codebase"]
   vecgrep:
     command: vecgrep
     args: [serve, --mcp]
     enabled: true
     description: Semantic code search
     tags: [code, search]
+    use_when: ["find code by meaning when exact symbol names are unknown"]
   monitor:
     command: monitor
     args: [mcp, serve]
     enabled: true
     description: Local system & process observability
     tags: [ops]
+    use_when: ["inspect processes, ports, resources, or local machine health"]
   cairntrace:
     command: cairn
     args: [mcp]
     enabled: false
     description: Service discovery, audit & investigation
     tags: [ops]
+    use_when: ["investigate services, dependencies, incidents, or audit trails"]
   glyph:
     command: glyph
     args: [mcp]
     enabled: false
     description: TUI behavior testing
+    use_when: ["exercise and verify an interactive terminal user interface"]
 
 # Optional named bundles you can enable together with 'mcphub use <group>'.
 groups:
@@ -95,6 +100,10 @@ agents:
   hermes:
     type: hermes
     path: ~/.hermes/config.yaml
+    mode: gateway
+  local-agent:
+    type: local-agent
+    path: ~/.config/local-agent/config.yaml
     mode: gateway
 # Per-agent routing (optional): restrict which servers/tools an agent sees.
 #   servers: [a, b]   only those enabled servers (gateway proxies just them;

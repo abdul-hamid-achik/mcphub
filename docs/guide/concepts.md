@@ -36,8 +36,10 @@ in gateway mode — you adopt mcphub without retyping anything.
 agent points at. When it starts it:
 
 1. Reads and validates `mcphub.yaml` and connects, **concurrently**, to every
-   *enabled* downstream server as an MCP client. A stdio server is spawned as
-   a subprocess; a remote server is reached over HTTP or SSE.
+   *enabled* downstream server admitted by the optional `--agent` server scope.
+   Excluded servers are not spawned, contacted, or asked to resolve secrets. A
+   stdio server is spawned as a subprocess; a remote server is reached over
+   HTTP or SSE.
 2. Lists each downstream's tools and **mounts** them onto its own server.
 3. Serves on stdio, recording every proxied call to the local
    [intelligence store](/guide/intelligence).
@@ -87,13 +89,14 @@ own so an agent can introspect and drive the hub without scanning everything:
 
 - **`mcphub_list_servers`** — configured servers with their enabled/connected
   state, tool counts, and the current exposure mode.
-- **`mcphub_search_tools`** — search the aggregated catalog by substring across
-  tool name and description, returning matching `server__tool` names.
+- **`mcphub_search_tools`** — rank natural-language intent across tool metadata
+  plus server descriptions, tags, and `use_when` hints, returning bounded
+  `server__tool` candidates with match evidence.
 - **`mcphub_describe_tool`** — return one downstream tool's description and
   full input schema.
-- **`mcphub_resolve_tool`** — rank a natural-language request and return one
-  recommended tool, required fields, an argument template, alternatives, and
-  ambiguity status.
+- **`mcphub_resolve_tool`** — route a current goal/activity and return one
+  recommended tool, match evidence, required fields, an argument template,
+  alternatives, and ambiguity status.
 - **`mcphub_call_tool`** — invoke any downstream tool by
   `{server, tool, arguments}`. Oversized results return a lossless recovery
   receipt.
@@ -111,15 +114,17 @@ advertises (see [Lazy mode](/guide/lazy-mode) for the deep dive):
 - **`expose: all`** (default) — every downstream tool is mounted as
   `server__tool`. Simple, but a large fleet means a large tool list.
 - **`expose: lazy`** — only the seven meta-tools above are advertised. The
-  agent finds a capability with `mcphub_search_tools`, optionally resolves or
-  inspects it, and runs it with `mcphub_call_tool`. The context cost is a
-  handful of tools instead of hundreds — regardless of how many servers sit
-  behind the hub.
+  agent routes task context with `mcphub_resolve_tool`, browses alternatives
+  with `mcphub_search_tools`, and runs the choice with `mcphub_call_tool`.
+  Initialization includes a bounded capability summary built from the agent's
+  in-scope servers and their `use_when` hints. The context cost is a handful of
+  tools instead of hundreds.
 
 The trade-off of lazy mode: because the real tools aren't in the agent's tool
-list, the model won't *automatically* reach for them — it has to choose to call
-`mcphub_search_tools` first. So if you want a server's tools called
-automatically (like a normal MCP setup), **pin it**. Pins keep tools mounted
+list, the model still has to follow the gateway instructions and call the
+resolver/search entry point. `use_when` makes that decision substantially more
+discoverable, but a harness that ignores MCP instructions may still need pins
+or `expose: all`. Pins keep tools mounted
 directly even in lazy mode, so they appear in the agent's tool list and get
 auto-invoked, while everything else stays on-demand:
 
@@ -212,9 +217,10 @@ agents:
   can't filter individual tools (the agent talks to each server itself), so
   `tools` is rejected there.
 
-The gateway refuses out-of-scope calls with a clear error, and `mcphub doctor`
-reports each agent's scope (`routes to N/M enabled servers`). This is context
-**curation**, not a security isolation boundary.
+The gateway does not activate servers outside the server allowlist, refuses
+out-of-scope calls with a clear error, and `mcphub doctor` reports each agent's
+scope (`routes to N/M enabled servers`). This provides least activation and
+context **curation**, not operating-system security isolation.
 
 ## Token savings
 
@@ -226,10 +232,11 @@ A dozen servers can be hundreds of tool definitions loaded before you type a
 single word.
 
 In gateway mode the agent loads exactly **one** server. With `expose: lazy`
-that surface collapses to seven meta-tools no matter how many servers sit
-behind the hub — the model sees `mcphub_search_tools` / `mcphub_call_tool`
-instead of every server's full catalog, and pulls a tool's schema on demand
-only when it actually needs it. (With the default `expose: all`, you still get
+that surface collapses to seven meta-tools plus a bounded capability summary
+no matter how many servers sit behind the hub — the model sees
+`mcphub_resolve_tool` / `mcphub_call_tool` instead of every server's full
+catalog, and pulls a tool's schema on demand only when it actually needs it.
+(With the default `expose: all`, you still get
 one connection, but the full catalog is advertised under `server__tool` names.)
 
 If an agent already had those servers configured directly, adding the gateway
@@ -254,7 +261,7 @@ their place in your context window — and which you might disable.
 ## Architecture in plain words
 
 The **config** layer reads `mcphub.yaml` — the registry every other piece
-consults. The **hub** connects to each enabled server as an MCP client,
+consults. The **hub** connects to each enabled, in-scope server as an MCP client,
 discovers its tools, and re-exposes them under `server__tool` names, forwarding
 calls transparently and timing each one. The **MCP server** layer adds the
 seven meta-tools and serves everything on one stdio connection. The **store**

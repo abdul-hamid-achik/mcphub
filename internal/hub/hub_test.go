@@ -51,6 +51,40 @@ func TestCallAndFindTool(t *testing.T) {
 	h.record(ctx, "live", "echo", "live__echo", 0, nil, 0, 0, nil)
 }
 
+func TestConnectMatchingDoesNotActivateExcludedServers(t *testing.T) {
+	var allowedRequests atomic.Int32
+	allowed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		allowedRequests.Add(1)
+		http.Error(w, "fixture unavailable", http.StatusServiceUnavailable)
+	}))
+	defer allowed.Close()
+
+	var excludedRequests atomic.Int32
+	excluded := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		excludedRequests.Add(1)
+		http.Error(w, "must remain inactive", http.StatusServiceUnavailable)
+	}))
+	defer excluded.Close()
+
+	h := New(&config.Config{Servers: map[string]config.Server{
+		"allowed":  {URL: allowed.URL, Transport: "http", Enabled: true},
+		"excluded": {URL: excluded.URL, Transport: "http", Enabled: true},
+	}}, nil, nil)
+	h.ConnectMatching(context.Background(), func(name string) bool { return name == "allowed" })
+	defer h.Close()
+
+	downstreams := h.Downstreams()
+	if len(downstreams) != 1 || downstreams[0].Name != "allowed" {
+		t.Fatalf("scoped downstreams = %#v, want only allowed", downstreams)
+	}
+	if allowedRequests.Load() == 0 {
+		t.Fatal("allowed server was not activated")
+	}
+	if got := excludedRequests.Load(); got != 0 {
+		t.Fatalf("excluded server received %d requests", got)
+	}
+}
+
 func recordingHub(t *testing.T) (*Hub, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
@@ -566,16 +600,19 @@ func TestFinalizeCallMarshalAndStoreFailuresFailOpen(t *testing.T) {
 	})
 }
 
-func TestCallRetrySuccessUsesBoundedFinalizer(t *testing.T) {
+func TestCallDoesNotReplayUnknownOutcome(t *testing.T) {
 	st, _ := openHubStore(t)
-	original := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("retry", 500)}}}
 	downstream := mcp.NewServer(&mcp.Implementation{Name: "retry", Version: "1"}, nil)
+	var downstreamCalls atomic.Int32
 	downstream.AddTool(
-		&mcp.Tool{Name: "large", InputSchema: map[string]any{"type": "object"}},
-		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) { return original, nil },
+		&mcp.Tool{Name: "effect", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			downstreamCalls.Add(1)
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "effect completed"}}}, nil
+		},
 	)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return downstream }, nil)
-	var failedFirstCall atomic.Bool
+	var droppedFirstResponse atomic.Bool
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -584,8 +621,13 @@ func TestCallRetrySuccessUsesBoundedFinalizer(t *testing.T) {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		if bytes.Contains(body, []byte(`"method":"tools/call"`)) && failedFirstCall.CompareAndSwap(false, true) {
-			http.Error(w, "forced transport failure", http.StatusInternalServerError)
+		if bytes.Contains(body, []byte(`"method":"tools/call"`)) && droppedFirstResponse.CompareAndSwap(false, true) {
+			// Execute the downstream request, then discard its successful response.
+			// From the caller's perspective this is a transport failure after the
+			// effect may already have happened.
+			recorder := httptest.NewRecorder()
+			mcpHandler.ServeHTTP(recorder, r)
+			http.Error(w, "response lost after effect", http.StatusInternalServerError)
 			return
 		}
 		mcpHandler.ServeHTTP(w, r)
@@ -602,15 +644,24 @@ func TestCallRetrySuccessUsesBoundedFinalizer(t *testing.T) {
 	h := New(cfg, st, nil)
 	h.Connect(context.Background())
 	defer h.Close()
-	got, err := h.Call(context.Background(), "retry", "large", nil)
+	got, err := h.Call(context.Background(), "retry", "effect", nil)
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || !strings.Contains(err.Error(), "request was not retried") {
+		t.Fatalf("Call() result = %#v, %v; want bounded outcome-unknown error", got, err)
+	}
+	if got != nil {
+		t.Fatalf("uncertain call returned a result: %#v", got)
+	}
+	if calls := downstreamCalls.Load(); calls != 1 {
+		t.Fatalf("downstream effect calls = %d, want exactly 1", calls)
+	}
+	if d := h.downstream("retry"); d == nil || !d.Connected() {
+		t.Fatalf("connection was not restored for future calls: %#v", d)
+	}
+	totals, err := st.Totals(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !failedFirstCall.Load() {
-		t.Fatal("test did not exercise the reconnect retry path")
-	}
-	receipt, ok := got.StructuredContent.(resultReceipt)
-	if !ok || receipt.CallID == "" {
-		t.Fatalf("retry success bypassed bounded finalizer: %#v", got.StructuredContent)
+	if totals.Calls != 1 || totals.Errors != 1 {
+		t.Fatalf("telemetry calls=%d errors=%d, want 1/1", totals.Calls, totals.Errors)
 	}
 }

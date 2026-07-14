@@ -89,6 +89,58 @@ func TestHandleSearchToolsEmpty(t *testing.T) {
 	}
 }
 
+func TestHandleResolveToolRequiresContext(t *testing.T) {
+	s := testServer(t)
+	res, out, err := s.handleResolveTool(context.Background(), nil, resolveToolInput{Query: "  the  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(textContent(res), "query must describe") {
+		t.Fatalf("unexpected result: %s", textContent(res))
+	}
+	if out.(map[string]any)["recommendation"] != nil {
+		t.Fatalf("blank context recommendation = %#v", out)
+	}
+}
+
+func TestSummarizeInputSchemaIsBoundedAndDeterministic(t *testing.T) {
+	required := make([]any, 0, maxResolveTemplateFields+20)
+	properties := map[string]any{}
+	for i := 0; i < maxResolveTemplateFields+20; i++ {
+		name := fmt.Sprintf("field_%03d", i)
+		required = append(required, name)
+		properties[name] = map[string]any{"type": "string"}
+	}
+	gotRequired, template, truncated := summarizeInputSchema(map[string]any{
+		"type": "object", "required": required, "properties": properties,
+	})
+	if !truncated || len(gotRequired) != maxResolveTemplateFields || len(template) != maxResolveTemplateFields {
+		t.Fatalf("schema summary required=%d template=%d truncated=%t", len(gotRequired), len(template), truncated)
+	}
+	if gotRequired[0] != "field_000" || gotRequired[len(gotRequired)-1] != "field_047" {
+		t.Fatalf("required field order changed: %v", gotRequired)
+	}
+	nameBytes := 0
+	for name := range template {
+		nameBytes += len(name)
+	}
+	if nameBytes > maxResolveFieldNamesBytes {
+		t.Fatalf("template field names use %d bytes, max %d", nameBytes, maxResolveFieldNamesBytes)
+	}
+
+	_, hugeTemplate, hugeTruncated := summarizeInputSchema(json.RawMessage(strings.Repeat(" ", maxResolveSchemaInspectBytes+1)))
+	if !hugeTruncated || len(hugeTemplate) != 0 {
+		t.Fatalf("oversized schema summary = %#v truncated=%t", hugeTemplate, hugeTruncated)
+	}
+
+	_, unknownTemplate, unknownTruncated := summarizeInputSchema(struct {
+		Payload string `json:"payload"`
+	}{Payload: strings.Repeat("x", maxResolveSchemaInspectBytes+1)})
+	if !unknownTruncated || len(unknownTemplate) != 0 {
+		t.Fatalf("arbitrary schema summary = %#v truncated=%t", unknownTemplate, unknownTruncated)
+	}
+}
+
 func TestHandleDescribeToolNotFound(t *testing.T) {
 	s := testServer(t)
 	res, _, err := s.handleDescribeTool(context.Background(), nil, describeInput{Tool: "ghost__nope"})

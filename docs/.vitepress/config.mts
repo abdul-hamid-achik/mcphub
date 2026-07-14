@@ -80,6 +80,7 @@ export default defineConfig({
         items: [
           { text: 'Gateway & namespacing', link: '/guide/concepts' },
           { text: 'Lazy mode & pinning', link: '/guide/lazy-mode' },
+          { text: 'Contextual routing', link: '/guide/contextual-routing' },
           { text: 'Sync', link: '/guide/sync' },
           { text: 'Intelligence', link: '/guide/intelligence' },
         ],
@@ -94,6 +95,7 @@ export default defineConfig({
           { text: 'Concepts', link: '/guide/concepts' },
           { text: 'Sync to your agents', link: '/guide/sync' },
           { text: 'Lazy mode & pinning', link: '/guide/lazy-mode' },
+          { text: 'Contextual routing', link: '/guide/contextual-routing' },
           { text: 'Oversized results', link: '/guide/results' },
           { text: 'Intelligence', link: '/guide/intelligence' },
           { text: 'Secrets via tvault', link: '/guide/secrets' },
@@ -101,6 +103,7 @@ export default defineConfig({
           { text: 'Studio (TUI)', link: '/guide/studio' },
           { text: 'Agent harnesses', link: '/guide/harnesses' },
           { text: 'Connect Bob', link: '/guide/bob' },
+          { text: 'Fetch with Hitspec', link: '/guide/hitspec' },
           { text: 'Troubleshooting', link: '/guide/troubleshooting' },
         ],
       },

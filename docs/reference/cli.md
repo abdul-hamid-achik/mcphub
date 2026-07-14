@@ -127,6 +127,7 @@ its args; for a remote one pass `--url` instead.
 mcphub add codemap codemap serve            # stdio server
 mcphub add ctx7 --url https://mcp.ctx7.io   # remote (http) server
 mcphub add db pg-mcp --env DSN=postgres://… --tag data
+mcphub add web web-mcp --use-when "capture a URL as Markdown"
 mcphub add gh gh-mcp --vault github         # secrets injected via tvault
 ```
 
@@ -137,6 +138,7 @@ mcphub add gh gh-mcp --vault github         # secrets injected via tvault
 | `--description <d>` | Human description. |
 | `--env K=V` | Environment variable (repeatable). |
 | `--tag <t>` | Tag (repeatable). |
+| `--use-when <hint>` | Natural-language routing hint used by lazy discovery (repeatable, max 8). |
 | `--vault <p>` | tvault project to inject secrets from at spawn. |
 | `--vault-only <k>` | Inject only these secret keys (repeatable). |
 | `--enabled` | Add the server enabled (the default; accepted for compatibility with ecosystem docs). |
@@ -547,7 +549,11 @@ The gateway also exposes seven management meta-tools to connected agents:
 [pinned](#pin) tools are the only tools advertised. `mcphub_get_result` accepts
 `{callId, cursor}` and returns a base64 page; continue with `nextCursor` until
 `done` is true. See the [meta-tools reference](/reference/meta-tools) for each
-tool's inputs and outputs.
+tool's inputs and outputs. In lazy mode the initialization instructions also
+carry a compact, scope-aware summary that prefers `use_when`, then falls back
+to a server description or tags; exact tool scopes list only their allowed
+tool names. `mcphub_resolve_tool` uses the catalog metadata to route a full
+task description to an unpinned tool.
 
 ---
 

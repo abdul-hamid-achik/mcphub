@@ -1,11 +1,11 @@
 <script setup lang="ts">
 // The product thesis, drawn: many MCP servers, one gateway, one connection.
 const servers = [
-  { name: 'codemap', color: '#2dd4bf' },
-  { name: 'vecgrep', color: '#38bdf8' },
-  { name: 'github', color: '#a78bfa' },
+  { name: 'hitspec', color: '#2dd4bf' },
+  { name: 'cortex', color: '#38bdf8' },
   { name: 'bob', color: '#fb7185' },
-  { name: 'obsidian', color: '#a3e635' },
+  { name: 'codemap', color: '#a78bfa' },
+  { name: 'vecgrep', color: '#a3e635' },
   { name: 'postgres', color: '#fdba74' },
 ]
 const agents = ['Claude Code', 'Codex', 'opencode', 'Copilot CLI', 'Gemini CLI', 'Crush']
@@ -22,11 +22,11 @@ const cablePath = (i: number) =>
       <div class="pb-toolbar">
         <span class="pb-led" aria-hidden="true" />
         <span class="pb-title">patch bay — live topology</span>
-        <span class="pb-note">n servers · 1 stdio connection</span>
+        <span class="pb-note">pinned + on-demand · 1 stdio connection</span>
       </div>
-      <div class="pb-scroll">
+      <div class="pb-scroll" tabindex="0" role="group" aria-label="Scrollable gateway topology">
         <svg viewBox="0 0 960 400" role="img" class="pb-svg"
-          aria-label="Six MCP servers wired into the mcphub gateway, which exposes one connection to your agent">
+          aria-label="Six configured MCP servers, pinned or discoverable on demand, wired into the mcphub gateway, which exposes one connection to your agent">
           <!-- cables in -->
           <g v-for="(s, i) in servers" :key="'c' + s.name">
             <path :d="cablePath(i)" pathLength="250" class="cable-base" :stroke="s.color" />
@@ -98,6 +98,10 @@ const cablePath = (i: number) =>
 .pb-note { margin-left: auto; }
 
 .pb-scroll { overflow-x: auto; }
+.pb-scroll:focus-visible {
+  outline: 2px solid var(--mh-amber);
+  outline-offset: -2px;
+}
 .pb-svg { display: block; min-width: 720px; width: 100%; height: auto; padding: 8px 4px; }
 
 .mono { font-family: var(--vp-font-family-mono); }

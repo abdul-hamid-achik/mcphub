@@ -23,8 +23,10 @@ cleanly on exit.
 A header line shows the server/enabled/expose/agent counts, then three tabs:
 
 - **Servers** — every server in `mcphub.yaml`, each showing an on/off mark, a
-  pin marker (📌) for [pinned](/guide/lazy-mode) servers, its name, kind
-  (stdio or remote), and description. The cursor (`▶`) marks the current row.
+  `[pin]` marker for [pinned](/guide/lazy-mode) servers, its name, kind
+  (stdio or remote), discovery state, and description. The cursor (`▶`) marks
+  the current row. The selected server expands its `use_when` routing hints and
+  tags, so you can audit what an agent will match against without opening YAML.
 - **Agents** — each harness mcphub syncs into, with its type, mode, how many
   servers mcphub currently manages there, and its config path. Agents with
   [per-agent routing](/guide/routing) show their `servers`/`tools` scope on a
@@ -67,6 +69,36 @@ config:
 Toggling does **not** touch your agents. As with the CLI, you push the result to
 your harnesses with `s` in Studio, or [`mcphub sync`](/guide/sync) from the
 shell, once you're happy with the set.
+
+## Reading discovery state
+
+The Servers tab shows the **global configured exposure policy**, not a live
+connection check or one agent's route. That distinction matters in lazy mode:
+removing a pin should save context without making an eligible capability look
+lost. A tool is actually reachable only when its server is connected and the
+selected agent's `servers` / `tools` scope allows it. Direct-mode agents bypass
+gateway exposure and receive their enabled, in-scope servers directly.
+
+| State | Meaning |
+| --- | --- |
+| `advertised` | Policy advertises every allowed tool. In lazy mode this means the whole server is pinned; with `expose: all`, every enabled server has this state. Connection and agent scope still apply. |
+| `on-demand` | The server is enabled and unpinned. Once connected and in scope, its tools stay out of the up-front list but can be found through search/resolve. |
+| `mixed` | One or more exact tools are pinned; other allowed tools are eligible on demand once connected. |
+| `unavailable` | The server is disabled in the registry, so the gateway will not connect to it. |
+
+Move the cursor onto a server to preview its natural-language `use_when` hints.
+Studio keeps this to two terminal lines and shows `+N more` when needed; the
+full list remains in `mcphub.yaml` and `mcphub_list_servers`. Search and resolve
+index every hint alongside live tool metadata, so make them describe task
+signals an agent would actually have, such as “capture a public webpage as
+Markdown for research” or “inspect repository convergence before feature
+work.”
+
+Pressing `p` advertises every tool on the selected server. If the state was
+`mixed`, this upgrades the exact pins to a whole-server pin; press `p` again to
+remove all pins for that server. In lazy mode the status line confirms that an
+unpinned server remains eligible for on-demand discovery when connected and
+allowed by the agent's scope.
 
 ## Preview then apply: `s` → `a`
 

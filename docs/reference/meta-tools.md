@@ -26,9 +26,9 @@ The meta-tools are registered in **both** exposure modes:
 | Tool | What it does | Call it when |
 | --- | --- | --- |
 | [`mcphub_list_servers`](#mcphub-list-servers) | List downstream servers with enabled/connected state and tool counts. | You want to know what is behind the gateway. |
-| [`mcphub_search_tools`](#mcphub-search-tools) | Substring search across the aggregated tool catalog. | You know roughly what capability you need. |
+| [`mcphub_search_tools`](#mcphub-search-tools) | Ranked natural-language search across tool + server metadata. | You want to browse several capability candidates. |
 | [`mcphub_describe_tool`](#mcphub-describe-tool) | One tool's description and full JSON input schema. | You know the tool but not its arguments. |
-| [`mcphub_resolve_tool`](#mcphub-resolve-tool) | Best-tool recommendation with required fields and an argument template. | You want search + describe in one round trip. |
+| [`mcphub_resolve_tool`](#mcphub-resolve-tool) | Context router with match evidence, required fields, and an argument template. | A task starts or changes phase and you want the best hidden tool. |
 | [`mcphub_call_tool`](#mcphub-call-tool) | Invoke a downstream tool by name through the gateway. | Always, in lazy mode — this is how everything runs. |
 | [`mcphub_get_result`](#mcphub-get-result) | Page through an oversized result the gateway stored locally. | A call returned a `callId` receipt instead of the result. |
 | [`mcphub_stats`](#mcphub-stats) | Local usage intelligence: calls, errors, estimated token cost. | You want to know what this session (or any) has been costing. |
@@ -36,11 +36,11 @@ The meta-tools are registered in **both** exposure modes:
 ## The lazy-mode flow
 
 In lazy mode an agent works the catalog in a short loop —
-**search → describe → call → get_result**:
+**resolve/search → describe if needed → call → get_result**:
 
 ```
-mcphub_search_tools "semantic search"        # 1. discover: → vecgrep__vecgrep_search, ...
-mcphub_describe_tool vecgrep__vecgrep_search # 2. inspect: description + input schema
+mcphub_resolve_tool "find code by meaning"   # 1. route: → vecgrep__vecgrep_search + template
+mcphub_describe_tool vecgrep__vecgrep_search # 2. optional: inspect the complete schema
 mcphub_call_tool {server, tool, arguments}   # 3. invoke through the gateway
 mcphub_get_result {callId, cursor}           # 4. only if the result was oversized
 ```
@@ -52,9 +52,13 @@ mounted under their `server__tool` names even in lazy mode, and step 4 only
 happens when a result exceeded the configured
 [`response_budget`](/guide/results).
 
-The gateway's MCP instructions tell the connecting model it is in lazy mode and
-that the underlying tools *are* available, so a capable agent runs this loop
-proactively without being prompted.
+The gateway's MCP instructions tell the connecting model it is in lazy mode,
+that the underlying tools *are* available, and that it should resolve context
+at task start and phase changes. They also carry a bounded, scope-aware
+capability summary that prefers each server's `use_when`, then falls back to
+its description or tags. An exact tool allowlist lists only those tool names,
+so a capable harness can run this loop proactively without leaking broader
+out-of-scope capabilities.
 
 ## mcphub_list_servers
 
@@ -67,10 +71,15 @@ all. It is the tool-level counterpart of `mcphub list` on the CLI.
 
 ## mcphub_search_tools
 
-Searches the aggregated tool catalog by substring across tool names and
-descriptions, and returns the matching `server__tool` names (with server, tool,
-and description) so you can call them via `mcphub_call_tool` without loading
-every tool definition into context.
+Tokenizes a natural-language query and ranks the aggregated catalog across tool
+names, titles, descriptions, bounded top-level input field names, and server
+names, descriptions, tags, and `use_when` hints.
+It returns the matching `server__tool` names with routing evidence so you can
+call them through `mcphub_call_tool` without loading every definition. The
+optional `max_hits` defaults to 20 and is capped at 100; `count`, `returned`,
+and `truncated` make the count bound explicit. Queries are capped at 2,048
+bytes, and compact match metadata is also capped by a 12 KiB match-array
+budget; `byte_limited` and per-match `metadata_truncated` disclose those cuts.
 
 **When to call it:** whenever you need a capability and don't know (or don't
 want to guess) which downstream tool provides it. In lazy mode this is the
@@ -88,17 +97,34 @@ expects. Skip it when the argument shape is obvious or already known.
 
 ## mcphub_resolve_tool
 
-Finds the best tool for a task in **one** call: give it a natural-language
-query (optionally capping the number of hits considered) and it returns a
-single recommendation with its required fields and a ready-to-fill
-**argument template**, plus a list of alternatives and an `ambiguous` flag when
-several tools ranked equally. If nothing matches, it returns a hint to broaden
-the query or fall back to `mcphub_search_tools`.
+Finds the best tool for the current goal or activity in **one** call. The
+resolver uses the same intent-aware catalog ranking as search, then returns a
+single recommendation with `score`, `matched_terms`, server description,
+`use_when`, required fields, and a ready-to-fill **argument template**. It also
+returns ranked alternatives plus an explicit `status` (`confident`, `ambiguous`,
+or `no_match`). Weak term coverage and close scores remain ambiguous instead of
+turning any positive lexical hit into a clear route. `reason_codes`,
+`matched_fraction`, and `score_gap` explain the bounded decision. If nothing
+matches, it suggests different vocabulary, adding a `use_when` hint, or browsing
+with `mcphub_search_tools`.
 
-**When to call it:** when you want to go straight from intent to invocation —
-it replaces the separate search + describe round trips. Prefer
+Every response includes `contract_version` and a content-addressed
+`catalog_revision` for the connected, in-scope catalog. Harness caches should
+invalidate on revision changes and apply a short TTL to `no_match`.
+
+The resolver uses the same 2,048-byte query and compact-metadata bounds.
+Argument templates are capped at 48 fields / 2,048 field-name bytes; when
+`argument_template_truncated` is true, call `mcphub_describe_tool` for the full
+schema before invoking the recommendation. `alternatives_truncated` similarly
+signals a count or byte-bound alternative list.
+
+**When to call it:** proactively when a non-trivial task starts or changes
+phase, and whenever you want to go straight from intent to invocation. It
+replaces the separate search + describe round trips. Prefer
 `mcphub_search_tools` when you want to browse candidates yourself rather than
-accept a ranking.
+accept a ranking. Harness authors can use the
+[contextual routing integration contract](/guide/contextual-routing) to add
+model-driven or host-assisted discovery without hardcoding server mappings.
 
 ## mcphub_call_tool
 
@@ -112,6 +138,10 @@ Small results pass through unchanged. Oversized results return a lossless
 retrieval receipt for `mcphub_get_result` instead (see below). Every call is
 timed and recorded to the local [intelligence store](/guide/intelligence),
 exactly like directly mounted `server__tool` calls.
+
+Transport failures are reported as **outcome unknown**. mcphub reconnects the
+server for future calls but deliberately does not replay the request: receiving
+no response does not prove that a downstream mutation did not happen.
 
 **When to call it:** in lazy mode, always — this is how every non-pinned
 downstream tool runs. In `expose: all` it still works, but agents normally call
@@ -182,5 +212,5 @@ how it was invoked — mounted `server__tool` name or `mcphub_call_tool` — so
   contract behind `mcphub_get_result`.
 - [Intelligence](/guide/intelligence) — what the store records and how
   `mcphub stats` reports it.
-- [Configuration reference](/reference/config) — `expose`, `pin`,
+- [Configuration reference](/reference/config) — `expose`, `pin`, `use_when`,
   `response_budget`, `verbatim`, and per-agent `servers`/`tools` routing.

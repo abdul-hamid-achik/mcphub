@@ -39,7 +39,8 @@ mcphub fixes both halves:
 - **Two sync modes** — `gateway` (the agent sees only mcphub) or `direct` (every enabled server
   written verbatim), chosen per agent.
 - **Lazy exposure + pinning** — `expose: lazy` advertises only seven management tools and serves
-  the rest on demand (huge token savings); `pin: [server__tool]` keeps your most-used tools mounted.
+  the rest on demand (huge token savings); context-aware routing uses each server's `use_when`
+  hints to find unpinned tools, while `pin: [server__tool]` keeps hot tools mounted.
 - **Bounded, lossless results** — oversized MCP responses are stored locally for 24 hours and
   replaced with a compact `callId`; agents recover the exact serialized result in bounded pages
   with `mcphub_get_result`. Small results pass through unchanged, and `verbatim: true` or
@@ -155,8 +156,8 @@ version: 1
 
 # How the gateway advertises tools to agents:
 #   all  (default) — mount every downstream tool as 'server__tool'
-#   lazy           — advertise only mcphub's meta-tools; agents discover via
-#                    mcphub_search_tools and invoke through mcphub_call_tool (saves tokens)
+#   lazy           — advertise only mcphub's meta-tools; agents resolve or search
+#                    capabilities and invoke through mcphub_call_tool (saves tokens)
 expose: all
 
 servers:
@@ -167,6 +168,7 @@ servers:
     enabled: true
     description: Code knowledge graph
     tags: [code, search]
+    use_when: ["understand symbols, references, and structure in a codebase"]
   vecgrep:
     command: vecgrep
     args: [serve, --mcp]
@@ -175,12 +177,14 @@ servers:
     enabled: true
     description: Semantic code search
     tags: [code, search]
+    use_when: ["find code by meaning when exact symbol names are unknown"]
   bob:
     command: /Users/abdulachik/go/bin/bob
     args: [mcp, serve, --allow-any-workspace]
     enabled: true
     description: Deterministic repository factory and lifecycle reconciler
     tags: [builder, code]
+    use_when: ["inspect or plan a repository feature before implementation"]
   glyph:
     command: glyph
     args: [mcp]
@@ -226,6 +230,10 @@ agents:
     # Per-agent routing (optional) — restrict what this agent can reach:
     # servers: [codemap, vecgrep]   # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__codemap_find]  # gateway-only: only these server__tool names (omit = all; [] = none)
+  local-agent:
+    type: local-agent
+    path: ~/.config/local-agent/config.yaml
+    mode: gateway
 ```
 
 Each `server` is either a stdio server (`command` + `args` + optional `env`) **or** a remote
@@ -256,13 +264,17 @@ agents:
 ```
 
 In gateway mode a scoped agent's harness entry is launched as `mcphub mcp serve --agent <name>`,
-so the gateway advertises only that subset and refuses out-of-scope calls. In direct mode only
-the listed servers are written. An agent with no `servers`/`tools` (omitted) sees everything,
+so excluded servers are not started or contacted, the gateway advertises only that subset, and
+out-of-scope calls are refused. In direct mode only the listed servers are written. An agent with no `servers`/`tools` (omitted) sees everything,
 as before; an explicit empty list (`servers: []` / `tools: []`) means **none** — a deliberately
-minimal agent. This is curation (a leaner context), not a hard security boundary.
+minimal agent. This is least activation and curation, not an OS security boundary.
 
 Set top-level `expose: lazy` to have the gateway advertise only its meta-tools (saving tokens —
-agents discover with `mcphub_search_tools` and run a tool with `mcphub_call_tool`), and use
+agents route current task context with `mcphub_resolve_tool`, browse with
+`mcphub_search_tools`, and run a tool with `mcphub_call_tool`). Add concise
+`use_when` phrases to each server so the resolver can connect user intent to narrowly named tools.
+Harness authors can follow the [contextual routing contract](https://mcphubcli.dev/guide/contextual-routing)
+to trigger discovery at task and phase changes without hardcoding server mappings. Use
 `vault: <project>` on a server (optionally narrowed with `vault_only` / `vault_prefix`) to inject
 a [TinyVault](https://github.com/abdul-hamid-achik/tinyvault) project's secrets at spawn instead
 of writing them into `mcphub.yaml`.

@@ -69,7 +69,24 @@ func New(cfg *config.Config, st *store.Store, logger *log.Logger) *Hub {
 // that fails to start is recorded with its error and skipped, never aborting
 // the whole gateway.
 func (h *Hub) Connect(ctx context.Context) {
+	h.ConnectMatching(ctx, nil)
+}
+
+// ConnectMatching replaces the current downstream set with enabled servers
+// accepted by allow. A nil allow function connects every enabled server. This
+// lets scoped gateway frontends enforce least activation before commands,
+// network connections, or secret resolution occur.
+func (h *Hub) ConnectMatching(ctx context.Context, allow func(string) bool) {
 	names := h.cfg.EnabledServers()
+	if allow != nil {
+		filtered := names[:0]
+		for _, name := range names {
+			if allow(name) {
+				filtered = append(filtered, name)
+			}
+		}
+		names = filtered
+	}
 	results := make([]*Downstream, len(names))
 	var wg sync.WaitGroup
 	for i, name := range names {
@@ -278,8 +295,8 @@ func (h *Hub) forward(d *Downstream, toolName, namespaced string) mcp.ToolHandle
 // the single code path used by directly mounted, pinned, and lazy meta-tool
 // calls.
 // ReconnectOne immediately reconnects a single downstream by name. Returns
-// true if the reconnection succeeded. Used by Call() on a transport failure
-// (SPEC §8.1: immediate reconnect instead of waiting for the background watcher).
+// true if the reconnection succeeded. Call uses this after a transport failure
+// to restore future availability, but never repeats the uncertain operation.
 func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
 	srv, ok := h.cfg.Servers[server]
 	if !ok {
@@ -320,22 +337,16 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	res, callErr := d.session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 	if callErr != nil {
 		h.record(ctx, server, tool, namespaced, time.Since(start), callErr, len(args), 0, res)
-		// Transport/protocol failure — the tool call never reached the
-		// downstream, so retrying is safe. Invalidate the stale session and
-		// attempt an immediate reconnect (SPEC §8.1: don't wait for the
-		// 30s background watcher).
+		// A transport/protocol failure does not prove the downstream skipped the
+		// operation: it may have completed and lost only the response. Reconnect
+		// immediately for future calls, but never replay an effect-unknown request
+		// without an explicit idempotency contract and caller-supplied key.
 		h.invalidateDownstream(server)
 		if h.ReconnectOne(ctx, server) {
-			h.log.Info("immediate reconnect succeeded, retrying call", "server", server, "tool", tool)
-			retryStart := time.Now()
-			res2, retryErr := h.retryCall(ctx, server, tool, args)
-			if retryErr != nil {
-				h.record(ctx, server, tool, namespaced, time.Since(retryStart), retryErr, len(args), 0, res2)
-				return nil, fmt.Errorf("call %s__%s failed after reconnect: %w (reconnect succeeded but retry failed)", server, tool, retryErr)
-			}
-			return h.finalizeCall(ctx, server, tool, namespaced, time.Since(retryStart), len(args), res2), nil
+			h.log.Info("immediate reconnect succeeded; uncertain call was not replayed", "server", server, "tool", tool)
+			return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (connection restored for future calls; request was not retried)", server, tool, callErr)
 		}
-		return nil, fmt.Errorf("call %s__%s failed: %w (reconnect attempted but failed; the background watcher will retry)", server, tool, callErr)
+		return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (reconnect failed; request was not retried and the background watcher will restore the connection)", server, tool, callErr)
 	}
 	return h.finalizeCall(ctx, server, tool, namespaced, time.Since(start), len(args), res), nil
 }
@@ -351,15 +362,6 @@ func (h *Hub) invalidateDownstream(name string) {
 			break
 		}
 	}
-}
-
-// retryCall performs a single CallTool on a freshly reconnected downstream.
-func (h *Hub) retryCall(ctx context.Context, server, tool string, args json.RawMessage) (*mcp.CallToolResult, error) {
-	d := h.downstream(server)
-	if d == nil || !d.Connected() {
-		return nil, fmt.Errorf("server %q not connected after reconnect", server)
-	}
-	return d.session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 }
 
 // downstream looks up a connected-or-not downstream by name.
@@ -400,8 +402,8 @@ type resultReceipt struct {
 	NextAction    string `json:"nextAction,omitempty"`
 }
 
-// finalizeCall is the one successful-call exit for initial and reconnect
-// attempts. It marshals the complete result once for telemetry and spooling.
+// finalizeCall is the one successful-call exit. It marshals the complete result
+// once for telemetry and spooling.
 func (h *Hub) finalizeCall(ctx context.Context, server, tool, namespaced string, dur time.Duration, argsBytes int, res *mcp.CallToolResult) *mcp.CallToolResult {
 	payload, err := json.Marshal(res)
 	resultBytes := 0

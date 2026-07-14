@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
@@ -52,6 +53,55 @@ func (s *agentScope) allowsNS(namespaced string) bool {
 		return false
 	}
 	return s.allows(namespaced[:i], namespaced[i+2:])
+}
+
+// allowedToolNames returns the exact tool names allowed for server when this
+// scope has a tool allowlist. The second result is false when tools are not
+// restricted, which is distinct from an explicit empty allowlist.
+func (s *agentScope) allowedToolNames(server string) ([]string, bool) {
+	if s == nil || s.tools == nil {
+		return nil, false
+	}
+	if !s.allowsServer(server) {
+		return []string{}, true
+	}
+	prefix := server + "__"
+	tools := make([]string, 0)
+	for namespaced, allowed := range s.tools {
+		if allowed && strings.HasPrefix(namespaced, prefix) && s.allowsNS(namespaced) {
+			tools = append(tools, strings.TrimPrefix(namespaced, prefix))
+		}
+	}
+	sort.Strings(tools)
+	return tools, true
+}
+
+// effectivePins projects global pins into this agent's scope. Exact tool
+// scopes expand a whole-server pin into the exact names that can really mount.
+func (s *agentScope) effectivePins(cfg *config.Config) []string {
+	if cfg == nil {
+		return []string{}
+	}
+	if s == nil {
+		return append([]string(nil), cfg.Pin...)
+	}
+	if s.tools == nil {
+		pins := make([]string, 0, len(cfg.Pin))
+		for _, pin := range cfg.Pin {
+			if s.allowsServer(config.PinServer(pin)) {
+				pins = append(pins, pin)
+			}
+		}
+		return pins
+	}
+	pins := make([]string, 0, len(s.tools))
+	for namespaced, allowed := range s.tools {
+		if allowed && s.allowsNS(namespaced) && cfg.PinMatches(namespaced) {
+			pins = append(pins, namespaced)
+		}
+	}
+	sort.Strings(pins)
+	return pins
 }
 
 // scopeFor builds the agentScope for the given agent name. An empty agentName

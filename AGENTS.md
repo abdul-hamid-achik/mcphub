@@ -76,7 +76,7 @@ Package boundaries are part of the contract — keep them clean.
 |---|---|
 | `cmd/mcphub` | Entrypoint only. Defers to `internal/cli.Execute()`. |
 | `internal/cli` | Cobra command tree (`root.go`) plus one file per surface: `commands.go` (init/list/enable/disable/stats/doctor), `manage.go` (add/remove/groups/use), `discover.go` (`init --from-agents` import), `sync.go`, `serve.go`, `studio.go`. Handlers stay thin; logic lives in the packages below. |
-| `internal/config` | `mcphub.yaml` model, load/save, `Validate()`, path/`~` expansion, and the `expose: all\|lazy` mode (`Lazy()`). The single source of truth — the **registry** every other package reads. |
+| `internal/config` | `mcphub.yaml` model, load/save, `Validate()`, path/`~` expansion, per-server `use_when` routing hints, and the `expose: all\|lazy` mode (`Lazy()`). The single source of truth — the **registry** every other package reads. |
 | `internal/hub` | The aggregating **proxy** ("gateway" half). Connects to each enabled downstream as an MCP client, discovers tools, and mounts them under `server__tool`. `Call` is the shared invoke path for mounted and lazy calls: it records telemetry, reconnects safe failures, and applies the bounded-lossless result policy once after success. |
 | `internal/mcp` | mcphub's own MCP stdio server. Registers seven management tools (`list_servers`, `search_tools`, `describe_tool`, `resolve_tool`, `call_tool`, `get_result`, `stats`); in `expose: all` it also mounts every downstream tool, while lazy mode mounts only management plus pins. |
 | `internal/harness` | Agent-config **adapters**: `claude.go`, `opencode.go`, `codex.go` (`[mcp_servers.*]` TOML), `crush.go`, `forge.go`, `hermes.go`, `copilot.go`, `qwen.go`, `gemini.go`, `kilo.go` (JSONC), `kimi.go` (TOML). `harness.go` holds the `Adapter` interface (`List` + `Apply`), `DefaultPath`, format-neutral `MCPServer`, diff planning, and backup; `jsonutil.go` preserves unknown keys and strips JSONC comments. |
@@ -182,7 +182,7 @@ starter):
 ```yaml
 version: 1
 servers:
-  <name>: { command: <cmd>, args: [..], env: {K: V}, enabled: true, description: "...", tags: [..] }   # stdio
+  <name>: { command: <cmd>, args: [..], env: {K: V}, enabled: true, description: "...", tags: [..], use_when: [..] }   # stdio
   <name>: { url: "https://...", transport: http|sse, enabled: false }                                  # remote
 groups:
   <name>: [server, ...]
