@@ -38,13 +38,17 @@ mcphub fixes both halves:
   already have.
 - **Two sync modes** — `gateway` (the agent sees only mcphub) or `direct` (every enabled server
   written verbatim), chosen per agent.
-- **Lazy exposure + pinning** — `expose: lazy` advertises only seven management tools and serves
+- **Lazy exposure + pinning** — `expose: lazy` advertises only eight management tools and serves
   the rest on demand (huge token savings); context-aware routing uses each server's `use_when`
   hints to find unpinned tools, while `pin: [server__tool]` keeps hot tools mounted.
 - **Bounded, lossless results** — oversized MCP responses are stored locally for 24 hours and
   replaced with a compact `callId`; agents recover the exact serialized result in bounded pages
   with `mcphub_get_result`. Small results pass through unchanged, and `verbatim: true` or
   `response_budget: "0"` opts out.
+- **Long-running calls** — `mcphub_call_tool` accepts `detach: true` for downstream tools that
+  would outlive the client's tool-call timeout (repo indexing, big scans): the call keeps running
+  in the background and returns a `callId` immediately, collected later with `mcphub_poll_result`.
+  An optional `timeout_ms` bounds any call, clamped by the `call_timeout` config (default 30m).
 - **Local intelligence** — every proxied call is recorded to SQLite, so `mcphub stats`
   (`--tools`, `--recent`, `--since 7d`) and `mcphub status` (per-agent **sync drift** + flags
   enabled-but-unused servers) tell you which servers earn their context budget.

@@ -37,7 +37,7 @@ features:
     linkText: How sync stays safe
   - icon: "04"
     title: Token savings by design
-    details: Gateway mode loads one server instead of a dozen tool lists. <code>expose&#58; lazy</code> goes further — seven meta-tools advertised, everything else discovered on demand.
+    details: Gateway mode loads one server instead of a dozen tool lists. <code>expose&#58; lazy</code> goes further — eight meta-tools advertised, everything else discovered on demand.
     link: /guide/lazy-mode
     linkText: Lazy mode & pinning
   - icon: "05"

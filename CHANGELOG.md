@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
 ### Added
 
+- **Detached long-running calls.** `mcphub_call_tool` accepts `detach: true` for
+  downstream tools that can outlive the client's tool-call timeout (repository
+  indexing, large scans): the gateway starts the call in the background and
+  returns an `accepted` receipt with a `callId` immediately. The new
+  `mcphub_poll_result` meta-tool reports `pending`/`failed`/`unknown` and, once
+  the call completes, hands back the tool result exactly as a synchronous call
+  would have (oversized results as stored-result receipts). The in-memory
+  registry is bounded (8 in flight, 128 retained for 24 hours) and does not
+  survive a gateway restart. An optional `timeout_ms` argument bounds any call,
+  clamped by the new `call_timeout` config key (default 30m).
 - **Context-aware lazy discovery.** Servers can declare bounded `use_when`
   routing hints, and `mcphub_resolve_tool` / `mcphub_search_tools` now rank
   full natural-language task context across tool metadata (including bounded

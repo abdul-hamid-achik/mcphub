@@ -139,7 +139,7 @@ The feedback loop that makes the hub *smart*:
 ## Pinning from stats: `pin --top`
 
 Intelligence pairs directly with [lazy exposure](/guide/concepts). Under
-`expose: lazy` the gateway advertises only its seven meta-tools and agents
+`expose: lazy` the gateway advertises only its eight meta-tools and agents
 discover the rest on demand — a big token saving, at the cost of one discovery
 hop. `mcphub pin` keeps chosen tools mounted directly so agents call them
 without going through `mcphub_search_tools` first, and `--top` picks them

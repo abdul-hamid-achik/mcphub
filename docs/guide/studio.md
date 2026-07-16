@@ -119,7 +119,7 @@ applying.
 ## Flipping exposure: `x`
 
 `x` toggles the top-level `expose` field in `mcphub.yaml` between `all` (every
-downstream tool mounted as `server__tool`) and `lazy` (only the seven gateway
+downstream tool mounted as `server__tool`) and `lazy` (only the eight gateway
 meta-tools advertised, with the rest discovered on demand). See
 [Exposure: all vs. lazy](/guide/concepts#exposure-all-vs-lazy) for what each
 mode costs and buys you. As with a pin change, an exposure flip takes effect

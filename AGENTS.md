@@ -78,7 +78,7 @@ Package boundaries are part of the contract — keep them clean.
 | `internal/cli` | Cobra command tree (`root.go`) plus one file per surface: `commands.go` (init/list/enable/disable/stats/doctor), `manage.go` (add/remove/groups/use), `discover.go` (`init --from-agents` import), `sync.go`, `serve.go`, `studio.go`. Handlers stay thin; logic lives in the packages below. |
 | `internal/config` | `mcphub.yaml` model, load/save, `Validate()`, path/`~` expansion, per-server `use_when` routing hints, and the `expose: all\|lazy` mode (`Lazy()`). The single source of truth — the **registry** every other package reads. |
 | `internal/hub` | The aggregating **proxy** ("gateway" half). Connects to each enabled downstream as an MCP client, discovers tools, and mounts them under `server__tool`. `Call` is the shared invoke path for mounted and lazy calls: it records telemetry, reconnects safe failures, and applies the bounded-lossless result policy once after success. |
-| `internal/mcp` | mcphub's own MCP stdio server. Registers seven management tools (`list_servers`, `search_tools`, `describe_tool`, `resolve_tool`, `call_tool`, `get_result`, `stats`); in `expose: all` it also mounts every downstream tool, while lazy mode mounts only management plus pins. |
+| `internal/mcp` | mcphub's own MCP stdio server. Registers eight management tools (`list_servers`, `search_tools`, `describe_tool`, `resolve_tool`, `call_tool`, `get_result`, `poll_result`, `stats`); in `expose: all` it also mounts every downstream tool, while lazy mode mounts only management plus pins. |
 | `internal/harness` | Agent-config **adapters**: `claude.go`, `opencode.go`, `codex.go` (`[mcp_servers.*]` TOML), `crush.go`, `forge.go`, `hermes.go`, `copilot.go`, `qwen.go`, `gemini.go`, `kilo.go` (JSONC), `kimi.go` (TOML). `harness.go` holds the `Adapter` interface (`List` + `Apply`), `DefaultPath`, format-neutral `MCPServer`, diff planning, and backup; `jsonutil.go` preserves unknown keys and strips JSONC comments. |
 | `internal/syncer` | The reconcile engine shared by `mcphub sync` and Studio. `Reconcile` returns per-agent plans or applies them; `Desired` computes the gateway/direct server set. |
 | `internal/store` | The local SQLite intelligence layer (pure-Go `modernc.org/sqlite`, no cgo): call telemetry, sync/ownership state, and exact oversized MCP results retained for 24 hours under opaque call IDs. Generated queries live in `internal/store/db`. |
@@ -91,11 +91,16 @@ Package boundaries are part of the contract — keep them clean.
 ### Data flow in one paragraph
 
 `mcphub mcp serve` loads and validates config, opens one SQLite store shared by `hub` and `mcp`,
-connects enabled downstreams, registers the seven management tools, mounts allowed downstream
+connects enabled downstreams, registers the eight management tools, mounts allowed downstream
 tools, and serves stdio. Every successful downstream result is finalized once in `hub.Call`:
 small/verbatim/unlimited results pass through unchanged; oversized results are persisted before a
 compact recovery receipt is returned. `mcphub_get_result` scope-checks the stored server/tool and
-pages the exact serialized result without loading the whole payload.
+pages the exact serialized result without loading the whole payload. Long-running calls take the
+detached path instead: `mcphub_call_tool {detach: true}` starts the downstream call in the
+background under a `call_timeout`-clamped deadline and returns a `callId` at once; the hub tracks
+it in a bounded in-memory registry (`internal/hub/async.go`) and `mcphub_poll_result` reports
+pending/failed or hands back the finalized result (oversized ones as spool receipts, as above).
+The registry is memory-only — a gateway restart makes old detached callIds report `unknown`.
 
 ## Conventions
 

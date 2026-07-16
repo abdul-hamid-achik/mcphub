@@ -80,6 +80,7 @@ type Config struct {
 	Groups         map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
 	Agents         map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
 	ConnectTimeout string              `yaml:"connect_timeout,omitempty" toml:"connect_timeout,omitempty" json:"connect_timeout,omitempty"` // per-downstream connect timeout, e.g. "30s", "60s" (default 30s)
+	CallTimeout    string              `yaml:"call_timeout,omitempty" toml:"call_timeout,omitempty" json:"call_timeout,omitempty"`          // ceiling for one downstream call, e.g. "10m", "1h" (default 30m); clamps timeout_ms and bounds detached calls
 	ResponseBudget string              `yaml:"response_budget,omitempty" toml:"response_budget,omitempty" json:"response_budget,omitempty"` // max serialized result size before lossless spooling, e.g. "32KB" (default 32KB, "0" = unlimited)
 	Verbatim       bool                `yaml:"verbatim,omitempty" toml:"verbatim,omitempty" json:"verbatim,omitempty"`                      // pass downstream results through without bounded-result spooling
 }
@@ -89,7 +90,7 @@ const (
 	// ExposeAll mounts every downstream tool as `server__tool`. Simple, but a
 	// large fleet means a large tool list in every agent's context.
 	ExposeAll = "all"
-	// ExposeLazy advertises only mcphub's seven management tools. The agent routes
+	// ExposeLazy advertises only mcphub's eight management tools. The agent routes
 	// context with mcphub_resolve_tool (or browses with mcphub_search_tools) and
 	// invokes through mcphub_call_tool, keeping context cost nearly constant.
 	ExposeLazy = "lazy"
@@ -627,6 +628,13 @@ func (c *Config) Validate() error {
 			problems = append(problems, fmt.Sprintf("connect_timeout %q: %v (try 30s, 60s, 2m)", c.ConnectTimeout, err))
 		}
 	}
+	if c.CallTimeout != "" {
+		if d, err := time.ParseDuration(c.CallTimeout); err != nil {
+			problems = append(problems, fmt.Sprintf("call_timeout %q: %v (try 10m, 30m, 1h)", c.CallTimeout, err))
+		} else if d <= 0 {
+			problems = append(problems, "call_timeout must be positive")
+		}
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid config:\n  - %s", strings.Join(problems, "\n  - "))
 	}
@@ -642,6 +650,20 @@ func (c *Config) ConnectTimeoutDuration() time.Duration {
 	d, err := time.ParseDuration(c.ConnectTimeout)
 	if err != nil {
 		return 30 * time.Second
+	}
+	return d
+}
+
+// CallTimeoutDuration returns the ceiling for a single downstream tool call,
+// defaulting to 30m when unset or invalid. It clamps a caller-supplied
+// timeout_ms and bounds how long a detached (background) call may run.
+func (c *Config) CallTimeoutDuration() time.Duration {
+	if c.CallTimeout == "" {
+		return 30 * time.Minute
+	}
+	d, err := time.ParseDuration(c.CallTimeout)
+	if err != nil || d <= 0 {
+		return 30 * time.Minute
 	}
 	return d
 }

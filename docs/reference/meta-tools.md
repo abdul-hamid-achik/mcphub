@@ -1,15 +1,15 @@
 ---
 title: Gateway meta-tools
-description: "Reference for the seven mcphub gateway meta-tools — list, search, describe, resolve, call, get_result, stats — and the lazy-mode discover-to-invoke flow."
+description: "Reference for the eight mcphub gateway meta-tools — list, search, describe, resolve, call, get_result, poll_result, stats — and the lazy-mode discover-to-invoke flow."
 ---
 
 # Gateway meta-tools
 
-The mcphub gateway (`mcphub mcp serve`) registers **seven management tools** of
+The mcphub gateway (`mcphub mcp serve`) registers **eight management tools** of
 its own, alongside whatever downstream tools it mounts. They let an agent
-inspect what is behind the gateway, discover a capability, invoke it, recover
-an oversized result, and read local usage intelligence — all over the same
-single stdio connection.
+inspect what is behind the gateway, discover a capability, invoke it (in the
+foreground or detached into the background), recover an oversized result, and
+read local usage intelligence — all over the same single stdio connection.
 
 The meta-tools are registered in **both** exposure modes:
 
@@ -31,6 +31,7 @@ The meta-tools are registered in **both** exposure modes:
 | [`mcphub_resolve_tool`](#mcphub-resolve-tool) | Context router with match evidence, required fields, and an argument template. | A task starts or changes phase and you want the best hidden tool. |
 | [`mcphub_call_tool`](#mcphub-call-tool) | Invoke a downstream tool by name through the gateway. | Always, in lazy mode — this is how everything runs. |
 | [`mcphub_get_result`](#mcphub-get-result) | Page through an oversized result the gateway stored locally. | A call returned a `callId` receipt instead of the result. |
+| [`mcphub_poll_result`](#mcphub-poll-result) | Check a detached (`detach: true`) call and collect its result. | You started a long-running call in the background. |
 | [`mcphub_stats`](#mcphub-stats) | Local usage intelligence: calls, errors, estimated token cost. | You want to know what this session (or any) has been costing. |
 
 ## The lazy-mode flow
@@ -143,6 +144,19 @@ Transport failures are reported as **outcome unknown**. mcphub reconnects the
 server for future calls but deliberately does not replay the request: receiving
 no response does not prove that a downstream mutation did not happen.
 
+Two optional arguments cover long-running downstream work:
+
+- **`detach: true`** — start the call in the background and return an
+  `accepted` receipt with a `callId` immediately, instead of holding the
+  request open. Use it for tools that can outlive the *client's* tool-call
+  timeout — repository indexing, large scans, batch jobs. Collect the outcome
+  with [`mcphub_poll_result`](#mcphub-poll-result). At most 8 detached calls
+  run at once.
+- **`timeout_ms`** — bound the call from the gateway side, clamped by the
+  [`call_timeout`](/reference/config) config (default 30m). On a synchronous
+  call it can only shorten the effective deadline (the client's own deadline
+  still applies); on a detached call it bounds the background execution.
+
 **When to call it:** in lazy mode, always — this is how every non-pinned
 downstream tool runs. In `expose: all` it still works, but agents normally call
 mounted tools by name instead.
@@ -185,6 +199,29 @@ error), and retrieval re-checks the stored server/tool against the calling
 agent's scope before returning any bytes. Full receipt and page shapes, opt-outs
 (`verbatim: true`, `response_budget: "0"`), and budget tuning are covered in
 [Bounded, lossless results](/guide/results).
+
+## mcphub_poll_result
+
+Checks on a detached call started with `mcphub_call_tool {detach: true}` and,
+once the downstream call has finished, hands back its result. Pass the
+`callId` from the `accepted` receipt:
+
+- while the downstream call is still running it returns `status: "pending"`
+  with an `elapsedMs` — poll again after a delay;
+- if the call failed it returns `status: "failed"` with the error text;
+- once complete it returns the **tool result itself**, exactly as a
+  synchronous call would have — an oversized result appears as a stored-result
+  receipt to page with `mcphub_get_result`. Re-polling a completed call is
+  idempotent for its retention window.
+
+Completed detached results are retained in memory for 24 hours (matching the
+result spool's retention) with a bounded registry; the registry does **not**
+survive a gateway restart, in which case an old `callId` reports
+`status: "unknown"` and the call must be re-run.
+
+**When to call it:** only after a detached `mcphub_call_tool` returned an
+`accepted` receipt. For `callId`s that came from a `"status": "stored"`
+receipt, use `mcphub_get_result` instead.
 
 ## mcphub_stats
 

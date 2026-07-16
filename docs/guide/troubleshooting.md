@@ -259,7 +259,7 @@ at all), or when you add/remove an *agent* or switch its `mode`.
 agent actually launched the gateway (some harnesses cache their tool list
 until restart) and that `mcphub mcp serve` run by hand doesn't print an
 error to stderr on startup. If it's a [lazy-exposed](/guide/concepts#exposure-all-vs-lazy)
-setup, remember the agent only sees the seven `mcphub_*` meta-tools plus any
+setup, remember the agent only sees the eight `mcphub_*` meta-tools plus any
 `pin`s — the rest are reached by routing task context through
 `mcphub_resolve_tool` (or browsing with `mcphub_search_tools`) and then
 `mcphub_call_tool`, by design, not a bug. If the right server never ranks,

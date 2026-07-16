@@ -59,6 +59,7 @@ expose: all             # or: lazy
 response_budget: 32KB   # complete serialized MCP result budget; 0 = unlimited
 verbatim: false         # true = never spool or replace downstream results
 connect_timeout: 30s    # per-downstream connect timeout (default 30s)
+call_timeout: 30m       # ceiling for one downstream call; clamps timeout_ms, bounds detached calls
 pin:                    # tools always mounted, even in lazy mode (optional)
   - codemap__codemap_semantic
 
@@ -78,11 +79,12 @@ agents:
 | Key | Type | Required | Description |
 | --- | --- | --- | --- |
 | `version` | int | yes | Config schema version. Currently `1`. |
-| `expose` | `all` \| `lazy` | no | Gateway tool exposure. `all` (default) mounts every downstream tool as `server__tool`; `lazy` advertises only mcphub's seven meta-tools and serves the rest on demand via `mcphub_call_tool`. See [Lazy mode](/guide/lazy-mode). |
+| `expose` | `all` \| `lazy` | no | Gateway tool exposure. `all` (default) mounts every downstream tool as `server__tool`; `lazy` advertises only mcphub's eight meta-tools and serves the rest on demand via `mcphub_call_tool`. See [Lazy mode](/guide/lazy-mode). |
 | `pin` | list of strings | no | Tools that stay mounted even in `lazy` mode, so agents call them directly instead of discovering them first. Each entry is a bare server (`codemap` — all its tools), a whole-server wildcard (`codemap__*`), or one tool (`codemap__codemap_semantic`) — those are the only shapes; any other wildcard or a trailing `__` fails validation, as does a pin naming an unknown server. Manage with `mcphub pin` / `mcphub unpin` (`--top N` auto-pins your N most-called tools from `mcphub stats`), or `p` in Studio. |
 | `response_budget` | byte-size string | no | Complete serialized MCP result budget. Default `32KB`; `"0"` is unlimited. A non-zero value must be at least `512B` so a recovery receipt can fit. Oversized results are stored locally for 24 hours and recovered with `mcphub_get_result`. |
 | `verbatim` | bool | no | Return every downstream result unchanged and disable result spooling entirely. Default `false`. |
 | `connect_timeout` | duration string | no | Per-downstream connect timeout, e.g. `30s`, `60s`, `2m`. Default `30s`. |
+| `call_timeout` | duration string | no | Ceiling for a single downstream tool call, e.g. `10m`, `30m`, `1h`. Default `30m`. Clamps a caller's `timeout_ms` and bounds how long a detached (`detach: true`) call may run in the background. |
 | `servers` | map | yes | The downstream MCP servers mcphub manages. |
 | `groups` | map | no | Named bundles of server names. |
 | `agents` | map | yes | The agent harnesses mcphub keeps in sync. |
@@ -392,7 +394,7 @@ See [Per-agent routing](/guide/routing) for the full walkthrough.
 version: 1
 
 # all (default) mounts every downstream tool as 'server__tool';
-# lazy advertises only mcphub's seven meta-tools and serves the rest on demand.
+# lazy advertises only mcphub's eight meta-tools and serves the rest on demand.
 expose: all
 
 servers:
@@ -483,6 +485,6 @@ in a trusted, local, single-user gateway — see the
 - [Sync to your agents](/guide/sync) — how each harness adapter merges.
 - [Per-agent routing](/guide/routing) — `servers`/`tools` scoping in depth.
 - [Secrets](/guide/secrets) — `vault` vs. `tvault://` headers, side by side.
-- [Lazy mode](/guide/lazy-mode) — `expose: lazy`, pinning, and the seven meta-tools.
+- [Lazy mode](/guide/lazy-mode) — `expose: lazy`, pinning, and the eight meta-tools.
 - [Concepts](/guide/concepts) — gateway vs. direct, namespacing, token savings.
 - [Connect Bob](/guide/bob) — register the repository builder with the right workspace authority.

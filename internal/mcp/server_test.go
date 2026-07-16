@@ -7,9 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -571,5 +574,293 @@ func TestHandleGetResultInfrastructureErrorsRemainErrors(t *testing.T) {
 	}
 	if _, _, err := s.handleGetResult(context.Background(), nil, getResultInput{CallID: "any"}); err == nil || !strings.Contains(err.Error(), "read stored result") {
 		t.Fatalf("closed-store error = %v", err)
+	}
+}
+
+func TestHandleCallToolDetachUnknownServer(t *testing.T) {
+	s := testServer(t)
+	_, _, err := s.handleCallTool(context.Background(), nil, callInput{Tool: "ghost__tool", Detach: true})
+	if err == nil || !strings.Contains(err.Error(), "unknown server") || !strings.Contains(err.Error(), "detach") {
+		t.Fatalf("detached unknown-server error = %v", err)
+	}
+}
+
+func TestHandleCallToolDetachOutOfScope(t *testing.T) {
+	s := testScopedServer(t)
+	_, _, err := s.handleCallTool(context.Background(), nil, callInput{Tool: "codemap__other", Detach: true})
+	if err == nil || !strings.Contains(err.Error(), "out of scope") {
+		t.Fatalf("expected out-of-scope error, got %v", err)
+	}
+}
+
+func TestHandlePollResultValidationAndUnknown(t *testing.T) {
+	s := testServer(t)
+	if _, _, err := s.handlePollResult(context.Background(), nil, pollResultInput{}); err == nil || !strings.Contains(err.Error(), "callId") {
+		t.Fatalf("missing callId error = %v", err)
+	}
+	_, out, err := s.handlePollResult(context.Background(), nil, pollResultInput{CallID: "never-issued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := out.(map[string]any)
+	if unknown["status"] != "unknown" || unknown["callId"] != "never-issued" {
+		t.Fatalf("unknown poll output = %#v", unknown)
+	}
+	if reason, _ := unknown["reason"].(string); !strings.Contains(reason, "restart") {
+		t.Fatalf("unknown reason should explain restart semantics: %#v", unknown)
+	}
+}
+
+func TestEffectiveCallTimeout(t *testing.T) {
+	cases := []struct {
+		name      string
+		cfg       *config.Config
+		timeoutMs int64
+		want      time.Duration
+	}{
+		{"nil config default", nil, 0, 30 * time.Minute},
+		{"unset uses config default", &config.Config{}, 0, 30 * time.Minute},
+		{"below limit honored", &config.Config{}, 5_000, 5 * time.Second},
+		{"clamped to call_timeout", &config.Config{CallTimeout: "1s"}, 60_000, time.Second},
+		{"negative treated as unset", &config.Config{CallTimeout: "2m"}, -5, 2 * time.Minute},
+		// Regression: a huge timeout_ms used to overflow time.Duration into a
+		// negative value that escaped the clamp, producing an instantly-expired
+		// deadline (and, via Call's transport-failure path, a needless session
+		// invalidation + reconnect).
+		{"huge value clamps instead of overflowing", &config.Config{}, 10_000_000_000_000, 30 * time.Minute},
+		{"max int64 clamps instead of overflowing", &config.Config{CallTimeout: "1h"}, 1<<63 - 1, time.Hour},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := &Server{cfg: c.cfg}
+			if got := s.effectiveCallTimeout(c.timeoutMs); got != c.want {
+				t.Fatalf("effectiveCallTimeout(%d) = %v, want %v", c.timeoutMs, got, c.want)
+			}
+			if got := s.effectiveCallTimeout(c.timeoutMs); got <= 0 {
+				t.Fatalf("effectiveCallTimeout(%d) = %v, must always be positive", c.timeoutMs, got)
+			}
+		})
+	}
+}
+
+func TestPollResultRegistrationAndCallSchemaOnWire(t *testing.T) {
+	s, _ := serverWithResultStore(t, nil)
+	client := connectServerClient(t, s.srv)
+	tools, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]*sdk.Tool{}
+	for _, tool := range tools.Tools {
+		byName[tool.Name] = tool
+	}
+	poll, ok := byName["mcphub_poll_result"]
+	if !ok {
+		t.Fatal("mcphub_poll_result is not registered")
+	}
+	pollSchema, err := json.Marshal(poll.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(pollSchema, []byte(`"required":["callId"]`)) {
+		t.Fatalf("callId is not required in poll wire schema: %s", pollSchema)
+	}
+	call, ok := byName["mcphub_call_tool"]
+	if !ok {
+		t.Fatal("mcphub_call_tool is not registered")
+	}
+	callSchema, err := json.Marshal(call.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"detach"`, `"timeout_ms"`} {
+		if !bytes.Contains(callSchema, []byte(field)) {
+			t.Fatalf("call wire schema missing %s: %s", field, callSchema)
+		}
+	}
+	if !strings.Contains(call.Description, "detach") || !strings.Contains(call.Description, "mcphub_poll_result") {
+		t.Fatalf("mcphub_call_tool description does not advertise the detached path: %q", call.Description)
+	}
+}
+
+// TestDetachedCallWireFlow exercises the full long-running-call affordance
+// over the wire: a synchronous call bounded by timeout_ms fails fast, a
+// detached call returns an accepted receipt immediately, polls as pending
+// while the downstream is still working, and finally yields the exact tool
+// result — surviving well past what a client-side timeout would have allowed.
+func TestDetachedCallWireFlow(t *testing.T) {
+	release := make(chan struct{})
+	downstream := sdk.NewServer(&sdk.Implementation{Name: "bg", Version: "1"}, nil)
+	downstream.AddTool(
+		&sdk.Tool{Name: "slow", InputSchema: map[string]any{"type": "object"}},
+		func(ctx context.Context, _ *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			select {
+			case <-release:
+				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "bg done"}}}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	)
+	httpServer := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return downstream }, nil))
+	defer httpServer.Close()
+	// Unblock any still-gated handler before httpServer.Close, even when the
+	// test fails partway; Close waits for outstanding requests.
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "wire.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	cfg := &config.Config{
+		Expose:  config.ExposeLazy,
+		Servers: map[string]config.Server{"bg": {URL: httpServer.URL, Transport: "http", Enabled: true}},
+	}
+	h := hub.New(cfg, st, nil)
+	h.Connect(context.Background())
+	defer h.Close()
+	s := NewServer(cfg, h, st, nil)
+	client := connectServerClient(t, s.srv)
+	ctx := context.Background()
+
+	// 1. Synchronous path: timeout_ms bounds the call from the gateway side.
+	timedOut, err := client.CallTool(ctx, &sdk.CallToolParams{
+		Name:      "mcphub_call_tool",
+		Arguments: json.RawMessage(`{"tool":"bg__slow","timeout_ms":50}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !timedOut.IsError {
+		t.Fatalf("timeout_ms-bounded call should fail, got %#v", timedOut)
+	}
+	if text := textContent(timedOut); !strings.Contains(text, "bg__slow") {
+		t.Fatalf("timeout error text = %q", text)
+	}
+
+	// 2. Detached path: an accepted receipt comes back immediately.
+	accepted, err := client.CallTool(ctx, &sdk.CallToolParams{
+		Name:      "mcphub_call_tool",
+		Arguments: json.RawMessage(`{"tool":"bg__slow","detach":true,"timeout_ms":60000}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.IsError {
+		t.Fatalf("detached call rejected: %s", textContent(accepted))
+	}
+	receipt, ok := accepted.StructuredContent.(map[string]any)
+	if !ok || receipt["status"] != "accepted" {
+		t.Fatalf("detached receipt = %#v", accepted.StructuredContent)
+	}
+	callID, _ := receipt["callId"].(string)
+	if callID == "" || receipt["namespaced"] != "bg__slow" {
+		t.Fatalf("detached receipt = %#v", receipt)
+	}
+
+	poll := func() *sdk.CallToolResult {
+		t.Helper()
+		res, err := client.CallTool(ctx, &sdk.CallToolParams{
+			Name:      "mcphub_poll_result",
+			Arguments: json.RawMessage(fmt.Sprintf(`{"callId":%q}`, callID)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	// 3. Still running: poll reports pending.
+	pending := poll()
+	out, ok := pending.StructuredContent.(map[string]any)
+	if !ok || out["status"] != "pending" {
+		t.Fatalf("pending poll = %#v", pending.StructuredContent)
+	}
+
+	// 4. Let the downstream finish; polling now returns the tool result itself.
+	released = true
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	var final *sdk.CallToolResult
+	for time.Now().Before(deadline) {
+		res := poll()
+		if status, ok := res.StructuredContent.(map[string]any); ok && status["status"] == "pending" {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		final = res
+		break
+	}
+	if final == nil {
+		t.Fatal("detached call never completed")
+	}
+	if final.IsError || textContent(final) != "bg done" {
+		t.Fatalf("final detached result = IsError=%v text=%q", final.IsError, textContent(final))
+	}
+
+	// 5. Re-polling a completed call is idempotent.
+	if again := poll(); textContent(again) != "bg done" {
+		t.Fatalf("re-poll text = %q", textContent(again))
+	}
+}
+
+// TestHandlePollResultOutOfScope verifies mcphub_poll_result enforces the same
+// scope contract as mcphub_get_result: a scoped gateway cannot collect a
+// detached call whose server/tool its agent is not allowed to reach, even
+// with a valid callId.
+func TestHandlePollResultOutOfScope(t *testing.T) {
+	release := make(chan struct{})
+	downstream := sdk.NewServer(&sdk.Implementation{Name: "bg", Version: "1"}, nil)
+	downstream.AddTool(
+		&sdk.Tool{Name: "slow", InputSchema: map[string]any{"type": "object"}},
+		func(ctx context.Context, _ *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			select {
+			case <-release:
+				return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "done"}}}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	)
+	httpServer := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return downstream }, nil))
+	defer httpServer.Close()
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"bg": {URL: httpServer.URL, Transport: "http", Enabled: true},
+	}}
+	h := hub.New(cfg, nil, nil)
+	h.Connect(context.Background())
+	defer h.Close()
+	// Declared after h.Close so it runs first: the gated downstream handler
+	// must be released before session teardown waits on it.
+	defer close(release)
+
+	owner := &Server{hub: h, cfg: cfg} // unscoped gateway starts the call
+	_, out, err := owner.handleCallTool(context.Background(), nil, callInput{Tool: "bg__slow", Detach: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callID, _ := out.(map[string]any)["callId"].(string)
+	if callID == "" {
+		t.Fatalf("no callId in detach receipt: %#v", out)
+	}
+
+	scoped := &Server{hub: h, cfg: cfg, scope: &agentScope{servers: map[string]bool{"codemap": true}}}
+	if _, _, err := scoped.handlePollResult(context.Background(), nil, pollResultInput{CallID: callID}); err == nil || !strings.Contains(err.Error(), "out of scope") {
+		t.Fatalf("cross-scope poll error = %v, want out-of-scope rejection", err)
+	}
+
+	// The gateway whose scope covers the call still polls normally.
+	_, ownOut, err := owner.handlePollResult(context.Background(), nil, pollResultInput{CallID: callID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := ownOut.(map[string]any)["status"]; status != "pending" {
+		t.Fatalf("owner poll status = %v, want pending", status)
 	}
 }

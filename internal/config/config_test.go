@@ -589,3 +589,43 @@ func TestResponseBudgetBytesCompatibilityFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestCallTimeoutDuration(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  string
+		want time.Duration
+	}{
+		{"empty defaults to 30m", "", 30 * time.Minute},
+		{"explicit 10m", "10m", 10 * time.Minute},
+		{"1 hour", "1h", time.Hour},
+		{"invalid falls back to 30m", "bogus", 30 * time.Minute},
+		{"nonpositive falls back to 30m", "-5s", 30 * time.Minute},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := &Config{CallTimeout: c.cfg}
+			if got := cfg.CallTimeoutDuration(); got != c.want {
+				t.Errorf("CallTimeoutDuration() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsBadCallTimeout(t *testing.T) {
+	c := &Config{
+		Servers:     map[string]Server{"x": {Command: "c"}},
+		CallTimeout: "bogus",
+	}
+	if err := c.Validate(); err == nil {
+		t.Error("expected validation error for bad call_timeout")
+	}
+	c.CallTimeout = "-5s"
+	if err := c.Validate(); err == nil {
+		t.Error("expected validation error for nonpositive call_timeout")
+	}
+	c.CallTimeout = "10m"
+	if err := c.Validate(); err != nil {
+		t.Errorf("valid call_timeout should pass, got %v", err)
+	}
+}

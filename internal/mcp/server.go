@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -112,13 +113,18 @@ func (s *Server) registerManagement() {
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_call_tool",
-		Description: "Invoke a downstream tool by name. Oversized results return a lossless retrieval receipt for mcphub_get_result; small results pass through unchanged. Accepts {server, tool, arguments} (tool may be the combined `server__tool` form). This is how you call tools in lazy mode.",
+		Description: "Invoke a downstream tool by name. Oversized results return a lossless retrieval receipt for mcphub_get_result; small results pass through unchanged. Accepts {server, tool, arguments} (tool may be the combined `server__tool` form). This is how you call tools in lazy mode. For long-running tools (repository indexing, large scans, batch jobs) that could exceed your client's tool-call timeout, pass detach: true — the call keeps running in the background and you get a callId immediately; collect the outcome with mcphub_poll_result. An optional timeout_ms bounds the call (clamped by the gateway's call_timeout config).",
 	}, s.handleCallTool)
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_get_result",
 		Description: "Retrieve a bounded base64 page of a complete result previously stored by mcphub. Start with cursor 0 and continue with nextCursor until done is true.",
 	}, s.handleGetResult)
+
+	sdk.AddTool(s.srv, &sdk.Tool{
+		Name:        "mcphub_poll_result",
+		Description: "Check on a detached (detach: true) mcphub_call_tool invocation by callId. Returns {status: pending} while the downstream call is still running (poll again after a delay), {status: failed} with the error if it failed, or — once complete — the tool's result itself, exactly as a synchronous call would have returned it (an oversized result appears as a stored-result receipt for mcphub_get_result). Completed results are retained for 24 hours; detached calls do not survive a gateway restart, in which case the callId reports status: unknown.",
+	}, s.handlePollResult)
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "mcphub_stats",
@@ -159,11 +165,17 @@ type callInput struct {
 	Server    string         `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
 	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form"`
 	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"arguments object passed to the downstream tool"`
+	Detach    bool           `json:"detach,omitempty" jsonschema:"run the call in the background and return a callId immediately; collect the result with mcphub_poll_result. Use for long-running tools that could exceed the client tool-call timeout"`
+	TimeoutMs int64          `json:"timeout_ms,omitempty" jsonschema:"optional per-call timeout in milliseconds, clamped by the gateway's call_timeout config (default 30m). Bounds a detached call's background execution; on a synchronous call it can only shorten the effective deadline"`
 }
 
 type getResultInput struct {
 	CallID string `json:"callId" jsonschema:"opaque call ID from a stored-result receipt"`
 	Cursor int64  `json:"cursor,omitempty" jsonschema:"zero-based byte cursor (default 0)"`
+}
+
+type pollResultInput struct {
+	CallID string `json:"callId" jsonschema:"opaque call ID returned by a detached (detach: true) mcphub_call_tool invocation"`
 }
 
 type resolveToolInput struct {
@@ -498,11 +510,89 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 		}
 		args = b
 	}
+	timeout := s.effectiveCallTimeout(in.TimeoutMs)
+	if in.Detach {
+		callID, err := s.hub.StartDetached(ctx, server, tool, args, timeout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("detach %s__%s: %w", server, tool, err)
+		}
+		return result(map[string]any{
+			"status":     "accepted",
+			"callId":     callID,
+			"server":     server,
+			"tool":       tool,
+			"namespaced": server + "__" + tool,
+			"timeoutMs":  timeout.Milliseconds(),
+			"nextAction": "The call is running in the background. Call mcphub_poll_result with this callId; status pending means poll again after a delay, and a completed call returns the tool result itself (or a stored-result receipt for mcphub_get_result if it is oversized).",
+		})
+	}
+	if in.TimeoutMs > 0 {
+		// Synchronous path: an explicit timeout_ms can only tighten the deadline
+		// (the client's own request deadline still applies via ctx).
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	res, err := s.hub.Call(ctx, server, tool, args)
 	if err != nil {
 		return nil, nil, fmt.Errorf("call %s__%s: %w", server, tool, err)
 	}
 	return res, nil, nil
+}
+
+// effectiveCallTimeout resolves the per-call ceiling: the caller's timeout_ms
+// when given, clamped to the configured call_timeout (default 30m).
+func (s *Server) effectiveCallTimeout(timeoutMs int64) time.Duration {
+	limit := 30 * time.Minute
+	if s.cfg != nil {
+		limit = s.cfg.CallTimeoutDuration()
+	}
+	// Compare in milliseconds before converting to time.Duration: a huge
+	// timeout_ms would overflow Duration's int64 nanoseconds and slip past the
+	// clamp as a negative duration — an immediately-expired deadline that would
+	// fail the call instantly and needlessly invalidate the downstream session.
+	if timeoutMs <= 0 || timeoutMs > limit.Milliseconds() {
+		return limit
+	}
+	return time.Duration(timeoutMs) * time.Millisecond
+}
+
+func (s *Server) handlePollResult(_ context.Context, _ *sdk.CallToolRequest, in pollResultInput) (*sdk.CallToolResult, any, error) {
+	if strings.TrimSpace(in.CallID) == "" {
+		return nil, nil, fmt.Errorf("callId is required")
+	}
+	call, ok := s.hub.PollDetached(in.CallID)
+	if !ok {
+		return result(map[string]any{
+			"status": "unknown",
+			"callId": in.CallID,
+			"reason": "The callId is unknown: it may have expired, been evicted, or the gateway restarted (detached calls do not survive restarts). Re-run the call with detach: true, or use mcphub_get_result if this callId came from a stored-result receipt.",
+		})
+	}
+	if !s.scope.allows(call.Server, call.Tool) {
+		return nil, nil, fmt.Errorf("detached call for %s is out of scope for this agent", call.Namespaced)
+	}
+	switch call.Status {
+	case hub.DetachedPending:
+		return result(map[string]any{
+			"status":     "pending",
+			"callId":     call.ID,
+			"namespaced": call.Namespaced,
+			"elapsedMs":  time.Since(call.StartedAt).Milliseconds(),
+			"hint":       "still running — poll again after a delay",
+		})
+	case hub.DetachedFailed:
+		return result(map[string]any{
+			"status":     "failed",
+			"callId":     call.ID,
+			"namespaced": call.Namespaced,
+			"error":      call.Err,
+			"elapsedMs":  call.CompletedAt.Sub(call.StartedAt).Milliseconds(),
+		})
+	}
+	// Done: hand back the finalized result exactly as a synchronous call would
+	// have returned it (oversized results are already spooled receipts).
+	return call.Result, nil, nil
 }
 
 const maxResultPageSize int64 = 8 * 1024

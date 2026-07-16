@@ -82,9 +82,9 @@ recovery receipt instead of dropping bytes. Set `verbatim: true` or
 `response_budget: "0"` on a server for transparent, unbounded pass-through. See
 [Bounded, lossless results](/guide/results) for the full recovery flow.
 
-### The seven meta-tools
+### The eight meta-tools
 
-Beyond the proxied tools, the gateway registers seven management tools of its
+Beyond the proxied tools, the gateway registers eight management tools of its
 own so an agent can introspect and drive the hub without scanning everything:
 
 - **`mcphub_list_servers`** — configured servers with their enabled/connected
@@ -99,10 +99,13 @@ own so an agent can introspect and drive the hub without scanning everything:
   alternatives, and ambiguity status.
 - **`mcphub_call_tool`** — invoke any downstream tool by
   `{server, tool, arguments}`. Oversized results return a lossless recovery
-  receipt.
+  receipt; `detach: true` runs a long-running tool in the background and
+  returns a `callId` immediately, and `timeout_ms` bounds the call.
 - **`mcphub_get_result`** — recover a stored result by `callId` and zero-based
   byte `cursor`. Decode each base64 `data` page and continue with `nextCursor`
   until `done` is true.
+- **`mcphub_poll_result`** — check a detached call by `callId`: `pending` while
+  it runs, `failed` with the error, or the finished tool result itself.
 - **`mcphub_stats`** — local usage intelligence: total calls, errors, estimated
   token cost, and a per-server breakdown.
 
@@ -113,7 +116,7 @@ advertises (see [Lazy mode](/guide/lazy-mode) for the deep dive):
 
 - **`expose: all`** (default) — every downstream tool is mounted as
   `server__tool`. Simple, but a large fleet means a large tool list.
-- **`expose: lazy`** — only the seven meta-tools above are advertised. The
+- **`expose: lazy`** — only the eight meta-tools above are advertised. The
   agent routes task context with `mcphub_resolve_tool`, browses alternatives
   with `mcphub_search_tools`, and runs the choice with `mcphub_call_tool`.
   Initialization includes a bounded capability summary built from the agent's
@@ -232,7 +235,7 @@ A dozen servers can be hundreds of tool definitions loaded before you type a
 single word.
 
 In gateway mode the agent loads exactly **one** server. With `expose: lazy`
-that surface collapses to seven meta-tools plus a bounded capability summary
+that surface collapses to eight meta-tools plus a bounded capability summary
 no matter how many servers sit behind the hub — the model sees
 `mcphub_resolve_tool` / `mcphub_call_tool` instead of every server's full
 catalog, and pulls a tool's schema on demand only when it actually needs it.
@@ -264,7 +267,7 @@ The **config** layer reads `mcphub.yaml` — the registry every other piece
 consults. The **hub** connects to each enabled, in-scope server as an MCP client,
 discovers its tools, and re-exposes them under `server__tool` names, forwarding
 calls transparently and timing each one. The **MCP server** layer adds the
-seven meta-tools and serves everything on one stdio connection. The **store**
+eight meta-tools and serves everything on one stdio connection. The **store**
 persists every call (and any oversized results) to a local SQLite database.
 The **harness adapters** turn mcphub's view of servers into each agent's
 on-disk config format, and the **syncer** reconciles the two. Each piece is

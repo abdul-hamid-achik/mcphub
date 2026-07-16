@@ -542,10 +542,11 @@ what [`mcphub sync`](#sync) writes into the agent's config in gateway mode.
 subset and refuses out-of-scope calls.) Logs go to stderr so they never corrupt
 the stdio JSON-RPC stream. It shuts down cleanly on `SIGINT`/`SIGTERM`.
 
-The gateway also exposes seven management meta-tools to connected agents:
+The gateway also exposes eight management meta-tools to connected agents:
 `mcphub_list_servers`, `mcphub_search_tools`, `mcphub_describe_tool`,
-`mcphub_resolve_tool`, `mcphub_call_tool`, `mcphub_get_result`, and
-`mcphub_stats`. With `expose: lazy` in `mcphub.yaml`, those seven plus any
+`mcphub_resolve_tool`, `mcphub_call_tool`, `mcphub_get_result`,
+`mcphub_poll_result`, and
+`mcphub_stats`. With `expose: lazy` in `mcphub.yaml`, those eight plus any
 [pinned](#pin) tools are the only tools advertised. `mcphub_get_result` accepts
 `{callId, cursor}` and returns a base64 page; continue with `nextCursor` until
 `done` is true. See the [meta-tools reference](/reference/meta-tools) for each

@@ -1,6 +1,6 @@
 ---
 title: Lazy mode
-description: "Turn on expose: lazy so the mcphub gateway advertises only seven meta-tools, agents discover the rest on demand, and your most-used tools stay pinned."
+description: "Turn on expose: lazy so the mcphub gateway advertises only eight meta-tools, agents discover the rest on demand, and your most-used tools stay pinned."
 ---
 
 # Lazy mode
@@ -11,7 +11,7 @@ name, description, and input schema — into context before a single call is
 made. With a dozen servers behind the gateway, that's hundreds of tool
 definitions paid for on every session, whether or not they get used.
 
-`expose: lazy` flips the trade: the gateway advertises **only its seven
+`expose: lazy` flips the trade: the gateway advertises **only its eight
 meta-tools** (plus anything you [pin](#pinning-keep-hot-tools-mounted)). The
 downstream catalog stays fully available, but agents reach it on demand —
 route their current task to a capability, inspect the one tool they need, and
@@ -46,7 +46,7 @@ talks to each server itself, so it always loads every enabled server's full
 tool list. See [Concepts](/guide/concepts) for the two modes.
 :::
 
-## The seven meta-tools
+## The eight meta-tools
 
 In lazy mode this is the entire advertised surface:
 
@@ -56,8 +56,9 @@ In lazy mode this is the entire advertised surface:
 | `mcphub_search_tools` | Ranked natural-language search across tool and server metadata; returns up to 20 matching `server__tool` names by default. |
 | `mcphub_describe_tool` | Return one tool's description and full JSON input schema. |
 | `mcphub_resolve_tool` | Route the current goal or activity to the best tool in one call, with match evidence, required fields, an argument template, alternatives, and an ambiguity flag. |
-| `mcphub_call_tool` | Invoke a downstream tool by name — how everything gets called in lazy mode. |
+| `mcphub_call_tool` | Invoke a downstream tool by name — how everything gets called in lazy mode. `detach: true` runs a long-running tool in the background and returns a `callId` at once. |
 | `mcphub_get_result` | Page through an oversized result the gateway stored locally (see below). |
+| `mcphub_poll_result` | Check a detached call by `callId` and collect its result when done. |
 | `mcphub_stats` | Local usage intelligence: calls, errors, estimated token cost, per-server breakdown. |
 
 The gateway's MCP instructions tell the connecting model it is in lazy mode,
@@ -190,7 +191,7 @@ The pin still applies to unscoped agents.
 Lazy mode is a trade, not a strict upgrade:
 
 - **Small catalogs.** With one or two servers exposing a handful of tools,
-  the seven meta-tools plus the indirection can cost as much as just mounting
+  the eight meta-tools plus the indirection can cost as much as just mounting
   everything.
 - **Extra round trips.** Each first use of a tool costs a search/resolve call
   before the real one. Pinning removes this for hot paths, but a workload that
@@ -209,7 +210,7 @@ shifting.
 - [Contextual routing for harnesses](/guide/contextual-routing) — when a
   harness should resolve, how a host-assisted advisor behaves, and the safety
   contract around recommendations.
-- [Gateway meta-tools](/reference/meta-tools) — full reference for all seven
+- [Gateway meta-tools](/reference/meta-tools) — full reference for all eight
   meta-tools, including their exact call shapes.
 - [Bounded, lossless results](/guide/results) — the `callId` receipt and
   `mcphub_get_result` paging contract behind oversized calls.

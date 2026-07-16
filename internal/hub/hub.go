@@ -50,9 +50,16 @@ type Hub struct {
 	log   *log.Logger
 
 	connectTimeout time.Duration
+	now            func() time.Time // injectable clock for detached-call retention tests
 
 	mu          sync.Mutex
 	downstreams []*Downstream
+
+	detachedMu sync.Mutex
+	detached   map[string]*DetachedCall // detached-call registry (see async.go)
+
+	reconnectMu    sync.Mutex             // guards reconnectLocks
+	reconnectLocks map[string]*sync.Mutex // serializes immediate reconnects per server
 }
 
 // New creates a hub over the given config. store may be nil (telemetry is then
@@ -62,7 +69,7 @@ func New(cfg *config.Config, st *store.Store, logger *log.Logger) *Hub {
 		logger = log.New(os.Stderr)
 		logger.SetLevel(log.FatalLevel + 1) // effectively silent
 	}
-	return &Hub{cfg: cfg, store: st, log: logger, connectTimeout: cfg.ConnectTimeoutDuration()}
+	return &Hub{cfg: cfg, store: st, log: logger, connectTimeout: cfg.ConnectTimeoutDuration(), now: time.Now}
 }
 
 // Connect spawns and connects to every enabled server concurrently. A server
@@ -295,30 +302,75 @@ func (h *Hub) forward(d *Downstream, toolName, namespaced string) mcp.ToolHandle
 // the single code path used by directly mounted, pinned, and lazy meta-tool
 // calls.
 // ReconnectOne immediately reconnects a single downstream by name. Returns
-// true if the reconnection succeeded. Call uses this after a transport failure
-// to restore future availability, but never repeats the uncertain operation.
+// true if the server is connected on return — either because this call
+// reconnected it or because a concurrent reconnect already had. Call uses this
+// after a transport failure to restore future availability, but never repeats
+// the uncertain operation.
 func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
 	srv, ok := h.cfg.Servers[server]
 	if !ok {
 		return false
 	}
+	// Serialize per server: several in-flight calls can observe a transport
+	// failure at the same moment (detached calls especially, since their
+	// contexts outlive the requesting client). Without this, each failure
+	// would spawn its own connect — transiently N sessions/child processes —
+	// and every swap would close the session the previous reconnect had just
+	// established, spuriously failing calls already routed onto it.
+	lock := h.serverReconnectLock(server)
+	lock.Lock()
+	defer lock.Unlock()
+	if d := h.downstream(server); d != nil && d.Connected() {
+		return true // a concurrent reconnect already restored this server
+	}
 	nd := h.connectOne(ctx, server, srv)
 	if !nd.Connected() {
 		return false
 	}
+	var stale *mcp.ClientSession
+	swapped := false
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for i, d := range h.downstreams {
 		if d.Name == server {
-			old := d
+			stale = d.session
 			h.downstreams[i] = nd
-			if old.session != nil {
-				_ = old.session.Close()
-			}
-			return true
+			swapped = true
+			break
 		}
 	}
-	return false
+	h.mu.Unlock()
+	if !swapped {
+		// The server vanished from the downstream set (a concurrent scoped
+		// refresh); close the fresh session instead of leaking it.
+		_ = nd.session.Close()
+		return false
+	}
+	if stale != nil {
+		// Tear the dead session down off the caller's path and outside h.mu:
+		// closing a stdio transport can block for its kill grace period while
+		// the child is still busy (e.g. mid-call after a gateway-side timeout),
+		// and that must stall neither this call's error return nor every other
+		// hub operation waiting on the lock.
+		go func() { _ = stale.Close() }()
+	}
+	return true
+}
+
+// serverReconnectLock returns the mutex serializing immediate reconnects for
+// one server, creating it on first use. The map is bounded by the set of
+// configured server names.
+func (h *Hub) serverReconnectLock(server string) *sync.Mutex {
+	h.reconnectMu.Lock()
+	defer h.reconnectMu.Unlock()
+	if h.reconnectLocks == nil {
+		h.reconnectLocks = map[string]*sync.Mutex{}
+	}
+	l, ok := h.reconnectLocks[server]
+	if !ok {
+		l = &sync.Mutex{}
+		h.reconnectLocks[server] = l
+	}
+	return l
 }
 
 func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessage) (*mcp.CallToolResult, error) {
@@ -341,8 +393,12 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 		// operation: it may have completed and lost only the response. Reconnect
 		// immediately for future calls, but never replay an effect-unknown request
 		// without an explicit idempotency contract and caller-supplied key.
-		h.invalidateDownstream(server)
-		if h.ReconnectOne(ctx, server) {
+		// The reconnect runs on a detached context: when the failure was the
+		// request's own timeout/cancellation, ctx is already done and reusing it
+		// would guarantee the reconnect fails too (connectOne applies its own
+		// bounded connect timeout).
+		h.invalidateDownstream(d)
+		if h.ReconnectOne(context.WithoutCancel(ctx), server) {
 			h.log.Info("immediate reconnect succeeded; uncertain call was not replayed", "server", server, "tool", tool)
 			return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (connection restored for future calls; request was not retried)", server, tool, callErr)
 		}
@@ -351,13 +407,16 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	return h.finalizeCall(ctx, server, tool, namespaced, time.Since(start), len(args), res), nil
 }
 
-// invalidateDownstream marks a downstream as disconnected so the background
-// watcher and immediate reconnect logic know to try again.
-func (h *Hub) invalidateDownstream(name string) {
+// invalidateDownstream marks the exact downstream entry a failed call was
+// using as disconnected, so the background watcher and immediate reconnect
+// logic know to try again. Matching by identity (not name) means a failure
+// observed on an already-replaced session cannot invalidate the fresh
+// connection a concurrent reconnect just installed.
+func (h *Hub) invalidateDownstream(target *Downstream) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, d := range h.downstreams {
-		if d.Name == name {
+		if d == target {
 			d.Err = fmt.Errorf("session invalidated after transport failure")
 			break
 		}

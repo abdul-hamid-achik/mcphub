@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -663,5 +664,152 @@ func TestCallDoesNotReplayUnknownOutcome(t *testing.T) {
 	}
 	if totals.Calls != 1 || totals.Errors != 1 {
 		t.Fatalf("telemetry calls=%d errors=%d, want 1/1", totals.Calls, totals.Errors)
+	}
+}
+
+// TestConcurrentReconnectsDoNotStampede is a regression test: several
+// in-flight calls can observe the same transport failure at once (detached
+// calls especially, whose contexts outlive the requesting client). Immediate
+// reconnects must be serialized per server so they do not each open a new
+// session and close the one the previous reconnect just established.
+func TestConcurrentReconnectsDoNotStampede(t *testing.T) {
+	downstream := mcp.NewServer(&mcp.Implementation{Name: "dedupe", Version: "1"}, nil)
+	downstream.AddTool(
+		&mcp.Tool{Name: "ping", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, nil
+		},
+	)
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return downstream }, nil)
+	var initializes atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "read body", http.StatusInternalServerError)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if bytes.Contains(body, []byte(`"method":"initialize"`)) {
+			initializes.Add(1)
+		}
+		mcpHandler.ServeHTTP(w, r)
+	})
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"dedupe": {URL: httpServer.URL, Transport: "http", Enabled: true},
+	}}
+	h := New(cfg, nil, nil)
+	h.Connect(context.Background())
+	defer h.Close()
+	failed := h.downstream("dedupe")
+	if failed == nil || !failed.Connected() {
+		t.Fatal("setup: downstream did not connect")
+	}
+	before := initializes.Load()
+
+	// Simulate concurrent calls all hitting a transport failure on the same
+	// session and each demanding an immediate reconnect.
+	h.invalidateDownstream(failed)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !h.ReconnectOne(context.Background(), "dedupe") {
+				t.Error("ReconnectOne reported failure during concurrent recovery")
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := initializes.Load() - before; got != 1 {
+		t.Fatalf("concurrent reconnects opened %d new sessions, want exactly 1", got)
+	}
+	res, err := h.Call(context.Background(), "dedupe", "ping", nil)
+	if err != nil {
+		t.Fatalf("post-recovery call failed: %v", err)
+	}
+	if text := res.Content[0].(*mcp.TextContent).Text; text != "pong" {
+		t.Fatalf("post-recovery call text = %q", text)
+	}
+}
+
+// TestInvalidateDownstreamIsIdentityScoped is a regression test: a failure
+// observed on an already-replaced session must not mark the fresh entry a
+// concurrent reconnect installed under the same name as disconnected.
+func TestInvalidateDownstreamIsIdentityScoped(t *testing.T) {
+	h := New(&config.Config{}, nil, nil)
+	stale := &Downstream{Name: "srv"}
+	session, tool := inMemoryDownstream(t, &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}})
+	fresh := &Downstream{Name: "srv", session: session, Tools: []*mcp.Tool{tool}}
+	h.downstreams = []*Downstream{fresh}
+
+	h.invalidateDownstream(stale) // stale entry is no longer in the set
+	if !fresh.Connected() {
+		t.Fatal("invalidating a replaced entry disconnected the fresh session under the same name")
+	}
+	h.invalidateDownstream(fresh)
+	if fresh.Connected() {
+		t.Fatal("invalidating the current entry must disconnect it")
+	}
+}
+
+// TestReconnectOneDoesNotBlockOnStaleSessionTeardown is a regression test:
+// after a gateway-side timeout the stale session's teardown can block for the
+// transport's grace period (a stdio child mid-call ignores the close). That
+// teardown must happen off the reconnecting caller's path and outside h.mu,
+// or a single timed-out call stalls its own error response and every other
+// hub operation with it.
+func TestReconnectOneDoesNotBlockOnStaleSessionTeardown(t *testing.T) {
+	downstream := mcp.NewServer(&mcp.Implementation{Name: "slowclose", Version: "1"}, nil)
+	downstream.AddTool(
+		&mcp.Tool{Name: "ping", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, nil
+		},
+	)
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return downstream }, nil)
+	releaseClose := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			<-releaseClose // simulate a session whose teardown hangs while the peer is busy
+		}
+		mcpHandler.ServeHTTP(w, r)
+	})
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"slowclose": {URL: httpServer.URL, Transport: "http", Enabled: true},
+	}}
+	h := New(cfg, nil, nil)
+	h.Connect(context.Background())
+	defer h.Close()
+	// Declared last so it runs first: every blocked DELETE (the stale session's
+	// async teardown, h.Close, httpServer.Close) must be released before the
+	// other cleanups wait on it.
+	defer close(releaseClose)
+	failed := h.downstream("slowclose")
+	if failed == nil || !failed.Connected() {
+		t.Fatal("setup: downstream did not connect")
+	}
+
+	h.invalidateDownstream(failed)
+	start := time.Now()
+	if !h.ReconnectOne(context.Background(), "slowclose") {
+		t.Fatal("ReconnectOne failed")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("ReconnectOne blocked %v on the stale session's teardown", elapsed)
+	}
+	res, err := h.Call(context.Background(), "slowclose", "ping", nil)
+	if err != nil {
+		t.Fatalf("post-reconnect call failed: %v", err)
+	}
+	if text := res.Content[0].(*mcp.TextContent).Text; text != "pong" {
+		t.Fatalf("post-reconnect call text = %q", text)
 	}
 }
