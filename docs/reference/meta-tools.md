@@ -216,8 +216,9 @@ once the downstream call has finished, hands back its result. Pass the
 
 Completed detached results are retained in memory for 24 hours (matching the
 result spool's retention) with a bounded registry; the registry does **not**
-survive a gateway restart, in which case an old `callId` reports
-`status: "unknown"` and the call must be re-run.
+survive a gateway restart. A `callId` that is expired, evicted, never issued,
+or from before a restart reports `status: "unknown"`, and the call must be
+re-run.
 
 **When to call it:** only after a detached `mcphub_call_tool` returned an
 `accepted` receipt. For `callId`s that came from a `"status": "stored"`

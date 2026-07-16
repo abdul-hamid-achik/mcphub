@@ -4,7 +4,7 @@ All notable changes to mcphub are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
-## [Unreleased]
+## [0.16.0] - 2026-07-15
 
 ### Added
 
@@ -18,6 +18,11 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
   registry is bounded (8 in flight, 128 retained for 24 hours) and does not
   survive a gateway restart. An optional `timeout_ms` argument bounds any call,
   clamped by the new `call_timeout` config key (default 30m).
+
+## [0.15.0] - 2026-07-13
+
+### Added
+
 - **Context-aware lazy discovery.** Servers can declare bounded `use_when`
   routing hints, and `mcphub_resolve_tool` / `mcphub_search_tools` now rank
   full natural-language task context across tool metadata (including bounded
@@ -32,12 +37,6 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
 - **First-class Bob integration.** The documentation now includes a complete
   trusted-local and least-privilege registration guide for Bob's six typed
   repository tools, lazy-mode pins, local-agent routing, and local-only stats.
-- **Bounded, lossless gateway results.** Every mounted, pinned, and lazy success
-  now passes through one `Hub.Call` finalizer. Complete results over `response_budget` are stored
-  in SQLite for 24 hours under an opaque call ID, then recovered byte-for-byte through the new
-  `mcphub_get_result(callId,cursor)` management tool. Pages are bounded base64 JSON, scope-checked,
-  and restart-safe; store failures fail open to the full result instead of losing data. Small
-  results, `verbatim: true`, and `response_budget: "0"` remain exact pass-through.
 
 ### Changed
 
@@ -55,6 +54,17 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
   only the protocol name and description prefix.
 - Documentation now uses the current pinned VitePress 2 alpha toolchain, which
   removes the vulnerable Vite/esbuild versions from the locked dependency graph.
+
+## [0.14.0] - 2026-07-10
+
+### Added
+
+- **Bounded, lossless gateway results.** Every mounted, pinned, and lazy success
+  now passes through one `Hub.Call` finalizer. Complete results over `response_budget` are stored
+  in SQLite for 24 hours under an opaque call ID, then recovered byte-for-byte through the new
+  `mcphub_get_result(callId,cursor)` management tool. Pages are bounded base64 JSON, scope-checked,
+  and restart-safe; store failures fail open to the full result instead of losing data. Small
+  results, `verbatim: true`, and `response_budget: "0"` remain exact pass-through.
 
 ## [0.6.0] - 2026-07-06
 

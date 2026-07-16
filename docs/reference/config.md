@@ -59,7 +59,7 @@ expose: all             # or: lazy
 response_budget: 32KB   # complete serialized MCP result budget; 0 = unlimited
 verbatim: false         # true = never spool or replace downstream results
 connect_timeout: 30s    # per-downstream connect timeout (default 30s)
-call_timeout: 30m       # ceiling for one downstream call; clamps timeout_ms, bounds detached calls
+call_timeout: 30m       # clamps timeout_ms and bounds detached calls; sync calls without timeout_ms follow the client's deadline
 pin:                    # tools always mounted, even in lazy mode (optional)
   - codemap__codemap_semantic
 
@@ -84,7 +84,7 @@ agents:
 | `response_budget` | byte-size string | no | Complete serialized MCP result budget. Default `32KB`; `"0"` is unlimited. A non-zero value must be at least `512B` so a recovery receipt can fit. Oversized results are stored locally for 24 hours and recovered with `mcphub_get_result`. |
 | `verbatim` | bool | no | Return every downstream result unchanged and disable result spooling entirely. Default `false`. |
 | `connect_timeout` | duration string | no | Per-downstream connect timeout, e.g. `30s`, `60s`, `2m`. Default `30s`. |
-| `call_timeout` | duration string | no | Ceiling for a single downstream tool call, e.g. `10m`, `30m`, `1h`. Default `30m`. Clamps a caller's `timeout_ms` and bounds how long a detached (`detach: true`) call may run in the background. |
+| `call_timeout` | duration string | no | Gateway-side call bound, e.g. `10m`, `30m`, `1h`. Default `30m`. Clamps a caller's `timeout_ms` and bounds how long a detached (`detach: true`) call may run in the background. It is **not** a blanket ceiling: a synchronous `mcphub_call_tool` without `timeout_ms`, and any directly-mounted (`expose: all`) tool call, is bounded only by the client's own request deadline. |
 | `servers` | map | yes | The downstream MCP servers mcphub manages. |
 | `groups` | map | no | Named bundles of server names. |
 | `agents` | map | yes | The agent harnesses mcphub keeps in sync. |
