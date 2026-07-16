@@ -4,7 +4,7 @@ All notable changes to mcphub are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
-## [Unreleased]
+## [0.16.1] - 2026-07-16
 
 ### Fixed
 
