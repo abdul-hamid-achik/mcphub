@@ -813,3 +813,24 @@ func TestReconnectOneDoesNotBlockOnStaleSessionTeardown(t *testing.T) {
 		t.Fatalf("post-reconnect call text = %q", text)
 	}
 }
+
+func TestCanonicalToolCollapsesServerPrefixStutter(t *testing.T) {
+	h := New(&config.Config{}, nil, nil)
+	h.downstreams = []*Downstream{
+		{Name: "hitspec", Tools: []*mcp.Tool{{Name: "hitspec_fetch"}}},
+		{Name: "live", Tools: []*mcp.Tool{{Name: "echo"}, {Name: "live_echo"}}},
+	}
+	if name, _, ok := h.CanonicalTool("hitspec", "hitspec_fetch"); !ok || name != "hitspec_fetch" {
+		t.Errorf("exact name should resolve to itself, got %q ok=%v", name, ok)
+	}
+	if name, tool, ok := h.CanonicalTool("hitspec", "fetch"); !ok || name != "hitspec_fetch" || tool.Name != "hitspec_fetch" {
+		t.Errorf("collapsed alias should resolve to the prefixed tool, got %q ok=%v", name, ok)
+	}
+	// An exact downstream name must never be shadowed by prefix expansion.
+	if name, _, ok := h.CanonicalTool("live", "echo"); !ok || name != "echo" {
+		t.Errorf("exact name must win over the prefixed variant, got %q ok=%v", name, ok)
+	}
+	if _, _, ok := h.CanonicalTool("hitspec", "nope"); ok {
+		t.Error("unknown tool should not resolve")
+	}
+}

@@ -158,12 +158,12 @@ type searchInput struct {
 
 type describeInput struct {
 	Server string `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
-	Tool   string `json:"tool" jsonschema:"tool name; may be the combined server__tool form"`
+	Tool   string `json:"tool" jsonschema:"tool name; may be the combined server__tool form. A server's own name prefix may be collapsed: hitspec__search_web resolves to hitspec__hitspec_search_web"`
 }
 
 type callInput struct {
 	Server    string         `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
-	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form"`
+	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form. A server's own name prefix may be collapsed: hitspec__search_web resolves to hitspec__hitspec_search_web"`
 	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"arguments object passed to the downstream tool"`
 	Detach    bool           `json:"detach,omitempty" jsonschema:"run the call in the background and return a callId immediately; collect the result with mcphub_poll_result. Use for long-running tools that could exceed the client tool-call timeout"`
 	TimeoutMs int64          `json:"timeout_ms,omitempty" jsonschema:"optional per-call timeout in milliseconds, clamped by the gateway's call_timeout config (default 30m). Bounds a detached call's background execution; on a synchronous call it can only shorten the effective deadline"`
@@ -278,11 +278,17 @@ func (s *Server) handleDescribeTool(_ context.Context, _ *sdk.CallToolRequest, i
 	if server == "" || tool == "" {
 		return result(map[string]any{"error": "need server and tool (or a server__tool name)"})
 	}
+	// Adopt the canonical downstream name before the scope check so the
+	// stutter-collapsed alias (hitspec__search_web for hitspec's own
+	// hitspec_search_web) is scoped and described as the tool it names.
+	canonical, t, found := s.hub.CanonicalTool(server, tool)
+	if found {
+		tool = canonical
+	}
 	if !s.scope.allows(server, tool) {
 		return nil, nil, fmt.Errorf("tool %s__%s is out of scope for this agent", server, tool)
 	}
-	t, ok := s.hub.FindTool(server, tool)
-	if !ok {
+	if !found {
 		return result(map[string]any{"error": "tool not found", "server": server, "tool": tool})
 	}
 	return result(map[string]any{
@@ -498,6 +504,14 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 	server, tool := splitNamespaced(in.Server, in.Tool)
 	if server == "" || tool == "" {
 		return nil, nil, fmt.Errorf("need server and tool (or a server__tool name)")
+	}
+	// Adopt the canonical downstream name before the scope check so the
+	// stutter-collapsed alias (hitspec__search_web for hitspec's own
+	// hitspec_search_web) is scoped, called, and recorded as the tool it
+	// names. An unresolvable name passes through — Call/StartDetached report
+	// unknown-server/not-found with their existing errors.
+	if canonical, _, ok := s.hub.CanonicalTool(server, tool); ok {
+		tool = canonical
 	}
 	if !s.scope.allows(server, tool) {
 		return nil, nil, fmt.Errorf("tool %s__%s is out of scope for this agent", server, tool)

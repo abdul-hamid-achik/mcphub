@@ -381,9 +381,11 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	if !d.Connected() {
 		return nil, fmt.Errorf("server %q is not connected", server)
 	}
-	if _, ok := h.FindTool(server, tool); !ok {
+	canonical, _, ok := h.CanonicalTool(server, tool)
+	if !ok {
 		return nil, fmt.Errorf("tool %q not found on server %q", tool, server)
 	}
+	tool = canonical
 	namespaced := server + "__" + tool
 	start := time.Now()
 	res, callErr := d.session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
@@ -447,6 +449,26 @@ func (h *Hub) FindTool(server, tool string) (*mcp.Tool, bool) {
 		}
 	}
 	return nil, false
+}
+
+// CanonicalTool resolves tool to its exact downstream name on server,
+// accepting the stutter-collapsed alias. Downstream servers commonly
+// self-prefix their tool names (hitspec's search tool is hitspec_search_web),
+// so the gateway-namespaced form stutters (hitspec__hitspec_search_web) and
+// callers reasonably try hitspec__search_web or {server: "hitspec", tool:
+// "search_web"} — and previously got a bare "tool not found". The exact name
+// always wins; the server-prefixed fallback applies only when the bare name
+// matches nothing, so a genuine downstream tool can never be shadowed.
+func (h *Hub) CanonicalTool(server, tool string) (string, *mcp.Tool, bool) {
+	if t, ok := h.FindTool(server, tool); ok {
+		return tool, t, true
+	}
+	if pref := server + "_" + tool; pref != tool {
+		if t, ok := h.FindTool(server, pref); ok {
+			return pref, t, true
+		}
+	}
+	return tool, nil, false
 }
 
 type resultReceipt struct {

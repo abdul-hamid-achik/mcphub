@@ -78,9 +78,11 @@ func (h *Hub) StartDetached(ctx context.Context, server, tool string, args json.
 	if !d.Connected() {
 		return "", fmt.Errorf("server %q is not connected", server)
 	}
-	if _, ok := h.FindTool(server, tool); !ok {
+	canonical, _, ok := h.CanonicalTool(server, tool)
+	if !ok {
 		return "", fmt.Errorf("tool %q not found on server %q", tool, server)
 	}
+	tool = canonical
 	if timeout <= 0 {
 		timeout = defaultDetachedTimeout
 	}

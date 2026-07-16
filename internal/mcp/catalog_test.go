@@ -611,3 +611,38 @@ func TestListServersCountsAndPinsRespectToolScope(t *testing.T) {
 		t.Fatalf("empty tool scope leaked counts or pins: %#v", empty)
 	}
 }
+
+func TestDescribeToolAcceptsStutterCollapsedAlias(t *testing.T) {
+	// Downstream servers self-prefix their tool names (hitspec_fetch on the
+	// hitspec server), so the namespaced form stutters
+	// (hitspec__hitspec_fetch). Callers reasonably try the collapsed
+	// hitspec__fetch or {server: hitspec, tool: fetch} and previously got
+	// "tool not found"; both must resolve to the canonical downstream name.
+	s := connectedCatalogServer(t, nil)
+	for _, in := range []describeInput{
+		{Tool: "hitspec__fetch"},
+		{Server: "hitspec", Tool: "fetch"},
+		{Server: "hitspec", Tool: "hitspec_fetch"}, // exact split form
+		{Tool: "hitspec__hitspec_fetch"},           // exact combined form
+	} {
+		_, describedAny, err := s.handleDescribeTool(context.Background(), nil, in)
+		if err != nil {
+			t.Fatalf("describe %+v: %v", in, err)
+		}
+		described := describedAny.(map[string]any)
+		if described["error"] != nil {
+			t.Fatalf("describe %+v returned error: %#v", in, described)
+		}
+		if described["tool"] != "hitspec_fetch" || described["namespaced"] != "hitspec__hitspec_fetch" {
+			t.Errorf("describe %+v should report the canonical name, got %#v", in, described)
+		}
+	}
+	// A name that matches nothing even after prefixing still misses.
+	_, missAny, err := s.handleDescribeTool(context.Background(), nil, describeInput{Tool: "hitspec__nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missAny.(map[string]any)["error"] != "tool not found" {
+		t.Errorf("unknown alias should still be not found, got %#v", missAny)
+	}
+}

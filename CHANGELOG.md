@@ -4,6 +4,20 @@ All notable changes to mcphub are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
+## [Unreleased]
+
+### Fixed
+
+- **Stutter-collapsed tool aliases resolve.** Downstream servers commonly
+  self-prefix their tool names (hitspec's search tool is `hitspec_search_web`),
+  so the gateway-namespaced form stutters (`hitspec__hitspec_search_web`) and
+  callers reasonably tried `hitspec__search_web` or
+  `{server: "hitspec", tool: "search_web"}` — and got a bare "tool not found".
+  `mcphub_describe_tool` and `mcphub_call_tool` (sync and detached) now resolve
+  the collapsed alias to the canonical downstream name whenever the bare name
+  matches nothing; exact names always win, so no downstream tool can be
+  shadowed. Receipts, telemetry, and scope checks all use the canonical name.
+
 ## [0.16.0] - 2026-07-15
 
 ### Added
