@@ -114,6 +114,18 @@ func (h *Hub) StartDetached(ctx context.Context, server, tool string, args json.
 	h.detachedMu.Unlock()
 
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	// WithoutCancel keeps the request's values but severs its cancellation, so
+	// hub shutdown would not reach the background call on its own. A small
+	// watcher bridges that: Close cancels shutdownCtx, which cancels dctx, so
+	// a SIGTERM bounds detached work instead of waiting out its full timeout.
+	// The watcher exits with dctx (the worker's deferred cancel fires it).
+	go func() {
+		select {
+		case <-h.shutdownCtx.Done():
+			cancel()
+		case <-dctx.Done():
+		}
+	}()
 	go func() {
 		defer cancel()
 		res, err := h.Call(dctx, server, tool, args)

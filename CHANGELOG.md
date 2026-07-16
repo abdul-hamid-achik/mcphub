@@ -4,6 +4,23 @@ All notable changes to mcphub are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
+## [0.17.0] - 2026-07-16
+
+### Fixed
+
+- **SIGTERM shutdown is bounded with busy detached calls.** `Hub.Close` now
+  signals a shutdown context before tearing down sessions: in-flight detached
+  calls are cancelled instead of running out their full timeouts (up to 30m),
+  and the transport-failure path no longer respawns a downstream child while
+  the gateway is closing — including a TOCTOU window in `ReconnectOne` where
+  a reconnect racing `Close` could install and leak a fresh session.
+
+### Documentation
+
+- CHANGELOG sections backfilled for v0.7.0 through v0.13.0; `mcphub remove`
+  and the persistent-flags list in the README corrected; CI actions pinned to
+  verified commit SHAs and the release build aligned to Go 1.25.5 with -race.
+
 ## [0.16.3] - 2026-07-16
 
 ### Fixed
@@ -119,6 +136,96 @@ follow [Semantic Versioning](https://semver.org/) once it tags releases.
   `mcphub_get_result(callId,cursor)` management tool. Pages are bounded base64 JSON, scope-checked,
   and restart-safe; store failures fail open to the full result instead of losing data. Small
   results, `verbatim: true`, and `response_budget: "0"` remain exact pass-through.
+
+## [0.13.0] - 2026-07-10
+
+### Added
+
+- **`sync --resume <planId>` / `sync --rollback <planId>`.** `--resume` extracts
+  the agent name from the plan ID and re-syncs just that agent with `--write`
+  forced on, re-applying the current desired config. `--rollback` finds the most
+  recent `.bak` backup for that agent's config path and restores it, undoing the
+  last sync. Both parse the `plan_<timestamp>_<agent>` plan IDs generated since
+  v0.10.0.
+
+## [0.12.0] - 2026-07-10
+
+### Added
+
+- **Custom headers and `tvault://` secret refs for remote servers.** A remote
+  (`url`) server may declare a `headers` map, injected into every request via a
+  wrapping `http.RoundTripper` — enabling bearer-token authentication for
+  services like the Obsidian Local REST API plugin. Header values shaped
+  `tvault://<project>/<key>` are resolved at gateway connect time by shelling
+  out to `tvault get`, keeping secrets out of `mcphub.yaml` entirely (the
+  existing `vault:` field only covered stdio servers). TLS verification is
+  auto-skipped for localhost HTTPS endpoints (the common self-signed-cert
+  pattern, safe on loopback), and validation rejects headers on stdio servers.
+
+## [0.11.0] - 2026-07-10
+
+### Added
+
+- **`mcphub_resolve_tool` meta-tool.** Collapses the search → describe → call
+  pattern into one call: it takes a natural-language query, ranks catalog
+  matches (exact name > name substring > description), and returns one
+  recommendation with `required_fields` extracted from the tool's JSON Schema,
+  an `argument_template` skeleton, up to N ranked `alternatives`, and an
+  `ambiguous` flag when the top two rank equally — so a lazy-mode agent can
+  find and call a tool in one step instead of three.
+
+## [0.10.0] - 2026-07-10
+
+### Added
+
+- **Sync plan IDs.** Every sync now generates a durable plan ID
+  (`plan_<timestamp>_<agent>`), carried on each agent's result and included in
+  the JSON output, so a run can be referenced for programmatic resume/rollback.
+
+### Fixed
+
+- **Config and ownership bookkeeping stay consistent.** When a config write
+  succeeded but recording ownership (`SetManaged`) failed, sync previously left
+  the agent config mutated with stale ownership. The backup taken before the
+  apply is now automatically restored in that case, and the error message notes
+  the restore.
+
+## [0.9.0] - 2026-07-10
+
+### Added
+
+- **Response budget + truncation honesty.** `mcphub_call_tool` caps downstream
+  results that exceed a configurable budget (default 32KB): text content blocks
+  are truncated and a notice is appended so the agent knows the result was
+  capped; non-text content passes through. New config: `response_budget` (e.g.
+  `"32KB"`, `"1MB"`, `"0"` for unlimited) and `verbatim: true` to opt out.
+  (Truncation was superseded by lossless result spooling in v0.14.0.)
+
+## [0.8.0] - 2026-07-10
+
+### Added
+
+- **Immediate reconnect on transport failure.** `Hub.Call` now detects
+  transport/protocol failures, invalidates the stale downstream session, and
+  reconnects immediately (`ReconnectOne`) instead of waiting for the 30s
+  background watcher; on a successful reconnect the call was retried once. The
+  existing watcher continues to handle downstreams that fail between calls.
+  (v0.15.0 later removed the automatic replay: an outcome-unknown call is
+  reconnected for future work but never retried.)
+
+## [0.7.0] - 2026-07-06
+
+### Added
+
+- **`add --enabled`** — accepted as a no-op alias for the default (mutually
+  exclusive with `--disabled`), so ecosystem onboarding docs that bake in
+  `mcphub add <name> <cmd> --enabled` work instead of erroring at step one.
+- **`doctor --server <name>` / `status --server <name>`** — a cheap
+  single-server "am I wired into the gateway?" view: registration, enabled
+  state, PATH availability, the agents that route to it, and proxied-call
+  count. `doctor --server <name> --probe` also performs the real handshake and
+  fills `handshake_ok` + `tool_count`; with `--json` the scoped object matches
+  the contract downstream tools (e.g. Cortex) consume.
 
 ## [0.6.0] - 2026-07-06
 
@@ -320,7 +427,20 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   `config.mts` and set the package type. `npm run docs:build` (and `task
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.3...HEAD
+[0.16.3]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.2...v0.16.3
+[0.16.2]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.1...v0.16.2
+[0.16.1]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.3.0...v0.4.0

@@ -814,6 +814,63 @@ func TestReconnectOneDoesNotBlockOnStaleSessionTeardown(t *testing.T) {
 	}
 }
 
+// TestCloseBoundsShutdownAndSkipsReconnect pins the bounded-SIGTERM contract:
+// Close must return promptly while a detached call is still blocked on its
+// downstream (the shutdown watcher cancels the call's background context),
+// and the resulting transport failure must not respawn the downstream — a
+// reconnect during teardown would leave a session nothing ever closes. The
+// call still surfaces the honest outcome-unknown error without a retry.
+func TestCloseBoundsShutdownAndSkipsReconnect(t *testing.T) {
+	var reconnects atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reconnects.Add(1)
+		http.Error(w, "no reconnect during shutdown", http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+
+	release := make(chan struct{})
+	defer close(release)
+	session, tool := gatedDownstream(t, release, &mcp.CallToolResult{})
+	// cfg knows "bg", so any reconnect attempt would dial upstream.
+	h := New(&config.Config{Servers: map[string]config.Server{
+		"bg": {URL: upstream.URL, Transport: "http", Enabled: true},
+	}}, nil, nil)
+	h.downstreams = []*Downstream{{Name: "bg", session: session, Tools: []*mcp.Tool{tool}}}
+
+	id, err := h.StartDetached(context.Background(), "bg", "slow", nil, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call, ok := h.PollDetached(id); !ok || call.Status != DetachedPending {
+		t.Fatalf("setup: detached call not pending: %+v ok=%v", call, ok)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_ = h.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return within 1s while a detached call was blocked downstream")
+	}
+
+	failed := waitDetachedStatus(t, h, id, DetachedFailed)
+	if !strings.Contains(failed.Err, "outcome unknown") || !strings.Contains(failed.Err, "no reconnect was attempted") {
+		t.Fatalf("failed.Err = %q, want shutdown-path outcome-unknown error", failed.Err)
+	}
+	if got := reconnects.Load(); got != 0 {
+		t.Fatalf("shutdown transport failure attempted %d reconnects, want 0", got)
+	}
+	if h.ReconnectOne(context.Background(), "bg") {
+		t.Fatal("ReconnectOne must refuse to respawn a downstream after Close")
+	}
+	if got := reconnects.Load(); got != 0 {
+		t.Fatalf("post-Close ReconnectOne dialed the downstream %d times, want 0", got)
+	}
+}
+
 func TestCanonicalToolCollapsesServerPrefixStutter(t *testing.T) {
 	h := New(&config.Config{}, nil, nil)
 	h.downstreams = []*Downstream{

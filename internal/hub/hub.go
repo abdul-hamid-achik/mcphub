@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -52,6 +53,14 @@ type Hub struct {
 	connectTimeout time.Duration
 	now            func() time.Time // injectable clock for detached-call retention tests
 
+	// shutdownCtx is done once Close begins. Detached calls and other
+	// background work derive from it so a SIGTERM bounds them instead of
+	// waiting out their full timeouts. closing lets hot paths check for
+	// shutdown without a context plumbed through.
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
+	closing        atomic.Bool
+
 	mu          sync.Mutex
 	downstreams []*Downstream
 
@@ -69,7 +78,14 @@ func New(cfg *config.Config, st *store.Store, logger *log.Logger) *Hub {
 		logger = log.New(os.Stderr)
 		logger.SetLevel(log.FatalLevel + 1) // effectively silent
 	}
-	return &Hub{cfg: cfg, store: st, log: logger, connectTimeout: cfg.ConnectTimeoutDuration(), now: time.Now}
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	return &Hub{
+		cfg: cfg, store: st, log: logger,
+		connectTimeout: cfg.ConnectTimeoutDuration(),
+		now:            time.Now,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
+	}
 }
 
 // Connect spawns and connects to every enabled server concurrently. A server
@@ -320,6 +336,11 @@ func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
 	lock := h.serverReconnectLock(server)
 	lock.Lock()
 	defer lock.Unlock()
+	if h.closing.Load() {
+		// A caller that raced past Call's own closing check must not respawn
+		// a downstream Close will never tear down.
+		return false
+	}
 	if d := h.downstream(server); d != nil && d.Connected() {
 		return true // a concurrent reconnect already restored this server
 	}
@@ -330,6 +351,16 @@ func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
 	var stale *mcp.ClientSession
 	swapped := false
 	h.mu.Lock()
+	if h.closing.Load() {
+		// Close may have started (and even finished its teardown) while we
+		// were dialing; installing the fresh session now would leak it. The
+		// re-check is decisive under h.mu: if closing is still false here,
+		// Close has not begun, so it must later take h.mu and will tear down
+		// whatever we swap in.
+		h.mu.Unlock()
+		_ = nd.session.Close()
+		return false
+	}
 	for i, d := range h.downstreams {
 		if d.Name == server {
 			stale = d.session
@@ -400,6 +431,12 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 		// would guarantee the reconnect fails too (connectOne applies its own
 		// bounded connect timeout).
 		h.invalidateDownstream(d)
+		// During shutdown the failure is expected (Close cancelled the call's
+		// context); respawning the downstream now would race the teardown and
+		// leave a fresh session/child process nothing will ever close.
+		if h.closing.Load() {
+			return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (hub is shutting down; request was not retried and no reconnect was attempted)", server, tool, callErr)
+		}
 		if h.ReconnectOne(context.WithoutCancel(ctx), server) {
 			h.log.Info("immediate reconnect succeeded; uncertain call was not replayed", "server", server, "tool", tool)
 			return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (connection restored for future calls; request was not retried)", server, tool, callErr)
@@ -647,8 +684,13 @@ func (h *Hub) ToolCount() int {
 	return n
 }
 
-// Close tears down all downstream sessions.
+// Close tears down all downstream sessions. It first signals shutdown —
+// before taking any lock — so in-flight detached calls are cancelled and
+// failure paths stop respawning downstreams, bounding how long a SIGTERM
+// teardown can take.
 func (h *Hub) Close() error {
+	h.closing.Store(true)
+	h.shutdownCancel()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, d := range h.downstreams {

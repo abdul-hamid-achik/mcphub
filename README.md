@@ -129,7 +129,7 @@ servers earn their context budget and which to disable.
 | `mcphub init [--force] [--from-agents]` | Write a starter `mcphub.yaml`, or `--from-agents` to import servers your harnesses already declare. |
 | `mcphub list` \| `ls` | List configured servers (state, kind, target, tags, description). |
 | `mcphub add <name> [cmd args...]` \| `--url` | Register a server (stdio command or remote `--url`; `--vault` for tvault secrets). |
-| `mcphub remove <server>` \| `rm` | Offload a server from `mcphub.yaml`. |
+| `mcphub remove <server>` \| `rm` | Remove a server's definition from `mcphub.yaml`. |
 | `mcphub enable <server>` | Enable a server in `mcphub.yaml`. |
 | `mcphub disable <server>` | Disable a server in `mcphub.yaml`. |
 | `mcphub groups` | List server groups. |
@@ -145,7 +145,8 @@ servers earn their context budget and which to disable.
 | `mcphub mcp serve` | Run the gateway MCP stdio server that proxies all enabled servers. |
 | `mcphub agents` | List all supported agent harnesses and their status (configured / available / not installed). |
 
-**Persistent flags:** `--config <path>`, `--db <path>`, `--json`, `--version`.
+**Persistent flags:** `--config <path>`, `--db <path>`, `--json`. (`--version`
+is root-only: `mcphub --version`.)
 
 **Environment:** `MCPHUB_CONFIG` and `MCPHUB_DB` override the default paths
 (`~/.config/mcphub/mcphub.yaml`, `~/.local/share/mcphub/mcphub.db`). The config is also picked
