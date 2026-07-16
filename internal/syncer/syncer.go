@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
@@ -27,6 +29,42 @@ type AgentResult struct {
 // generatePlanID returns a short unique plan ID for a sync run.
 func generatePlanID(agent string) string {
 	return fmt.Sprintf("plan_%d_%s", time.Now().UnixNano(), agent)
+}
+
+// Self returns the path sync writes as the gateway command in harness
+// configs. os.Executable() alone is hazardous here: run sync from a
+// Caskroom-versioned path (or any duplicate install) and every harness would
+// churn to that unstable location on the next --write. When the executable's
+// basename resolves on PATH to the same underlying file, the PATH location
+// wins — it is the stable, upgrade-surviving name (/opt/homebrew/bin/mcphub
+// is a symlink homebrew repoints on every upgrade). A genuinely different
+// binary (a dev build outside PATH) keeps its explicit path: pointing
+// harnesses at it is then an intentional act, not an accident of cwd.
+func Self() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return normalizeSelf(exe), nil
+}
+
+func normalizeSelf(exe string) string {
+	fromPath, err := exec.LookPath(filepath.Base(exe))
+	if err != nil {
+		return exe
+	}
+	realPath, err := filepath.EvalSymlinks(fromPath)
+	if err != nil {
+		return exe
+	}
+	realExe, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return exe
+	}
+	if realPath == realExe {
+		return fromPath
+	}
+	return exe
 }
 
 // Desired computes the server entries mcphub wants present in an agent: in

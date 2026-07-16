@@ -246,3 +246,45 @@ func TestReconcileAllAdapterKinds(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeSelfPrefersStablePathLocation(t *testing.T) {
+	// A binary reachable via PATH must be recorded under its PATH name (the
+	// stable, upgrade-surviving symlink), not whatever versioned or temporary
+	// path it happened to be launched from — otherwise every sync --write run
+	// from a Caskroom-versioned path would churn all harness configs.
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "versions", "1.2.3")
+	binDir := filepath.Join(dir, "bin")
+	for _, d := range []string{realDir, binDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	realBin := filepath.Join(realDir, "mcphub-fake")
+	if err := os.WriteFile(realBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stable := filepath.Join(binDir, "mcphub-fake")
+	if err := os.Symlink(realBin, stable); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	// Launched from the versioned real path: normalize to the PATH symlink.
+	if got := normalizeSelf(realBin); got != stable {
+		t.Errorf("versioned launch should normalize to %s, got %s", stable, got)
+	}
+	// Launched via the stable path: unchanged.
+	if got := normalizeSelf(stable); got != stable {
+		t.Errorf("stable launch should stay %s, got %s", stable, got)
+	}
+	// A DIFFERENT binary with the same name keeps its explicit path — a dev
+	// build must never be silently swapped for the installed one.
+	devBin := filepath.Join(dir, "mcphub-fake")
+	if err := os.WriteFile(devBin, []byte("#!/bin/sh\n# dev\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := normalizeSelf(devBin); got != devBin {
+		t.Errorf("dev build should keep its path %s, got %s", devBin, got)
+	}
+}

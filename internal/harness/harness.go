@@ -93,6 +93,12 @@ const (
 type Change struct {
 	Server string `json:"server"`
 	Action Action `json:"action"`
+	// Detail explains an update field by field ("command \"mcphub\" →
+	// \"/opt/homebrew/bin/mcphub\"; args [] → [mcp serve]") so a dry run is
+	// reviewable without hand-diffing the harness file. Env VALUES are never
+	// included — harness env blocks commonly hold credentials — only which
+	// keys were added/removed/changed.
+	Detail string `json:"detail,omitempty"`
 }
 
 // Plan is the set of changes an adapter would make (or made) to one file.
@@ -247,22 +253,80 @@ func diff(existing map[string]MCPServer, desired []MCPServer, owned []string) []
 		cur, ok := existing[d.Name]
 		switch {
 		case !ok:
-			changes = append(changes, Change{d.Name, ActionAdd})
+			changes = append(changes, Change{Server: d.Name, Action: ActionAdd})
 		case cur.equal(d):
-			changes = append(changes, Change{d.Name, ActionUnchanged})
+			changes = append(changes, Change{Server: d.Name, Action: ActionUnchanged})
 		default:
-			changes = append(changes, Change{d.Name, ActionUpdate})
+			changes = append(changes, Change{Server: d.Name, Action: ActionUpdate, Detail: updateDetail(cur, d)})
 		}
 	}
 	for _, name := range owned {
 		if _, stillWanted := desiredByName[name]; !stillWanted {
 			if _, present := existing[name]; present {
-				changes = append(changes, Change{name, ActionRemove})
+				changes = append(changes, Change{Server: name, Action: ActionRemove})
 			}
 		}
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Server < changes[j].Server })
 	return changes
+}
+
+// maxDetailBytes bounds a Change.Detail line so one pathological entry cannot
+// flood a sync report.
+const maxDetailBytes = 240
+
+// updateDetail explains why an entry is planned as an update, field by field.
+// Env VALUES are deliberately omitted (see Change.Detail).
+func updateDetail(cur, want MCPServer) string {
+	quote := func(s string) string {
+		if s == "" {
+			return "(none)"
+		}
+		return fmt.Sprintf("%q", s)
+	}
+	var parts []string
+	if cur.Command != want.Command {
+		parts = append(parts, fmt.Sprintf("command %s → %s", quote(cur.Command), quote(want.Command)))
+	}
+	if !reflect.DeepEqual(nonEmpty(cur.Args), nonEmpty(want.Args)) {
+		parts = append(parts, fmt.Sprintf("args %v → %v", cur.Args, want.Args))
+	}
+	if cur.URL != want.URL {
+		parts = append(parts, fmt.Sprintf("url %s → %s", quote(cur.URL), quote(want.URL)))
+	}
+	if cur.Transport != want.Transport {
+		parts = append(parts, fmt.Sprintf("transport %s → %s", quote(cur.Transport), quote(want.Transport)))
+	}
+	if envDiff := envKeyDiff(cur.Env, want.Env); envDiff != "" {
+		parts = append(parts, "env keys "+envDiff)
+	}
+	detail := strings.Join(parts, "; ")
+	if len(detail) > maxDetailBytes {
+		detail = detail[:maxDetailBytes] + "…"
+	}
+	return detail
+}
+
+// envKeyDiff summarizes env drift as +added -removed ~changed KEY NAMES only.
+func envKeyDiff(cur, want map[string]string) string {
+	var marks []string
+	for k, v := range want {
+		if curV, ok := cur[k]; !ok {
+			marks = append(marks, "+"+k)
+		} else if curV != v {
+			marks = append(marks, "~"+k)
+		}
+	}
+	for k := range cur {
+		if _, ok := want[k]; !ok {
+			marks = append(marks, "-"+k)
+		}
+	}
+	if len(marks) == 0 {
+		return ""
+	}
+	sort.Strings(marks)
+	return strings.Join(marks, " ")
 }
 
 // backup copies path to path.bak-<timestamp> before mutation. It is a no-op

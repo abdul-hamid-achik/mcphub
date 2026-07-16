@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"text/tabwriter"
 	"time"
@@ -75,7 +74,7 @@ func buildScopedServerReport(ctx context.Context, c *config.Config, st *store.St
 		rep.Unused = true
 	}
 
-	self, _ := os.Executable()
+	self, _ := syncer.Self()
 	results := syncer.Reconcile(ctx, c, st, self, nil, false)
 	for _, r := range results {
 		if !rep.Enabled || !agentRoutesTo(c.Agents[r.Agent], name) {

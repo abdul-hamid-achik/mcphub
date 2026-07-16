@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -75,7 +74,7 @@ a machine-readable one.`,
 				return renderScopedServerReport(cmd, rep)
 			}
 
-			self, _ := os.Executable()
+			self, _ := syncer.Self()
 			results := syncer.Reconcile(ctx, c, st, self, nil, false)
 			totals, _ := st.Totals(ctx)
 			serverStats, _ := st.ServerStats(ctx)

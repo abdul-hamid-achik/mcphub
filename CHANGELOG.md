@@ -4,6 +4,27 @@ All notable changes to mcphub are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
+## [0.16.2] - 2026-07-16
+
+### Added
+
+- **Sync dry runs explain updates field by field.** A planned `update` now
+  prints what actually differs (`command "mcphub" → "/opt/homebrew/bin/mcphub";
+  args [] → [mcp serve]`) so a pending change is reviewable without hand-diffing
+  the harness file. Env VALUES never appear — harness env blocks commonly hold
+  credentials — only which keys were added/removed/changed. The detail is also
+  in the JSON plan output (`changes[].detail`).
+
+### Fixed
+
+- **Gateway command paths no longer churn with the launch location.** Sync
+  recorded `os.Executable()` verbatim as the harness `command`, so running
+  `sync --write` from a Caskroom-versioned path (or any duplicate install)
+  would repoint every harness config at that unstable location. When the
+  executable's basename resolves on PATH to the same underlying file, the
+  stable PATH name is recorded instead; a genuinely different binary (a dev
+  build outside PATH) keeps its explicit path.
+
 ## [0.16.1] - 2026-07-16
 
 ### Fixed

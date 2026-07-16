@@ -93,7 +93,7 @@ rest. In direct mode every enabled server is written into the agent.`,
 			}
 			defer st.Close()
 
-			self, err := os.Executable()
+			self, err := syncer.Self()
 			if err != nil {
 				return fmt.Errorf("locate mcphub binary: %w", err)
 			}
@@ -201,6 +201,9 @@ func printResult(out io.Writer, r syncer.AgentResult) {
 			continue
 		}
 		fmt.Fprintf(out, "    %-8s %s\n", ch.Action, ch.Server)
+		if ch.Detail != "" {
+			fmt.Fprintf(out, "             %s\n", ch.Detail)
+		}
 	}
 	if r.Plan.Applied {
 		if r.Plan.Backup != "" {

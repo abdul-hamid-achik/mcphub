@@ -155,10 +155,10 @@ func TestDiffTransitions(t *testing.T) {
 	owned := []string{"b", "gone_present", "gone_absent"} // gone_absent not in file
 	got := diff(existing, desired, owned)
 	want := []Change{
-		{"a", ActionUnchanged},
-		{"b", ActionUpdate},
-		{"c", ActionAdd},
-		{"gone_present", ActionRemove},
+		{Server: "a", Action: ActionUnchanged},
+		{Server: "b", Action: ActionUpdate, Detail: `command "old" → "new"`},
+		{Server: "c", Action: ActionAdd},
+		{Server: "gone_present", Action: ActionRemove},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("diff mismatch:\n got %+v\nwant %+v", got, want)
@@ -994,5 +994,50 @@ func TestKimiRemoteEnvConverges(t *testing.T) {
 	}
 	if again.HasChanges() {
 		t.Fatalf("second dry-run not converged: %+v", again.Changes)
+	}
+}
+
+func TestDiffUpdateDetailIsRedactedAndBounded(t *testing.T) {
+	// An update explains what changes field by field so a dry run is
+	// reviewable — but env VALUES never appear (harness env blocks commonly
+	// hold credentials): only +added/-removed/~changed key names.
+	existing := map[string]MCPServer{"mcphub": {
+		Name:    "mcphub",
+		Command: "mcphub",
+		Env:     map[string]string{"API_TOKEN": "hunter2", "KEEP": "same", "OLD": "x"},
+	}}
+	desired := []MCPServer{{
+		Name:    "mcphub",
+		Command: "/opt/homebrew/bin/mcphub",
+		Args:    []string{"mcp", "serve"},
+		Env:     map[string]string{"API_TOKEN": "hunter3", "KEEP": "same", "NEW": "y"},
+	}}
+	changes := diff(existing, desired, nil)
+	if len(changes) != 1 || changes[0].Action != ActionUpdate {
+		t.Fatalf("expected one update, got %+v", changes)
+	}
+	detail := changes[0].Detail
+	for _, want := range []string{
+		`command "mcphub" → "/opt/homebrew/bin/mcphub"`,
+		"args [] → [mcp serve]",
+		"~API_TOKEN", "+NEW", "-OLD",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail missing %q: %s", want, detail)
+		}
+	}
+	for _, secret := range []string{"hunter2", "hunter3", "same", "KEEP"} {
+		if strings.Contains(detail, secret) {
+			t.Errorf("detail leaks %q: %s", secret, detail)
+		}
+	}
+	if len(detail) > maxDetailBytes+len("…") {
+		t.Errorf("detail exceeds bound: %d bytes", len(detail))
+	}
+
+	// Adds and unchanged rows carry no detail.
+	addChanges := diff(map[string]MCPServer{}, desired, nil)
+	if len(addChanges) != 1 || addChanges[0].Detail != "" {
+		t.Errorf("add should have no detail: %+v", addChanges)
 	}
 }
