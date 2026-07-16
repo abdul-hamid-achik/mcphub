@@ -32,12 +32,15 @@ package harness
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // MCPServer is the format-neutral description of one server entry. Adapters
@@ -276,7 +279,9 @@ func diff(existing map[string]MCPServer, desired []MCPServer, owned []string) []
 const maxDetailBytes = 240
 
 // updateDetail explains why an entry is planned as an update, field by field.
-// Env VALUES are deliberately omitted (see Change.Detail).
+// Env VALUES are deliberately omitted (see Change.Detail), arg values that
+// look like secrets are masked, and URLs are stripped of query/fragment/
+// userinfo — a dry-run report must be safe to paste into an issue or CI log.
 func updateDetail(cur, want MCPServer) string {
 	quote := func(s string) string {
 		if s == "" {
@@ -289,10 +294,10 @@ func updateDetail(cur, want MCPServer) string {
 		parts = append(parts, fmt.Sprintf("command %s → %s", quote(cur.Command), quote(want.Command)))
 	}
 	if !reflect.DeepEqual(nonEmpty(cur.Args), nonEmpty(want.Args)) {
-		parts = append(parts, fmt.Sprintf("args %v → %v", cur.Args, want.Args))
+		parts = append(parts, fmt.Sprintf("args %v → %v", redactArgs(cur.Args), redactArgs(want.Args)))
 	}
 	if cur.URL != want.URL {
-		parts = append(parts, fmt.Sprintf("url %s → %s", quote(cur.URL), quote(want.URL)))
+		parts = append(parts, fmt.Sprintf("url %s → %s", quote(redactURL(cur.URL)), quote(redactURL(want.URL))))
 	}
 	if cur.Transport != want.Transport {
 		parts = append(parts, fmt.Sprintf("transport %s → %s", quote(cur.Transport), quote(want.Transport)))
@@ -300,11 +305,96 @@ func updateDetail(cur, want MCPServer) string {
 	if envDiff := envKeyDiff(cur.Env, want.Env); envDiff != "" {
 		parts = append(parts, "env keys "+envDiff)
 	}
-	detail := strings.Join(parts, "; ")
-	if len(detail) > maxDetailBytes {
-		detail = detail[:maxDetailBytes] + "…"
+	return clampDetail(sanitizeDetail(strings.Join(parts, "; ")))
+}
+
+// secretFlagRe matches flag names whose VALUE must never appear in a report.
+var secretFlagRe = regexp.MustCompile(`(?i)(token|secret|key|pass|auth|credential|bearer)`)
+
+// redactArgs masks values that ride along in command arguments: "--token=xyz"
+// becomes "--token=***", and the argument FOLLOWING a secret-named flag
+// ("--api-key xyz") is masked too. Structural args (subcommands, --agent
+// names) pass through — they are what the diff exists to show.
+func redactArgs(args []string) []string {
+	out := make([]string, len(args))
+	maskNext := false
+	for i, a := range args {
+		switch {
+		case maskNext:
+			out[i] = "***"
+			maskNext = false
+		case strings.HasPrefix(a, "-") && strings.Contains(a, "="):
+			name, _, _ := strings.Cut(a, "=")
+			if secretFlagRe.MatchString(name) {
+				out[i] = name + "=***"
+			} else {
+				out[i] = a
+			}
+		default:
+			out[i] = a
+			if strings.HasPrefix(a, "-") && secretFlagRe.MatchString(a) {
+				maskNext = true
+			}
+		}
 	}
-	return detail
+	return out
+}
+
+// redactURL drops the query string, fragment, and userinfo — the parts of a
+// URL that carry API keys — keeping scheme://host/path for identification.
+func redactURL(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		if i := strings.IndexAny(raw, "?#"); i >= 0 {
+			return raw[:i] + "?…"
+		}
+		return raw
+	}
+	changed := false
+	if u.RawQuery != "" {
+		u.RawQuery = "%E2%80%A6"
+		changed = true
+	}
+	if u.Fragment != "" {
+		u.Fragment = ""
+		changed = true
+	}
+	if u.User != nil {
+		u.User = url.User("***")
+		changed = true
+	}
+	if !changed {
+		return raw
+	}
+	return u.String()
+}
+
+// sanitizeDetail strips control characters (terminal escape sequences,
+// carriage returns) so a hostile arg value cannot inject report lines or
+// escape codes into the sync output.
+func sanitizeDetail(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// clampDetail bounds the detail on a rune boundary so truncation never emits
+// invalid UTF-8.
+func clampDetail(detail string) string {
+	if len(detail) <= maxDetailBytes {
+		return detail
+	}
+	cut := maxDetailBytes
+	for cut > 0 && !utf8.RuneStart(detail[cut]) {
+		cut--
+	}
+	return detail[:cut] + "…"
 }
 
 // envKeyDiff summarizes env drift as +added -removed ~changed KEY NAMES only.

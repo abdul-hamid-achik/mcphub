@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 var gateway = []MCPServer{{Name: "mcphub", Command: "/bin/mcphub", Args: []string{"mcp", "serve"}}}
@@ -1039,5 +1040,49 @@ func TestDiffUpdateDetailIsRedactedAndBounded(t *testing.T) {
 	addChanges := diff(map[string]MCPServer{}, desired, nil)
 	if len(addChanges) != 1 || addChanges[0].Detail != "" {
 		t.Errorf("add should have no detail: %+v", addChanges)
+	}
+}
+
+func TestUpdateDetailRedactsSecretsInArgsAndURLs(t *testing.T) {
+	// Args can carry secrets (--token=xyz, --api-key xyz) and URLs can carry
+	// them in query strings and userinfo — none may reach Detail (panel
+	// review 2026-07-16: both leaked verbatim via %v / raw quoting).
+	existing := map[string]MCPServer{"gw": {
+		Name: "gw", Command: "gw",
+		Args: []string{"serve", "--token=hunter2", "--api-key", "hunter3", "--agent", "claude"},
+		URL:  "https://user:pw@api.example.com/mcp?api_key=hunter4#hunter5",
+	}}
+	desired := []MCPServer{{
+		Name: "gw", Command: "gw",
+		Args: []string{"serve", "--token=hunter6", "--api-key", "hunter7", "--agent", "claude"},
+		URL:  "https://api.example.com/mcp?api_key=hunter8",
+	}}
+	detail := diff(existing, desired, nil)[0].Detail
+	for _, secret := range []string{"hunter2", "hunter3", "hunter4", "hunter5", "hunter6", "hunter7", "hunter8", "user:pw"} {
+		if strings.Contains(detail, secret) {
+			t.Errorf("detail leaks %q: %s", secret, detail)
+		}
+	}
+	for _, want := range []string{"--token=***", "--agent", "claude", "api.example.com/mcp"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail missing structural part %q: %s", want, detail)
+		}
+	}
+}
+
+func TestUpdateDetailSanitizesControlCharsAndRuneBoundary(t *testing.T) {
+	// A hostile arg value must not inject terminal escapes or report lines,
+	// and byte truncation must never split a multibyte rune.
+	existing := map[string]MCPServer{"s": {Name: "s", Command: "old"}}
+	desired := []MCPServer{{Name: "s", Command: "evil\x1b[2Jcmd\r\napplied", Args: []string{strings.Repeat("é", 200)}}}
+	detail := diff(existing, desired, nil)[0].Detail
+	if strings.ContainsAny(detail, "\x1b\r\n") {
+		t.Errorf("detail contains control characters: %q", detail)
+	}
+	if !utf8.ValidString(detail) {
+		t.Errorf("detail is not valid UTF-8 after truncation: %q", detail)
+	}
+	if len(detail) > maxDetailBytes+len("…") {
+		t.Errorf("detail exceeds bound: %d", len(detail))
 	}
 }

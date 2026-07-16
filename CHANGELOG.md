@@ -4,6 +4,25 @@ All notable changes to mcphub are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
+## [0.16.3] - 2026-07-16
+
+### Fixed
+
+- **Sync detail no longer leaks secrets.** The v0.16.2 field-level dry-run
+  detail printed argument values and full URLs verbatim: `--token=xyz` and
+  query-string API keys reached the report (panel review 2026-07-16, same
+  day). Argument values behind secret-named flags are now masked
+  (`--token=***`, `--api-key ***`), URLs are stripped of query strings,
+  fragments, and userinfo, control characters are removed so a hostile value
+  cannot inject report lines or terminal escapes, and truncation happens on a
+  rune boundary so the detail is always valid UTF-8.
+
+### Documentation
+
+- The sync guide documents the field-level `update` detail and its redaction
+  rules; the meta-tools reference documents stutter-collapsed alias
+  resolution (v0.16.1).
+
 ## [0.16.2] - 2026-07-16
 
 ### Added

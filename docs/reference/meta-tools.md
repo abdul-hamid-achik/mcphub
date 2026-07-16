@@ -92,6 +92,17 @@ Returns a single downstream tool's description and its **full JSON input
 schema** — enough to construct a valid `mcphub_call_tool` request. It accepts
 the server and tool separately or the combined `server__tool` form.
 
+Many downstream servers self-prefix their tool names (hitspec's search tool is
+`hitspec_search_web`), which makes the namespaced form stutter
+(`hitspec__hitspec_search_web`). Since v0.16.1 the gateway also resolves the
+**stutter-collapsed alias**: `hitspec__search_web` — or
+`{server: "hitspec", tool: "search_web"}` — resolves to the canonical
+downstream name whenever the bare name matches nothing on that server. The
+exact name always wins, so a real downstream tool can never be shadowed by the
+alias. This applies to `mcphub_describe_tool` and to `mcphub_call_tool` (both
+synchronous and detached); responses, receipts, and telemetry always report
+the canonical name.
+
 **When to call it:** after a search hit (or when you already know the tool
 name) but before invoking, if you are not certain what arguments the tool
 expects. Skip it when the argument shape is obvious or already known.

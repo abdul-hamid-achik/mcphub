@@ -25,11 +25,23 @@ nothing:
 ```
 » claude  (claude, gateway) → /Users/you/.claude.json
     add      mcphub
+» local-agent  (local-agent, gateway) → /Users/you/.config/local-agent/config.yaml
+    update   mcphub
+             command "mcphub" → "/opt/homebrew/bin/mcphub"
 » opencode  (opencode, direct) → /Users/you/.config/opencode/opencode.json
     up to date
 
 Dry run. Re-run with --write to apply (a .bak is saved first).
 ```
+
+Since v0.16.2 an `update` row explains **what actually differs**, field by
+field (command, args, url, transport), so a pending change is reviewable
+without hand-diffing the file. The detail is redacted by design: env
+**values** never appear (only which keys were added/removed/changed, as
+`+KEY -KEY ~KEY`), argument values behind secret-named flags are masked
+(`--token=***`), and URLs are stripped of query strings, fragments, and
+userinfo. The same detail is available programmatically in the JSON plan
+output as `changes[].detail`.
 
 Each line shows the agent, its type, its resolved
 [mode](/guide/concepts#gateway-vs-direct), and the target file, followed by one
