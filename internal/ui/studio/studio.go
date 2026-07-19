@@ -95,7 +95,10 @@ type Model struct {
 
 // New builds a Studio model over the given config and (optional) store.
 func New(cfg *config.Config, cfgPath string, st *store.Store) Model {
-	self, _ := os.Executable()
+	// Same stable gateway path the CLI uses: PATH basename when it resolves
+	// to the same file as os.Executable, so TUI apply does not reintroduce
+	// Caskroom/versioned churn into every harness.
+	self, _ := syncer.Self()
 	m := Model{
 		cfg:     cfg,
 		cfgPath: cfgPath,
@@ -676,9 +679,12 @@ func (m Model) renderSyncPanel() string {
 		b.WriteString(head + "\n")
 		for _, ch := range r.Plan.Changes {
 			switch ch.Action {
-			case "add", "update":
+			case harness.ActionAdd, harness.ActionUpdate:
 				b.WriteString("    " + addStyle.Render("+ "+ch.Server) + "\n")
-			case "remove":
+				if ch.Detail != "" {
+					b.WriteString("      " + dimStyle.Render(ch.Detail) + "\n")
+				}
+			case harness.ActionRemove:
 				b.WriteString("    " + removeStyle.Render("- "+ch.Server) + "\n")
 			}
 		}

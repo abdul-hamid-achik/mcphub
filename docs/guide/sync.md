@@ -39,9 +39,11 @@ field (command, args, url, transport), so a pending change is reviewable
 without hand-diffing the file. The detail is redacted by design: env
 **values** never appear (only which keys were added/removed/changed, as
 `+KEY -KEY ~KEY`), argument values behind secret-named flags are masked
-(`--token=***`), and URLs are stripped of query strings, fragments, and
-userinfo. The same detail is available programmatically in the JSON plan
-output as `changes[].detail`.
+(`--token=***`), docker-style `-e` / `--env` assignments keep the key and
+mask the value (`GITHUB_TOKEN=***`), URL-shaped args and the modeled `url`
+field lose query strings, fragments, and userinfo, and control characters
+are stripped. The same detail is available programmatically in the JSON plan
+output as `changes[].detail`, and the Studio TUI shows it under each update.
 
 Each line shows the agent, its type, its resolved
 [mode](/guide/concepts#gateway-vs-direct), and the target file, followed by one

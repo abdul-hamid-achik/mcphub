@@ -423,10 +423,13 @@ type headerRoundTripper struct {
 }
 
 func (rt *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Clone first: http.RoundTripper must not mutate the caller's request.
+	// Concurrent remote MCP calls (and redirect handling) can share header maps.
+	r := req.Clone(req.Context())
 	for k, v := range rt.headers {
-		req.Header.Set(k, v)
+		r.Header.Set(k, v)
 	}
-	return rt.base.RoundTrip(req)
+	return rt.base.RoundTrip(r)
 }
 
 // isLocalhostHTTPS reports whether rawURL is an https:// URL pointing at a
@@ -476,15 +479,22 @@ type ToolMount struct {
 // mcp.Tool JSON values (description, schemas, annotations, icons, _meta, and
 // future SDK fields), not just InputSchema. The token figures are explicitly
 // approximate at four serialized bytes per token.
+//
+// AdvertisedNames and OmittedNames list the namespaced tool names from the
+// deterministic first-fit pass so operators can answer "why isn't X listed?"
+// without re-running size math by hand. Both slices are empty when no budget
+// was applied or nothing was eligible.
 type ToolMountReport struct {
-	BudgetBytes               int `json:"budget_bytes"`
-	EligibleTools             int `json:"eligible_tools"`
-	AdvertisedTools           int `json:"advertised_tools"`
-	OmittedTools              int `json:"omitted_tools"`
-	EligibleDefinitionBytes   int `json:"eligible_definition_bytes"`
-	AdvertisedDefinitionBytes int `json:"advertised_definition_bytes"`
-	EligibleEstimatedTokens   int `json:"eligible_estimated_tokens"`
-	AdvertisedEstimatedTokens int `json:"advertised_estimated_tokens"`
+	BudgetBytes               int      `json:"budget_bytes"`
+	EligibleTools             int      `json:"eligible_tools"`
+	AdvertisedTools           int      `json:"advertised_tools"`
+	OmittedTools              int      `json:"omitted_tools"`
+	EligibleDefinitionBytes   int      `json:"eligible_definition_bytes"`
+	AdvertisedDefinitionBytes int      `json:"advertised_definition_bytes"`
+	EligibleEstimatedTokens   int      `json:"eligible_estimated_tokens"`
+	AdvertisedEstimatedTokens int      `json:"advertised_estimated_tokens"`
+	AdvertisedNames           []string `json:"advertised_names,omitempty"`
+	OmittedNames              []string `json:"omitted_names,omitempty"`
 }
 
 type budgetedToolCandidate struct {
@@ -583,6 +593,7 @@ func (h *Hub) MatchingToolsBudgeted(pred func(namespaced string) bool, budgetByt
 	for _, candidate := range candidates {
 		report.EligibleDefinitionBytes += candidate.bytes
 		if report.AdvertisedDefinitionBytes+candidate.bytes > budgetBytes {
+			report.OmittedNames = append(report.OmittedNames, candidate.namespaced)
 			continue
 		}
 		mounts = append(mounts, ToolMount{
@@ -591,6 +602,7 @@ func (h *Hub) MatchingToolsBudgeted(pred func(namespaced string) bool, budgetByt
 		})
 		report.AdvertisedTools++
 		report.AdvertisedDefinitionBytes += candidate.bytes
+		report.AdvertisedNames = append(report.AdvertisedNames, candidate.namespaced)
 	}
 	report.OmittedTools = report.EligibleTools - report.AdvertisedTools
 	report.EligibleEstimatedTokens = estimatedDefinitionTokens(report.EligibleDefinitionBytes)
@@ -1036,17 +1048,23 @@ func (h *Hub) ToolCount() int {
 // Close tears down all downstream sessions. It first signals shutdown —
 // before taking any lock — so in-flight detached calls are cancelled and
 // failure paths stop respawning downstreams, bounding how long a SIGTERM
-// teardown can take.
+// teardown can take. Session Close runs outside h.mu: a stdio child that
+// ignores the kill signal can block for its grace period, and that must not
+// convoy every other hub path waiting on the lock.
 func (h *Hub) Close() error {
 	h.closing.Store(true)
 	h.shutdownCancel()
+	var sessions []*mcp.ClientSession
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for _, d := range h.downstreams {
 		d.deactivateToolRefresh()
 		if session, _ := d.connectionSnapshot(); session != nil {
-			_ = session.Close()
+			sessions = append(sessions, session)
 		}
+	}
+	h.mu.Unlock()
+	for _, session := range sessions {
+		_ = session.Close()
 	}
 	return nil
 }
@@ -1073,19 +1091,25 @@ func (h *Hub) Watch(ctx context.Context) {
 
 // reconnectFailed tries to reconnect every non-connected downstream. Successful
 // reconnects replace the old entry in the slice and close the stale session.
+// The fence matches ReconnectOne: skip when the hub is closing, serialize per
+// server so Watch cannot thrash with Call-driven reconnect, re-check closing
+// under h.mu before install, and tear stale sessions down asynchronously so a
+// hung child cannot stall the whole Watch cycle.
 func (h *Hub) reconnectFailed(ctx context.Context) {
+	if h.closing.Load() {
+		return
+	}
 	// Snapshot the names+configs of failed downstreams under the lock.
 	type failed struct {
-		index int
-		name  string
-		srv   config.Server
-		old   *Downstream
+		name string
+		srv  config.Server
+		old  *Downstream
 	}
 	var toReconnect []failed
 	h.mu.Lock()
-	for i, d := range h.downstreams {
+	for _, d := range h.downstreams {
 		if !d.Connected() {
-			toReconnect = append(toReconnect, failed{i, d.Name, h.cfg.Servers[d.Name], d})
+			toReconnect = append(toReconnect, failed{d.Name, h.cfg.Servers[d.Name], d})
 		}
 	}
 	h.mu.Unlock()
@@ -1093,33 +1117,63 @@ func (h *Hub) reconnectFailed(ctx context.Context) {
 		return
 	}
 	for _, f := range toReconnect {
+		if h.closing.Load() {
+			return
+		}
+		lock := h.serverReconnectLock(f.name)
+		lock.Lock()
+		if h.closing.Load() {
+			lock.Unlock()
+			return
+		}
+		if d := h.downstream(f.name); d != nil && d.Connected() {
+			// A concurrent ReconnectOne already restored this server.
+			lock.Unlock()
+			continue
+		}
 		nd := h.connectOne(ctx, f.name, f.srv)
-		if nd.Connected() {
-			swapped := false
-			h.mu.Lock()
-			// Guard against a concurrent Connect/refresh that may have replaced
-			// the slice already; only swap if the old pointer still matches.
-			if i := indexOf(h.downstreams, f.old); i >= 0 {
-				f.old.deactivateToolRefresh()
-				h.downstreams[i] = nd
-				swapped = true
-			}
+		if !nd.Connected() {
+			lock.Unlock()
+			h.log.Warn("downstream still unavailable", "server", f.name, "err", nd.ErrorSnapshot())
+			continue
+		}
+		var stale *mcp.ClientSession
+		swapped := false
+		h.mu.Lock()
+		if h.closing.Load() {
+			// Close raced the dial; installing now would leak a session nobody
+			// tears down. Discard the fresh connection instead.
 			h.mu.Unlock()
-			if !swapped {
-				if session, _ := nd.connectionSnapshot(); session != nil {
-					_ = session.Close()
-				}
-				continue
-			}
-			if session, _ := f.old.connectionSnapshot(); session != nil {
+			if session, _ := nd.connectionSnapshot(); session != nil {
 				_ = session.Close()
 			}
-			nd.activateToolRefresh(h)
-			h.notifyDownstreamChange()
-			h.log.Info("downstream reconnected", "server", f.name, "tools", len(nd.ToolsSnapshot()))
-		} else {
-			h.log.Warn("downstream still unavailable", "server", f.name, "err", nd.ErrorSnapshot())
+			lock.Unlock()
+			return
 		}
+		// Guard against a concurrent Connect/refresh that may have replaced
+		// the slice already; only swap if the old pointer still matches.
+		if i := indexOf(h.downstreams, f.old); i >= 0 {
+			f.old.deactivateToolRefresh()
+			stale, _ = f.old.connectionSnapshot()
+			h.downstreams[i] = nd
+			swapped = true
+		}
+		h.mu.Unlock()
+		if !swapped {
+			if session, _ := nd.connectionSnapshot(); session != nil {
+				_ = session.Close()
+			}
+			lock.Unlock()
+			continue
+		}
+		if stale != nil {
+			// Same as ReconnectOne: stdio close can block for kill grace.
+			go func() { _ = stale.Close() }()
+		}
+		nd.activateToolRefresh(h)
+		h.notifyDownstreamChange()
+		h.log.Info("downstream reconnected", "server", f.name, "tools", len(nd.ToolsSnapshot()))
+		lock.Unlock()
 	}
 }
 

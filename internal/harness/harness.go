@@ -311,33 +311,84 @@ func updateDetail(cur, want MCPServer) string {
 // secretFlagRe matches flag names whose VALUE must never appear in a report.
 var secretFlagRe = regexp.MustCompile(`(?i)(token|secret|key|pass|auth|credential|bearer)`)
 
-// redactArgs masks values that ride along in command arguments: "--token=xyz"
-// becomes "--token=***", and the argument FOLLOWING a secret-named flag
-// ("--api-key xyz") is masked too. Structural args (subcommands, --agent
-// names) pass through — they are what the diff exists to show.
+// envFlagExactRe matches docker-style env injection flags. Their next argument
+// (or =value) is almost always KEY=secret and must not reach Detail.
+var envFlagExactRe = regexp.MustCompile(`(?i)^(-e|--env|--dotenv)$`)
+
+// redactArgs masks values that ride along in command arguments:
+//   - "--token=xyz" / "--api-key xyz" (secret-named flags)
+//   - "-e KEY=val" / "--env=KEY=val" / "--dotenv path-or-assign" (env inject)
+//   - URL-shaped tokens (query / userinfo / fragment scrubbed via redactURL)
+//
+// Structural args (subcommands, --agent names, plain paths) pass through —
+// they are what the diff exists to show.
 func redactArgs(args []string) []string {
 	out := make([]string, len(args))
 	maskNext := false
+	envNext := false
 	for i, a := range args {
 		switch {
 		case maskNext:
 			out[i] = "***"
 			maskNext = false
+		case envNext:
+			out[i] = redactEnvAssignment(a)
+			envNext = false
 		case strings.HasPrefix(a, "-") && strings.Contains(a, "="):
-			name, _, _ := strings.Cut(a, "=")
-			if secretFlagRe.MatchString(name) {
+			name, val, _ := strings.Cut(a, "=")
+			switch {
+			case secretFlagRe.MatchString(name):
 				out[i] = name + "=***"
-			} else {
-				out[i] = a
+			case envFlagExactRe.MatchString(name):
+				out[i] = name + "=" + redactEnvAssignment(val)
+			default:
+				out[i] = redactArgValue(name, val)
 			}
 		default:
-			out[i] = a
-			if strings.HasPrefix(a, "-") && secretFlagRe.MatchString(a) {
-				maskNext = true
+			if strings.HasPrefix(a, "-") {
+				out[i] = a
+				switch {
+				case secretFlagRe.MatchString(a):
+					maskNext = true
+				case envFlagExactRe.MatchString(a):
+					envNext = true
+				}
+			} else {
+				out[i] = scrubURLShaped(a)
 			}
 		}
 	}
 	return out
+}
+
+// redactEnvAssignment keeps the KEY side of KEY=value visible for review and
+// masks only the value. A bare token (no '=') is fully masked — docker -e
+// can take either form depending on how the image is launched.
+func redactEnvAssignment(s string) string {
+	if key, _, ok := strings.Cut(s, "="); ok && key != "" {
+		return key + "=***"
+	}
+	return "***"
+}
+
+// redactArgValue rewrites --flag=value when the value looks URL-shaped.
+func redactArgValue(name, val string) string {
+	if looksLikeURL(val) {
+		return name + "=" + redactURL(val)
+	}
+	return name + "=" + val
+}
+
+func looksLikeURL(s string) bool {
+	return strings.Contains(s, "://") || strings.HasPrefix(s, "//")
+}
+
+// scrubURLShaped applies redactURL to bare arguments that look like URLs.
+func scrubURLShaped(s string) string {
+	if looksLikeURL(s) {
+		return redactURL(s)
+	}
+	return s
 }
 
 // redactURL drops the query string, fragment, and userinfo — the parts of a

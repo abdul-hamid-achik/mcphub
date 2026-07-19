@@ -1047,26 +1047,91 @@ func TestUpdateDetailRedactsSecretsInArgsAndURLs(t *testing.T) {
 	// Args can carry secrets (--token=xyz, --api-key xyz) and URLs can carry
 	// them in query strings and userinfo — none may reach Detail (panel
 	// review 2026-07-16: both leaked verbatim via %v / raw quoting).
+	// Also cover URL-shaped args and docker -e / --env KEY=value.
 	existing := map[string]MCPServer{"gw": {
 		Name: "gw", Command: "gw",
-		Args: []string{"serve", "--token=hunter2", "--api-key", "hunter3", "--agent", "claude"},
-		URL:  "https://user:pw@api.example.com/mcp?api_key=hunter4#hunter5",
+		Args: []string{
+			"serve", "--token=hunter2", "--api-key", "hunter3", "--agent", "claude",
+			"--url", "https://hooks.example.com/mcp?api_key=hunter_url",
+			"-e", "GITHUB_TOKEN=hunter_env",
+		},
+		URL: "https://user:pw@api.example.com/mcp?api_key=hunter4#hunter5",
 	}}
 	desired := []MCPServer{{
 		Name: "gw", Command: "gw",
-		Args: []string{"serve", "--token=hunter6", "--api-key", "hunter7", "--agent", "claude"},
-		URL:  "https://api.example.com/mcp?api_key=hunter8",
+		Args: []string{
+			"serve", "--token=hunter6", "--api-key", "hunter7", "--agent", "claude",
+			"--url", "https://hooks.example.com/mcp?api_key=hunter_url2",
+			"--env=API_KEY=hunter_env2",
+		},
+		URL: "https://api.example.com/mcp?api_key=hunter8",
 	}}
 	detail := diff(existing, desired, nil)[0].Detail
-	for _, secret := range []string{"hunter2", "hunter3", "hunter4", "hunter5", "hunter6", "hunter7", "hunter8", "user:pw"} {
+	for _, secret := range []string{
+		"hunter2", "hunter3", "hunter4", "hunter5", "hunter6", "hunter7", "hunter8",
+		"hunter_url", "hunter_url2", "hunter_env", "hunter_env2", "user:pw",
+	} {
 		if strings.Contains(detail, secret) {
 			t.Errorf("detail leaks %q: %s", secret, detail)
 		}
 	}
-	for _, want := range []string{"--token=***", "--agent", "claude", "api.example.com/mcp"} {
+	// Detail is clamped; prefer markers that appear in the args segment first.
+	for _, want := range []string{"--token=***", "--agent", "claude", "hooks.example.com/mcp", "GITHUB_TOKEN=***"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("detail missing structural part %q: %s", want, detail)
 		}
+	}
+}
+
+func TestRedactArgsMasksURLAndEnvInjection(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			name: "secret flags regression",
+			in:   []string{"serve", "--token=hunter", "--api-key", "secret", "--agent", "claude"},
+			want: []string{"serve", "--token=***", "--api-key", "***", "--agent", "claude"},
+		},
+		{
+			name: "url-shaped non-secret flag",
+			in:   []string{"--endpoint=https://user:pw@api.example.com/mcp?api_key=sk"},
+			want: []string{"--endpoint=" + redactURL("https://user:pw@api.example.com/mcp?api_key=sk")},
+		},
+		{
+			name: "bare url arg",
+			in:   []string{"https://api.example.com/mcp?token=abc"},
+			want: []string{redactURL("https://api.example.com/mcp?token=abc")},
+		},
+		{
+			name: "docker -e KEY=value",
+			in:   []string{"run", "-e", "GITHUB_TOKEN=ghp_leak", "img"},
+			want: []string{"run", "-e", "GITHUB_TOKEN=***", "img"},
+		},
+		{
+			name: "env equals form",
+			in:   []string{"--env=API_KEY=val=with=equals"},
+			want: []string{"--env=API_KEY=***"},
+		},
+		{
+			name: "dotenv next bare token",
+			in:   []string{"--dotenv", "/secrets/.env"},
+			want: []string{"--dotenv", "***"},
+		},
+		{
+			name: "structural args preserved",
+			in:   []string{"mcp", "serve", "--agent", "claude", "/opt/homebrew/bin/mcphub"},
+			want: []string{"mcp", "serve", "--agent", "claude", "/opt/homebrew/bin/mcphub"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactArgs(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("redactArgs(%v)\n got  %#v\n want %#v", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 

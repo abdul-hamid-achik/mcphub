@@ -1,8 +1,38 @@
 # Changelog
 
 All notable changes to mcphub are documented here. The format is loosely based
-on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
-follow [Semantic Versioning](https://semver.org/) once it tags releases.
+on [Keep a Changelog](https://keepachangelog.com/), and the project follows
+[Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+## [0.18.1] - 2026-07-19
+
+### Fixed
+
+- **Watch reconnect matches `ReconnectOne` shutdown fences.** `reconnectFailed`
+  now refuses work while the hub is closing, serializes per server, re-checks
+  `closing` under the hub lock before install, and tears stale sessions down
+  asynchronously so a hung child cannot stall the 30s self-heal cycle or leak a
+  session after `Close`.
+- **`Hub.Close` no longer holds `h.mu` across `session.Close`.** Stuck stdio
+  teardown no longer convoys every other hub path waiting on the lock.
+- **`StartDetached` refuses new work after shutdown begins.**
+- **`headerRoundTripper` clones the request** before injecting vault/custom
+  headers, honoring the `http.RoundTripper` contract under concurrent remote
+  calls.
+- **Sync detail redaction covers more arg shapes:** URL-shaped values on
+  non-secret flags (`--url`, `--endpoint`), bare URL tokens, and docker-style
+  `-e` / `--env` / `--dotenv` assignments (key kept, value masked).
+- **Studio uses `syncer.Self()`** for gateway path resolution (same as CLI) and
+  renders field-level `Change.Detail` under updates in the sync panel.
+
+### Added
+
+- **Budget reports list tool names.** `ToolMountReport` includes
+  `advertised_names` and `omitted_names` so operators can see which tools a
+  `tool_schema_budget` kept or dropped without hand size-math.
+- **Upgrade guide** for 0.16 → 0.18 on the docs site (`guide/upgrading`).
 
 ## [0.18.0] - 2026-07-19
 
@@ -465,7 +495,8 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   `config.mts` and set the package type. `npm run docs:build` (and `task
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.2...v0.16.3

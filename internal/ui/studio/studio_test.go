@@ -12,7 +12,9 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
+	"github.com/abdul-hamid-achik/mcphub/internal/harness"
 	"github.com/abdul-hamid-achik/mcphub/internal/store"
+	"github.com/abdul-hamid-achik/mcphub/internal/syncer"
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -310,6 +312,38 @@ func TestStudioSyncPanelOpens(t *testing.T) {
 	m = update(m, "esc")
 	if m.syncing {
 		t.Error("esc should close the sync panel")
+	}
+}
+
+func TestStudioSyncPanelShowsUpdateDetail(t *testing.T) {
+	m, _ := testModel(t)
+	m.syncing = true
+	m.syncResults = []syncer.AgentResult{{
+		Agent: "claude",
+		Type:  "claude",
+		Mode:  "gateway",
+		Plan: harness.Plan{
+			Changes: []harness.Change{{
+				Server: "mcphub",
+				Action: harness.ActionUpdate,
+				Detail: `command "mcphub" → "/opt/homebrew/bin/mcphub"`,
+			}},
+		},
+	}}
+	body := ansiRE.ReplaceAllString(m.renderSyncPanel(), "")
+	for _, want := range []string{"mcphub", `command "mcphub" → "/opt/homebrew/bin/mcphub"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sync panel missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestStudioUsesSelfForGatewayPath(t *testing.T) {
+	m, _ := testModel(t)
+	// New must resolve through syncer.Self (stable PATH name when available),
+	// never leave self empty when the process executable is known.
+	if m.self == "" {
+		t.Fatal("studio self path is empty")
 	}
 }
 

@@ -71,6 +71,9 @@ type DetachedCall struct {
 // immediately. The background context is detached from ctx on purpose: the
 // whole point is surviving the requesting client's own tool-call deadline.
 func (h *Hub) StartDetached(ctx context.Context, server, tool string, args json.RawMessage, timeout time.Duration) (string, error) {
+	if h.closing.Load() {
+		return "", fmt.Errorf("hub is shutting down")
+	}
 	d := h.downstream(server)
 	if d == nil {
 		return "", fmt.Errorf("unknown server %q", server)

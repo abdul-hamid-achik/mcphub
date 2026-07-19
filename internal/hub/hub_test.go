@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -229,19 +230,30 @@ func TestTransportForVaultWrapped(t *testing.T) {
 }
 
 func TestHeaderRoundTripper(t *testing.T) {
+	base := &mockRoundTripper{}
 	rt := &headerRoundTripper{
-		base:    &mockRoundTripper{},
+		base:    base,
 		headers: map[string]string{"Authorization": "Bearer secret", "X-Custom": "val"},
 	}
 	req := httptest.NewRequest("POST", "https://srv.example.com", nil)
 	if _, err := rt.RoundTrip(req); err != nil {
 		t.Fatalf("RoundTrip: %v", err)
 	}
-	if got := req.Header.Get("Authorization"); got != "Bearer secret" {
-		t.Errorf("Authorization = %q, want %q", got, "Bearer secret")
+	// Must not mutate the caller's request (http.RoundTripper contract).
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Errorf("caller request Authorization = %q, want empty (clone required)", got)
 	}
-	if got := req.Header.Get("X-Custom"); got != "val" {
-		t.Errorf("X-Custom = %q, want %q", got, "val")
+	if got := req.Header.Get("X-Custom"); got != "" {
+		t.Errorf("caller request X-Custom = %q, want empty", got)
+	}
+	if base.last == nil {
+		t.Fatal("base RoundTripper was not called")
+	}
+	if got := base.last.Header.Get("Authorization"); got != "Bearer secret" {
+		t.Errorf("cloned Authorization = %q, want %q", got, "Bearer secret")
+	}
+	if got := base.last.Header.Get("X-Custom"); got != "val" {
+		t.Errorf("cloned X-Custom = %q, want %q", got, "val")
 	}
 }
 
@@ -266,9 +278,12 @@ func TestIsLocalhostHTTPS(t *testing.T) {
 }
 
 // mockRoundTripper is a no-op http.RoundTripper for testing header injection.
-type mockRoundTripper struct{}
+type mockRoundTripper struct {
+	last *http.Request
+}
 
 func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	m.last = req
 	return &http.Response{StatusCode: 200, Body: http.NoBody, Header: make(http.Header)}, nil
 }
 
@@ -474,6 +489,12 @@ func TestMountMatchingBudgetedIsDeterministicAndPreservesMetadata(t *testing.T) 
 	if report.AdvertisedEstimatedTokens != (len(encodedCompact)+3)/4 {
 		t.Fatalf("estimated tokens = %d, want %d", report.AdvertisedEstimatedTokens, (len(encodedCompact)+3)/4)
 	}
+	if len(report.AdvertisedNames) != 1 || report.AdvertisedNames[0] != "fixture__b_compact" {
+		t.Fatalf("AdvertisedNames = %#v, want [fixture__b_compact]", report.AdvertisedNames)
+	}
+	if len(report.OmittedNames) != 1 || !strings.HasPrefix(report.OmittedNames[0], "fixture__") {
+		t.Fatalf("OmittedNames = %#v", report.OmittedNames)
+	}
 
 	client := connectInMemoryClient(t, gateway)
 	mounted, err := client.ListTools(context.Background(), nil)
@@ -506,6 +527,9 @@ func TestMountMatchingBudgetedZeroAdvertisesNoDownstreamTools(t *testing.T) {
 	}
 	if report.EligibleTools != 1 || report.AdvertisedTools != 0 || report.OmittedTools != 1 || report.AdvertisedDefinitionBytes != 0 {
 		t.Fatalf("zero-budget report = %+v", report)
+	}
+	if len(report.AdvertisedNames) != 0 || len(report.OmittedNames) != 1 {
+		t.Fatalf("zero-budget names advertised=%v omitted=%v", report.AdvertisedNames, report.OmittedNames)
 	}
 	client := connectInMemoryClient(t, gateway)
 	list, err := client.ListTools(context.Background(), nil)
@@ -975,6 +999,81 @@ func TestCloseBoundsShutdownAndSkipsReconnect(t *testing.T) {
 	}
 	if got := reconnects.Load(); got != 0 {
 		t.Fatalf("post-Close ReconnectOne dialed the downstream %d times, want 0", got)
+	}
+	if _, err := h.StartDetached(context.Background(), "bg", "slow", nil, time.Minute); err == nil {
+		t.Fatal("StartDetached must refuse after Close")
+	}
+}
+
+// TestReconnectFailedDoesNotBlockOnStaleSessionTeardown mirrors the
+// ReconnectOne regression: Watch's reconnectFailed path must not wait on a
+// hung session.Close when swapping a recovered downstream.
+func TestReconnectFailedDoesNotBlockOnStaleSessionTeardown(t *testing.T) {
+	downstream := mcp.NewServer(&mcp.Implementation{Name: "slowclose", Version: "1"}, nil)
+	downstream.AddTool(
+		&mcp.Tool{Name: "ping", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, nil
+		},
+	)
+	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return downstream }, nil)
+	releaseClose := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			<-releaseClose
+		}
+		mcpHandler.ServeHTTP(w, r)
+	})
+	httpServer := httptest.NewServer(handler)
+	defer httpServer.Close()
+
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"slowclose": {URL: httpServer.URL, Transport: "http", Enabled: true},
+	}}
+	h := New(cfg, nil, nil)
+	h.Connect(context.Background())
+	defer h.Close()
+	defer close(releaseClose)
+	failed := h.downstream("slowclose")
+	if failed == nil || !failed.Connected() {
+		t.Fatal("setup: downstream did not connect")
+	}
+
+	h.invalidateDownstream(failed)
+	start := time.Now()
+	h.reconnectFailed(context.Background())
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("reconnectFailed blocked %v on the stale session's teardown", elapsed)
+	}
+	d := h.downstream("slowclose")
+	if d == nil || !d.Connected() {
+		t.Fatal("reconnectFailed did not restore the downstream")
+	}
+}
+
+// TestReconnectFailedRefusesAfterClose ensures Watch cannot install a fresh
+// session after Close (the same leak class ReconnectOne already fences).
+func TestReconnectFailedRefusesAfterClose(t *testing.T) {
+	var dials atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dials.Add(1)
+		http.Error(w, "closed", http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+
+	h := New(&config.Config{Servers: map[string]config.Server{
+		"gone": {URL: upstream.URL, Transport: "http", Enabled: true},
+	}}, nil, nil)
+	// Publish a disconnected downstream so reconnectFailed has work to do.
+	h.downstreams = []*Downstream{{
+		Name: "gone",
+		Err:  fmt.Errorf("setup: not connected"),
+	}}
+	_ = h.Close()
+	before := dials.Load()
+	h.reconnectFailed(context.Background())
+	if got := dials.Load(); got != before {
+		t.Fatalf("reconnectFailed dialed after Close: dials %d → %d", before, got)
 	}
 }
 
