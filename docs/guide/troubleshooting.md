@@ -61,6 +61,18 @@ That particular error means the process started but didn't speak JSON-RPC on
 stdout at all — see [stdio hygiene](#stdio-hygiene-logs-must-go-to-stderr)
 below, it's almost always the cause.
 
+For local stdio startup failures, mcphub retains only the final 8 KiB of child
+stderr and never mixes it into JSON-RPC stdout. Credentials and control
+characters are removed, then only closed diagnostic classes such as a locked
+vault, a declared missing environment variable, permission denial, or a
+missing file are surfaced. Arbitrary stderr is replaced with a generic
+suppressed-detail message.
+
+The same closed stderr policy applies while resolving `tvault://` headers for
+remote servers. `tvault get` is bounded by that server's `connect_timeout`, and
+an unexpectedly large decrypted header value fails rather than being retained
+without limit.
+
 ::: tip Scripting doctor
 `--json` works on `doctor` too, and returns the same checks as an array of
 `{name, ok, detail}` objects — pipe it into CI or a status page:
@@ -72,6 +84,28 @@ mcphub doctor --json
 doctor exits non-zero when any check fails, so it works as a CI gate with or
 without `--json`.
 :::
+
+The scoped form has the same exit contract: `doctor --server <name> --probe
+--json` prints one valid JSON object and then exits non-zero if registration,
+PATH lookup, or the MCP handshake failed.
+
+### A vaulted server reports that the vault is locked
+
+This means the wrapped server did not start; it does not mean the downstream
+tool itself returned an application error. Check the vault state and then probe
+only the affected server:
+
+```sh
+tvault status
+mcphub doctor --server <server-name> --probe
+```
+
+Use TinyVault's interactive unlock or agent workflow in the same environment
+that starts the gateway, then repeat the probe. Do not put a passphrase or an
+API key in `mcphub.yaml`, shell history, or a global environment export. The
+gateway intentionally fails closed while the vault cannot provide the selected
+secret. See [Secrets](/guide/secrets#a-vaulted-server-is-unavailable) for the
+process-boundary behavior.
 
 ## Common failure modes
 

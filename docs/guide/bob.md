@@ -7,15 +7,14 @@ usage. Bob's MCP tools do not apply repository changes.
 
 ## Register the server
 
-This local installation uses the Bob binary at
-`/Users/abdulachik/go/bin/bob`. Register it once in MCPHub:
+Make sure the Bob binary is on `PATH`, then register it once in MCPHub:
 
 ```sh
 mcphub add bob \
   --description "Deterministic repository factory and lifecycle reconciler" \
   --tag builder \
   --tag code \
-  -- /Users/abdulachik/go/bin/bob mcp serve --allow-any-workspace
+  -- bob mcp serve --allow-any-workspace
 ```
 
 The `--` ends MCPHub's flags. Everything after it becomes Bob's command and
@@ -24,7 +23,7 @@ arguments. The resulting server entry is:
 ```yaml
 servers:
   bob:
-    command: /Users/abdulachik/go/bin/bob
+    command: bob
     args: [mcp, serve, --allow-any-workspace]
     enabled: true
     description: Deterministic repository factory and lifecycle reconciler

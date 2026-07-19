@@ -1,10 +1,16 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/store"
@@ -192,4 +198,160 @@ func agentNames(in []serverAgentState) map[string]bool {
 		out[a.Agent] = true
 	}
 	return out
+}
+
+func TestDoctorScopedProbeExitStatusAndJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		mode          string
+		wantErr       bool
+		wantHandshake bool
+		wantTools     int
+	}{
+		{name: "successful handshake", mode: "serve", wantHandshake: true, wantTools: 1},
+		{name: "failed handshake", mode: "fail", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "mcphub.yaml")
+			c := &config.Config{
+				Version:        1,
+				ConnectTimeout: "3s",
+				Servers: map[string]config.Server{
+					"subject": {
+						Command: os.Args[0],
+						Args:    []string{"-test.run=^TestDoctorMCPHelper$"},
+						Env: map[string]string{
+							"MCPHUB_DOCTOR_HELPER": tc.mode,
+							"TAVILY_API_KEY":       "doctor-test-secret",
+						},
+						Enabled: true,
+					},
+				},
+				Agents: map[string]config.Agent{},
+			}
+			if err := config.Save(cfgPath, c); err != nil {
+				t.Fatal(err)
+			}
+
+			stdout, stderr, err := runRootSeparate(
+				"--config", cfgPath,
+				"--db", filepath.Join(dir, "mcphub.db"),
+				"--json",
+				"doctor", "--server", "subject", "--probe",
+			)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("doctor error = %v, wantErr %t; stdout=%s stderr=%s", err, tc.wantErr, stdout, stderr)
+			}
+			if stderr != "" {
+				t.Fatalf("Root polluted stderr before Execute's single error emitter: %q", stderr)
+			}
+			var rep scopedServerReport
+			if err := json.Unmarshal([]byte(stdout), &rep); err != nil {
+				t.Fatalf("doctor stdout is not useful JSON: %v\n%s", err, stdout)
+			}
+			if rep.HandshakeOK == nil || *rep.HandshakeOK != tc.wantHandshake {
+				t.Errorf("handshake_ok = %v, want %t", rep.HandshakeOK, tc.wantHandshake)
+			}
+			if tc.wantHandshake {
+				if rep.ToolCount == nil || *rep.ToolCount != tc.wantTools {
+					t.Errorf("tool_count = %v, want %d", rep.ToolCount, tc.wantTools)
+				}
+			} else {
+				if !strings.Contains(rep.ProbeError, "downstream stderr:") ||
+					!strings.Contains(rep.ProbeError, "vault is locked") {
+					t.Errorf("probe_error lacks actionable child diagnostic: %q", rep.ProbeError)
+				}
+				if strings.Contains(rep.ProbeError, "doctor-test-secret") {
+					t.Errorf("probe_error leaked configured secret: %q", rep.ProbeError)
+				}
+			}
+			if strings.Contains(stdout+stderr, "doctor-test-secret") {
+				t.Errorf("doctor output leaked configured secret: stdout=%s stderr=%s", stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestDoctorJSONReturnsErrorWhenProbeCheckFails(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "mcphub.yaml")
+	c := &config.Config{
+		Version:        1,
+		ConnectTimeout: "3s",
+		Servers: map[string]config.Server{
+			"subject": {
+				Command: os.Args[0],
+				Args:    []string{"-test.run=^TestDoctorMCPHelper$"},
+				Env:     map[string]string{"MCPHUB_DOCTOR_HELPER": "fail"},
+				Enabled: true,
+			},
+		},
+		Agents: map[string]config.Agent{},
+	}
+	if err := config.Save(cfgPath, c); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runRootSeparate(
+		"--config", cfgPath,
+		"--db", filepath.Join(dir, "mcphub.db"),
+		"--json",
+		"doctor", "--probe",
+	)
+	if err == nil {
+		t.Fatalf("doctor --json --probe returned nil error; stdout=%s", stdout)
+	}
+	var checks []checkResult
+	if jsonErr := json.Unmarshal([]byte(stdout), &checks); jsonErr != nil {
+		t.Fatalf("doctor stdout is not valid JSON: %v\n%s", jsonErr, stdout)
+	}
+	foundFailedProbe := false
+	for _, check := range checks {
+		if check.Name == "probe:subject" && !check.OK {
+			foundFailedProbe = true
+		}
+	}
+	if !foundFailedProbe {
+		t.Errorf("doctor JSON lacks failed probe check: %+v", checks)
+	}
+}
+
+// TestDoctorMCPHelper is re-executed in a subprocess by the doctor tests.
+// Keeping both success and failure modes inside the test binary avoids relying
+// on any user-installed MCP server.
+func TestDoctorMCPHelper(t *testing.T) {
+	switch os.Getenv("MCPHUB_DOCTOR_HELPER") {
+	case "":
+		return
+	case "fail":
+		fmt.Fprintf(os.Stderr, "TAVILY_API_KEY=%s\nvault is locked; start the local agent\n", os.Getenv("TAVILY_API_KEY"))
+		os.Exit(3)
+	case "serve":
+		server := mcp.NewServer(&mcp.Implementation{Name: "doctor-helper", Version: "1"}, nil)
+		server.AddTool(
+			&mcp.Tool{Name: "ping", InputSchema: map[string]any{"type": "object"}},
+			func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "pong"}}}, nil
+			},
+		)
+		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(4)
+		}
+		os.Exit(0)
+	default:
+		fmt.Fprintln(os.Stderr, "unknown helper mode")
+		os.Exit(2)
+	}
+}
+
+func runRootSeparate(args ...string) (stdout, stderr string, err error) {
+	resetFlags()
+	root := Root()
+	var outBuf, errBuf bytes.Buffer
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	root.SetArgs(args)
+	err = root.Execute()
+	return outBuf.String(), errBuf.String(), err
 }

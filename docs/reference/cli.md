@@ -472,6 +472,10 @@ difference between "the binary exists" and "the server actually works":
 
 Because it launches every server, `--probe` is slower than a plain `doctor` —
 use it when you suspect a server is misconfigured or failing to start.
+For a local stdio server that exits before initialization, mcphub captures a
+bounded stderr tail, removes credentials and control characters, and surfaces
+only closed startup summaries; it never copies arbitrary child stderr onto the
+JSON-RPC stream.
 
 ### `--server`
 
@@ -528,18 +532,19 @@ agents point at in [gateway mode](/guide/concepts#gateway-vs-direct).
 
 ```sh
 mcphub mcp serve
-mcphub mcp serve --agent codex   # scope tools to one agent's servers/tools allowlists
+mcphub mcp serve --agent codex   # apply this agent's scope and advertisement policy
 ```
 
 | Flag           | Description |
 | -------------- | ----------- |
-| `--agent <name>` | Scope advertised tools (and the `mcphub_*` meta-tools) to this agent's `servers`/`tools` allowlists from `mcphub.yaml`, instead of advertising everything. |
+| `--agent <name>` | Apply this agent's `servers`/`tools` call scope and optional `pin`/`tool_schema_budget` advertisement policy from `mcphub.yaml`. |
 
 You normally don't run this by hand — the agent launches it, because that's
 what [`mcphub sync`](#sync) writes into the agent's config in gateway mode.
-(For an agent with per-agent `servers`/`tools` routing, sync writes
+(For an agent with per-agent `servers`/`tools` routing or an agent-specific
+`pin`/`tool_schema_budget` policy, sync writes
 `mcphub mcp serve --agent <name>` so the gateway advertises only that agent's
-subset and refuses out-of-scope calls.) Logs go to stderr so they never corrupt
+projection and refuses out-of-scope calls.) Logs go to stderr so they never corrupt
 the stdio JSON-RPC stream. It shuts down cleanly on `SIGINT`/`SIGTERM`.
 
 The gateway also exposes eight management meta-tools to connected agents:

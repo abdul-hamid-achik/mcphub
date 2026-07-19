@@ -1,6 +1,6 @@
 ---
 title: Per-agent routing
-description: Route different MCP servers and tools to different agents from one mcphub.yaml — scoped gateways, servers and tools allowlists, and direct-mode filtering.
+description: Route different MCP servers and tools to different agents from one mcphub.yaml — call scopes, lean advertised surfaces, and direct-mode filtering.
 ---
 
 # Per-agent routing
@@ -72,10 +72,35 @@ silently — routing selects *within* the enabled servers, it does not enable
 anything. A `servers` entry naming a server that doesn't exist in the config at
 all is a validation error.
 
+## Call scope vs advertised surface
+
+`servers` and `tools` control what the agent may reach. Gateway-only `pin` and
+`tool_schema_budget` independently control which downstream definitions spend
+provider context:
+
+```yaml
+agents:
+  local-agent:
+    type: local-agent
+    path: ~/.config/local-agent/config.yaml
+    mode: gateway
+    servers: [bob, cortex, vecgrep]
+    pin: []                  # in expose: lazy, publish meta-tools only
+    # tool_schema_budget: 8KB
+```
+
+Under `expose: lazy`, omitting `pin` inherits the top-level pin list. An
+explicit `pin: []` hides pinned downstream definitions without changing the
+`servers`/`tools` call scope, so hidden tools remain discoverable and callable
+through lazy meta-tools. Pins do not change `expose: all`. A schema budget
+applies in either exposure mode, admits complete definitions in deterministic
+name order, never truncates a schema, and treats `0` as meta-tools only.
+
 ## How it works in gateway mode
 
-When a gateway-mode agent has any routing config (either list present, even
-empty), `mcphub sync` writes its harness entry with an extra flag:
+When a gateway-mode agent has routing or advertisement config (a
+`servers`/`tools`/`pin` key, even empty, or `tool_schema_budget`), `mcphub
+sync` writes its harness entry with an extra flag:
 
 ```
 mcphub mcp serve --agent codex
@@ -85,8 +110,9 @@ instead of the plain `mcphub mcp serve` that unscoped agents get. When that
 gateway starts, it looks up the named agent's `servers`/`tools` allowlists and:
 
 - **Advertises only the subset.** In `expose: all`, only in-scope
-  `server__tool` names are mounted. The agent never sees out-of-scope tools, so
-  they cost zero context.
+  `server__tool` names are mounted; a schema budget can narrow that visible
+  subset further without removing lazy call authority. Per-agent pin overrides
+  apply only in `expose: lazy`.
 - **Scopes the meta-tools too.** In `expose: lazy`, `mcphub_list_servers`,
   `mcphub_search_tools`, `mcphub_describe_tool`, and `mcphub_resolve_tool` only
   surface in-scope servers and tools.

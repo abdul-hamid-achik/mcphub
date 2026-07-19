@@ -96,8 +96,29 @@ servers keep their secrets out of the file.
 ::: tip Unlocking the vault
 `tvault run`/`tvault get` need the vault unlocked in whatever process spawns
 them — via `TVAULT_PASSPHRASE`, `TVAULT_IDENTITY_KEY`, or a running `tvault
-agent`. That's a tvault concern, not mcphub's; mcphub just shells out.
+agent`. mcphub preserves those three control variables only for a `tvault`
+wrapper or a directly configured `tvault` process and strips them from
+ordinary stdio downstreams. For `vault_only` and `vault_prefix`, it also
+removes matching ambient/configured values before the wrapper starts so the
+selected value comes from TinyVault.
 :::
+
+### A vaulted server is unavailable
+
+First confirm the server boundary without exposing a secret:
+
+```sh
+tvault status
+mcphub doctor --server github --probe
+```
+
+If TinyVault reports that the vault is locked or its agent is unavailable, use
+TinyVault's normal interactive unlock or agent workflow in the environment that
+launches the gateway, then repeat the probe. A GUI-launched harness can have a
+different environment from an interactive shell. Do not add a passphrase or a
+decrypted API key to `mcphub.yaml`, and do not work around a locked vault by
+exporting either globally. The vaulted downstream fails closed until TinyVault
+can supply its selected secrets.
 
 ## `tvault://` refs — secrets in remote headers
 
@@ -123,6 +144,11 @@ Reference syntax:
   `tvault://obsidian/authorization`.
 - **`tvault://<key>`** — just a key, resolved against tvault's currently
   active project.
+
+Header resolution shares the server's `connect_timeout`. Decrypted stdout is
+accepted only up to 64 KiB; a larger value fails without being returned.
+Failure stderr is retained only as an 8 KiB tail and passes through the same
+closed, credential-redacting startup diagnostic policy as stdio servers.
 - **`tvault://current/<key>`** — `current` is an explicit alias for the active
   project (equivalent to omitting the project).
 

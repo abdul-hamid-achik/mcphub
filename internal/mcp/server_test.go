@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -260,6 +261,7 @@ func TestScopeFor(t *testing.T) {
 			"plain":   {Type: "claude", Path: "~/p"},
 			"scoped":  {Type: "claude", Path: "~/p", Servers: &[]string{"a"}, Tools: &[]string{"a__x"}},
 			"srvOnly": {Type: "claude", Path: "~/p", Servers: &[]string{"b"}},
+			"policy":  {Type: "claude", Path: "~/p", Pin: &[]string{}, ToolSchemaBudget: "8KB"},
 		},
 	}
 	if sc, err := ScopeFor(cfg, ""); err != nil || sc != nil {
@@ -278,6 +280,43 @@ func TestScopeFor(t *testing.T) {
 	sc2, err := ScopeFor(cfg, "srvOnly")
 	if err != nil || sc2 == nil || !sc2.servers["b"] || sc2.tools != nil {
 		t.Errorf("srvOnly scope = %+v err=%v (tools should be nil)", sc2, err)
+	}
+	policy, err := ScopeFor(cfg, "policy")
+	if err != nil || policy == nil || policy.pin == nil || len(*policy.pin) != 0 {
+		t.Fatalf("policy scope = %+v err=%v", policy, err)
+	}
+	if budget, configured := policy.schemaBudget(); !configured || budget != 8*1024 {
+		t.Errorf("policy schema budget = %d,%t, want 8192,true", budget, configured)
+	}
+	if !policy.allows("a", "anything") || !policy.allows("b", "anything") {
+		t.Error("advertisement-only policy must not restrict mcphub_call_tool authority")
+	}
+}
+
+func TestAgentPinOverrideSeparatesAdvertisementFromAuthority(t *testing.T) {
+	cfg := &config.Config{Pin: []string{"a"}, Servers: map[string]config.Server{
+		"a": {Command: "a", Enabled: true},
+		"b": {Command: "b", Enabled: true},
+	}}
+
+	empty := &agentScope{pin: &[]string{}}
+	if empty.pinMatches(cfg, "a__x") || len(empty.effectivePins(cfg)) != 0 {
+		t.Fatal("explicit empty per-agent pin list must suppress global pins")
+	}
+	if !empty.allows("a", "x") || !empty.allows("b", "y") {
+		t.Fatal("empty pin override must leave in-scope lazy calls available")
+	}
+
+	overridePins := []string{"b__y"}
+	override := &agentScope{pin: &overridePins}
+	if override.pinMatches(cfg, "a__x") || !override.pinMatches(cfg, "b__y") {
+		t.Fatalf("per-agent pins did not replace globals: %v", override.effectivePins(cfg))
+	}
+
+	allowedTools := map[string]bool{"a__x": true, "a__z": true}
+	inherit := &agentScope{tools: allowedTools}
+	if got := inherit.effectivePins(cfg); !reflect.DeepEqual(got, []string{"a__x", "a__z"}) {
+		t.Fatalf("whole-server global pin was not projected through explicit tool scope: %v", got)
 	}
 }
 
@@ -362,6 +401,20 @@ func connectServerClient(t *testing.T, server *sdk.Server) *sdk.ClientSession {
 		_ = serverSession.Close()
 	})
 	return clientSession
+}
+
+func TestLazyServerInstructionsForbidAmbiguousAutoExecution(t *testing.T) {
+	s, _ := serverWithResultStore(t, nil)
+	client := connectServerClient(t, s.srv)
+	instructions := client.InitializeResult().Instructions
+	for _, required := range []string{
+		"only when status is `confident` and `ambiguous` is false",
+		"Never auto-run an ambiguous recommendation",
+	} {
+		if !strings.Contains(instructions, required) {
+			t.Fatalf("lazy instructions omit %q:\n%s", required, instructions)
+		}
+	}
 }
 
 func TestGetResultRegistrationAndWireReconstruction(t *testing.T) {

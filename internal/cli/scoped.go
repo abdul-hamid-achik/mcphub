@@ -123,7 +123,7 @@ func probeOneServer(ctx context.Context, c *config.Config, name string, rep *sco
 	pctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	h := hub.New(c, nil, nil) // no store (don't record), silent logger
-	h.Connect(pctx)
+	h.ConnectMatching(pctx, func(candidate string) bool { return candidate == name })
 	defer h.Close()
 	for _, d := range h.Downstreams() {
 		if d.Name != name {
@@ -132,12 +132,29 @@ func probeOneServer(ctx context.Context, c *config.Config, name string, rep *sco
 		ok := d.Connected()
 		rep.HandshakeOK = &ok
 		if ok {
-			n := len(d.Tools)
+			n := len(d.ToolsSnapshot())
 			rep.ToolCount = &n
-		} else if d.Err != nil {
-			rep.ProbeError = d.Err.Error()
+		} else if err := d.ErrorSnapshot(); err != nil {
+			rep.ProbeError = err.Error()
 		}
 		return
+	}
+}
+
+// scopedDoctorError converts the scoped report into doctor process status
+// after the report has already been rendered. Keeping rendering first ensures
+// --json remains useful to callers while a failed handshake still produces a
+// non-zero exit status.
+func scopedDoctorError(rep scopedServerReport, probe bool) error {
+	switch {
+	case !rep.Registered:
+		return fmt.Errorf("doctor found problems: server %q is not registered", rep.Server)
+	case rep.Enabled && !rep.OnPath:
+		return fmt.Errorf("doctor found problems: server %q command is not on PATH", rep.Server)
+	case probe && rep.Enabled && (rep.HandshakeOK == nil || !*rep.HandshakeOK):
+		return fmt.Errorf("doctor found problems: server %q handshake failed", rep.Server)
+	default:
+		return nil
 	}
 }
 

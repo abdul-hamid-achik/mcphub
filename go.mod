@@ -7,6 +7,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.4
 	github.com/charmbracelet/harmonica v0.2.0
 	github.com/charmbracelet/log v0.4.2
+	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/pelletier/go-toml/v2 v2.4.2
 	github.com/spf13/cobra v1.10.2
@@ -19,7 +20,6 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/lipgloss v1.1.0 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260525132238-948f4557a654 // indirect
-	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect

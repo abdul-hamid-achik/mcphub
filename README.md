@@ -184,7 +184,7 @@ servers:
     tags: [code, search]
     use_when: ["find code by meaning when exact symbol names are unknown"]
   bob:
-    command: /Users/abdulachik/go/bin/bob
+    command: bob
     args: [mcp, serve, --allow-any-workspace]
     enabled: true
     description: Deterministic repository factory and lifecycle reconciler
@@ -235,6 +235,8 @@ agents:
     # Per-agent routing (optional) — restrict what this agent can reach:
     # servers: [codemap, vecgrep]   # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__codemap_find]  # gateway-only: only these server__tool names (omit = all; [] = none)
+    # pin: []                       # gateway-only + lazy: override global pins; [] = meta-tools only
+    # tool_schema_budget: 8KB       # optional cap for directly advertised downstream definitions
   local-agent:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
@@ -273,6 +275,15 @@ so excluded servers are not started or contacted, the gateway advertises only th
 out-of-scope calls are refused. In direct mode only the listed servers are written. An agent with no `servers`/`tools` (omitted) sees everything,
 as before; an explicit empty list (`servers: []` / `tools: []`) means **none** — a deliberately
 minimal agent. This is least activation and curation, not an OS security boundary.
+
+Gateway agents can tune advertisement separately from call authority. Under
+`expose: lazy`, an omitted per-agent `pin` inherits the top-level pins while
+`pin: []` suppresses every pinned downstream definition; the in-scope catalog
+remains discoverable and callable through the eight lazy meta-tools.
+`tool_schema_budget: 8KB` admits complete definitions deterministically up to
+that serialized-byte budget in either exposure mode; `0` means meta-tools only.
+These fields are gateway-only and cause `sync` to launch `mcphub mcp serve
+--agent <name>` even without a `servers`/`tools` restriction.
 
 Set top-level `expose: lazy` to have the gateway advertise only its meta-tools (saving tokens —
 agents route current task context with `mcphub_resolve_tool`, browse with

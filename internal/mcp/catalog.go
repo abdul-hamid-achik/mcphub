@@ -59,7 +59,7 @@ func (s *Server) catalog() []toolMatch {
 			continue
 		}
 		srv := s.cfg.Servers[d.Name]
-		for _, tool := range d.Tools {
+		for _, tool := range d.ToolsSnapshot() {
 			namespaced := d.Name + "__" + tool.Name
 			if !s.scope.allowsNS(namespaced) {
 				continue
@@ -208,6 +208,12 @@ func assessRoute(query string, matches []toolMatch) routeAssessment {
 	}
 
 	weakCoverage := top.Score < 10 || (len(terms) >= 4 && len(top.MatchedTerms) < 2)
+	// Long, multi-facet requests can accumulate a high score from a couple of
+	// generic terms ("agent", "build", "code") while matching very little of
+	// the actual intent. A clear numeric margin does not make that route safe.
+	// Keep these recommendations advisory until at least a quarter of the
+	// meaningful query terms are covered.
+	lowMatchedFraction := len(terms) >= 8 && assessment.MatchedFraction < 0.25
 	closeScores := len(matches) > 1 && assessment.ScoreGap <= max(3, top.Score/10)
 	scoreTie := len(matches) > 1 && assessment.ScoreGap == 0
 	if scoreTie {
@@ -218,7 +224,10 @@ func assessRoute(query string, matches []toolMatch) routeAssessment {
 	if weakCoverage {
 		assessment.ReasonCodes = append(assessment.ReasonCodes, "weak_coverage")
 	}
-	if scoreTie || closeScores || weakCoverage {
+	if lowMatchedFraction {
+		assessment.ReasonCodes = append(assessment.ReasonCodes, "low_matched_fraction")
+	}
+	if scoreTie || closeScores || weakCoverage || lowMatchedFraction {
 		assessment.Status = "ambiguous"
 		assessment.Confidence = "low"
 		return assessment

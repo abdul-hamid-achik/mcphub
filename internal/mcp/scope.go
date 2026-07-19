@@ -20,8 +20,10 @@ import (
 // the raw MCP protocol is out of scope; the goal is to keep a well-behaved
 // agent's context lean and on-task.
 type agentScope struct {
-	servers map[string]bool // nil = all servers allowed
-	tools   map[string]bool // nil = all tools (of allowed servers) allowed
+	servers          map[string]bool // nil = all servers allowed
+	tools            map[string]bool // nil = all tools (of allowed servers) allowed
+	pin              *[]string       // nil = inherit global pins; non-nil empty = no direct downstream pins
+	toolSchemaBudget *int            // nil = unlimited historical behavior; 0 = meta-tools only
 }
 
 // allowsServer reports whether a downstream server is in scope.
@@ -76,18 +78,50 @@ func (s *agentScope) allowedToolNames(server string) ([]string, bool) {
 	return tools, true
 }
 
-// effectivePins projects global pins into this agent's scope. Exact tool
-// scopes expand a whole-server pin into the exact names that can really mount.
+// configuredPins returns the pin list this gateway agent selected. A nil scope
+// or omitted per-agent override inherits the top-level list. Returning the
+// configured slice directly is safe because callers never mutate it.
+func (s *agentScope) configuredPins(cfg *config.Config) []string {
+	if s != nil && s.pin != nil {
+		return *s.pin
+	}
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Pin
+}
+
+// pinMatches reports whether a directly advertised downstream tool matches
+// this agent's effective pins. This policy is deliberately separate from
+// allows: a tool can remain callable through mcphub_call_tool without spending
+// context on a direct definition.
+func (s *agentScope) pinMatches(cfg *config.Config, namespaced string) bool {
+	return config.PinListMatches(s.configuredPins(cfg), namespaced)
+}
+
+// schemaBudget returns the optional serialized downstream tool-definition
+// budget for this agent.
+func (s *agentScope) schemaBudget() (int, bool) {
+	if s == nil || s.toolSchemaBudget == nil {
+		return 0, false
+	}
+	return *s.toolSchemaBudget, true
+}
+
+// effectivePins projects this agent's configured pins (override or inherited
+// globals) into its call scope. Exact tool scopes expand a whole-server pin
+// into the exact names that can really mount.
 func (s *agentScope) effectivePins(cfg *config.Config) []string {
 	if cfg == nil {
 		return []string{}
 	}
+	configured := s.configuredPins(cfg)
 	if s == nil {
-		return append([]string(nil), cfg.Pin...)
+		return append([]string(nil), configured...)
 	}
 	if s.tools == nil {
-		pins := make([]string, 0, len(cfg.Pin))
-		for _, pin := range cfg.Pin {
+		pins := make([]string, 0, len(configured))
+		for _, pin := range configured {
 			if s.allowsServer(config.PinServer(pin)) {
 				pins = append(pins, pin)
 			}
@@ -96,7 +130,7 @@ func (s *agentScope) effectivePins(cfg *config.Config) []string {
 	}
 	pins := make([]string, 0, len(s.tools))
 	for namespaced, allowed := range s.tools {
-		if allowed && s.allowsNS(namespaced) && cfg.PinMatches(namespaced) {
+		if allowed && s.allowsNS(namespaced) && s.pinMatches(cfg, namespaced) {
 			pins = append(pins, namespaced)
 		}
 	}
@@ -127,7 +161,13 @@ func ScopeFor(cfg *config.Config, agentName string) (*agentScope, error) {
 	if toolSet, restricted := a.ToolScope(); restricted {
 		sc.tools = toolSet
 	}
-	if sc.servers == nil && sc.tools == nil {
+	if a.Pin != nil {
+		sc.pin = a.Pin
+	}
+	if budget, configured := a.ToolSchemaBudgetBytes(); configured {
+		sc.toolSchemaBudget = &budget
+	}
+	if sc.servers == nil && sc.tools == nil && sc.pin == nil && sc.toolSchemaBudget == nil {
 		return nil, nil // configured agent, no routing -> unscoped
 	}
 	return sc, nil

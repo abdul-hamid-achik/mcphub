@@ -7,12 +7,15 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -25,12 +28,18 @@ import (
 
 // Server is the mcphub gateway MCP server.
 type Server struct {
-	srv   *sdk.Server
-	hub   *hub.Hub
-	store *store.Store
-	cfg   *config.Config
-	scope *agentScope // nil = unscoped (advertise everything)
+	srv                       *sdk.Server
+	hub                       *hub.Hub
+	store                     *store.Store
+	cfg                       *config.Config
+	scope                     *agentScope // nil = unscoped (advertise everything)
+	mountMu                   sync.RWMutex
+	mountedDownstreamTools    map[string][sha256.Size]byte
+	advertisedDownstreamTools int
+	toolMountReport           *hub.ToolMountReport
 }
+
+const managementToolCount = 8
 
 // NewServer builds the gateway server and registers mcphub's management tools.
 // Run connects the downstream hub before it mounts or serves any proxy tools.
@@ -47,14 +56,23 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScop
 			"non-trivial task and whenever work changes phase (research, planning, implementation, " +
 			"verification), proactively call mcphub_resolve_tool with the current goal or activity. " +
 			"It accepts natural language and returns a ranked `server__tool` plus a ready-to-fill " +
-			"argument template. Run the choice with mcphub_call_tool {server, tool, arguments}; use " +
-			"mcphub_search_tools to browse more candidates. Do this without waiting to be asked."
+			"argument template. Run the choice with mcphub_call_tool {server, tool, arguments} only " +
+			"when status is `confident` and `ambiguous` is false. Never auto-run an ambiguous " +
+			"recommendation; compare alternatives, search for another tool, or ask for direction. " +
+			"Use mcphub_search_tools to browse more candidates. Do this without waiting to be asked."
 		if summary := capabilitySummary(cfg, scope); summary != "" {
 			instructions += " Capability families configured for this agent (call mcphub_list_servers for live status): " + summary + "."
 		}
 		if len(scope.effectivePins(cfg)) > 0 {
 			instructions += " Some frequently-used tools are pinned and listed directly — call those by name as usual."
 		}
+	}
+	if budget, configured := scope.schemaBudget(); configured {
+		instructions += fmt.Sprintf(
+			" This agent caps directly advertised downstream tool definitions at %d serialized bytes; "+
+				"the %d mcphub management tools remain listed, and omitted in-scope tools remain callable through mcphub_call_tool.",
+			budget, managementToolCount,
+		)
 	}
 	opts := &sdk.ServerOptions{Instructions: instructions}
 	s := &Server{srv: sdk.NewServer(impl, opts), hub: h, store: st, cfg: cfg, scope: scope}
@@ -67,27 +85,118 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScop
 // mode), and serves on stdio. Applying scope before Connect keeps excluded
 // commands, remote connections, and secret resolution inactive.
 func (s *Server) Run(ctx context.Context) error {
+	changes, unsubscribe := s.hub.SubscribeChanges()
+	defer unsubscribe()
 	s.hub.ConnectMatching(ctx, s.scope.allowsServer)
 	defer s.hub.Close()
+	if err := s.mountDownstreamTools(); err != nil {
+		return fmt.Errorf("mount downstream tools: %w", err)
+	}
 	// Background watcher: reconnect downstreams that fail or die mid-session,
 	// so a crashed server self-heals without restarting the agent.
-	go s.hub.Watch(ctx)
+	watchCtx, cancelWatchers := context.WithCancel(ctx)
+	defer cancelWatchers()
+	go s.hub.Watch(watchCtx)
+	go s.watchDownstreamTools(watchCtx, changes)
+	return s.srv.Run(ctx, &sdk.StdioTransport{})
+}
+
+// mountDownstreamTools applies agent authorization, per-agent pin selection,
+// and the optional serialized-definition budget before tools/list can observe
+// any downstream definitions. Management tools are registered separately in
+// NewServer and therefore can never be removed by this admission pass.
+func (s *Server) mountDownstreamTools() error {
+	s.mountMu.Lock()
+	defer s.mountMu.Unlock()
+
+	want := s.scope.allowsNS
 	if s.cfg.Lazy() {
 		// Lazy: advertise only the meta-tools, plus any pinned tools so the
 		// agent's most-used tools stay directly callable. Pins may name a whole
 		// server, a `server__*` wildcard, or an exact `server__tool`. A pin
 		// outside this agent's scope is silently skipped.
-		if len(s.cfg.Pin) > 0 {
-			s.hub.MountMatching(s.srv, func(ns string) bool {
-				return s.cfg.PinMatches(ns) && s.scope.allowsNS(ns)
-			})
+		want = func(ns string) bool {
+			return s.scope.pinMatches(s.cfg, ns) && s.scope.allowsNS(ns)
 		}
-	} else {
-		// expose: all — mount every downstream tool the agent's scope permits
-		// (nil scope = everything, the unscoped default).
-		s.hub.MountMatching(s.srv, s.scope.allowsNS)
 	}
-	return s.srv.Run(ctx, &sdk.StdioTransport{})
+	var (
+		mounts []hub.ToolMount
+		report *hub.ToolMountReport
+	)
+	if budget, configured := s.scope.schemaBudget(); configured {
+		planned, r, err := s.hub.MatchingToolsBudgeted(want, budget)
+		if err != nil {
+			return err
+		}
+		mounts = planned
+		report = &r
+	} else {
+		mounts = s.hub.MatchingTools(want)
+	}
+
+	desired := make(map[string][sha256.Size]byte, len(mounts))
+	for _, mount := range mounts {
+		encoded, err := json.Marshal(mount.Definition)
+		if err != nil {
+			return fmt.Errorf("fingerprint tool definition %s: %w", mount.Definition.Name, err)
+		}
+		desired[mount.Definition.Name] = sha256.Sum256(encoded)
+	}
+
+	var stale []string
+	for name := range s.mountedDownstreamTools {
+		if _, keep := desired[name]; !keep {
+			stale = append(stale, name)
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		// Remove before adding so an interleaved tools/list may temporarily
+		// under-advertise but can never observe a union that violates scope or
+		// the schema budget.
+		s.srv.RemoveTools(stale...)
+	}
+	for _, mount := range mounts {
+		fingerprint := desired[mount.Definition.Name]
+		if previous, unchanged := s.mountedDownstreamTools[mount.Definition.Name]; unchanged && previous == fingerprint {
+			continue
+		}
+		// SDK AddTool replaces by name and emits a debounced list_changed
+		// notification. The handler routes through Hub.Call by server name, so
+		// an unchanged definition needs no replacement after a reconnect.
+		s.srv.AddTool(mount.Definition, mount.Handler)
+	}
+
+	s.mountedDownstreamTools = desired
+	s.toolMountReport = report
+	s.advertisedDownstreamTools = len(mounts)
+	return nil
+}
+
+func (s *Server) watchDownstreamTools(ctx context.Context, changes <-chan struct{}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-changes:
+			if err := s.mountDownstreamTools(); err != nil {
+				// stdio JSON-RPC owns stdout. Keep this fallback bounded and
+				// fixed as the error may contain downstream-controlled names.
+				fmt.Fprintln(os.Stderr, "mcphub: downstream tool refresh failed")
+			}
+		}
+	}
+}
+
+func (s *Server) mountDiagnostics() (int, *hub.ToolMountReport) {
+	s.mountMu.RLock()
+	defer s.mountMu.RUnlock()
+	var report *hub.ToolMountReport
+	if s.toolMountReport != nil {
+		copy := *s.toolMountReport
+		report = &copy
+	}
+	return s.advertisedDownstreamTools, report
 }
 
 func (s *Server) registerManagement() {
@@ -217,7 +326,7 @@ func (s *Server) handleListServers(_ context.Context, _ *sdk.CallToolRequest, _ 
 		}
 		if d, ok := state[name]; ok {
 			info.Connected = d.Connected()
-			for _, tool := range d.Tools {
+			for _, tool := range d.ToolsSnapshot() {
 				if s.scope.allows(name, tool.Name) {
 					info.Tools++
 				}
@@ -225,8 +334,8 @@ func (s *Server) handleListServers(_ context.Context, _ *sdk.CallToolRequest, _ 
 			if info.Connected {
 				totalTools += info.Tools
 			}
-			if d.Err != nil {
-				info.Error = d.Err.Error()
+			if err := d.ErrorSnapshot(); err != nil {
+				info.Error = err.Error()
 			}
 		}
 		out = append(out, info)
@@ -236,14 +345,21 @@ func (s *Server) handleListServers(_ context.Context, _ *sdk.CallToolRequest, _ 
 		expose = config.ExposeLazy
 	}
 	catalog := s.catalog()
-	return result(map[string]any{
-		"contract_version": contextualRoutingContractVersion,
-		"catalog_revision": catalogRevision(catalog),
-		"servers":          out,
-		"total_tools":      totalTools,
-		"expose":           expose,
-		"pinned":           s.scope.effectivePins(s.cfg),
-	})
+	advertisedDownstreamTools, toolMountReport := s.mountDiagnostics()
+	response := map[string]any{
+		"contract_version":            contextualRoutingContractVersion,
+		"catalog_revision":            catalogRevision(catalog),
+		"servers":                     out,
+		"total_tools":                 totalTools,
+		"expose":                      expose,
+		"pinned":                      s.scope.effectivePins(s.cfg),
+		"management_tools":            managementToolCount,
+		"advertised_downstream_tools": advertisedDownstreamTools,
+	}
+	if toolMountReport != nil {
+		response["tool_schema_budget"] = *toolMountReport
+	}
+	return result(response)
 }
 
 func (s *Server) handleSearchTools(_ context.Context, _ *sdk.CallToolRequest, in searchInput) (*sdk.CallToolResult, any, error) {
@@ -492,7 +608,7 @@ func decodeInputSchema(encoded []byte) (map[string]any, bool) {
 
 func resolveHint(ambiguous bool, namespaced string, templateTruncated bool) string {
 	if ambiguous {
-		return "multiple tools ranked equally — review the alternatives and pick the one whose description best matches your intent; use mcphub_describe_tool for the complete schema"
+		return "recommendation is ambiguous — do not auto-run it; compare alternatives, search with more specific intent, or ask for direction, then use mcphub_describe_tool for the complete schema"
 	}
 	if templateTruncated {
 		return fmt.Sprintf("argument template was bounded — call mcphub_describe_tool for %s before invoking it", namespaced)

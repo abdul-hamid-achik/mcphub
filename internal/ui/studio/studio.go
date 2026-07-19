@@ -576,11 +576,20 @@ func (m Model) renderAgents() string {
 				onStyle.Render(string(a.ResolvedMode())),
 				dimStyle.Render(fmt.Sprintf("manages %d · %s", managed, a.Path))))
 			if a.HasRouting() {
-				scope := subtleStyle.Render(fmt.Sprintf("      routes: servers=%v", *a.Servers))
-				if a.Tools != nil {
-					scope += subtleStyle.Render(fmt.Sprintf(" tools=%v", *a.Tools))
+				var policy []string
+				if a.Servers != nil {
+					policy = append(policy, fmt.Sprintf("servers=%v", *a.Servers))
 				}
-				b.WriteString(scope + "\n")
+				if a.Tools != nil {
+					policy = append(policy, fmt.Sprintf("tools=%v", *a.Tools))
+				}
+				if a.Pin != nil {
+					policy = append(policy, fmt.Sprintf("pin=%v", *a.Pin))
+				}
+				if a.ToolSchemaBudget != "" {
+					policy = append(policy, "tool_schema_budget="+a.ToolSchemaBudget)
+				}
+				b.WriteString(subtleStyle.Render("      gateway: "+strings.Join(policy, " ")) + "\n")
 			}
 		}
 	}

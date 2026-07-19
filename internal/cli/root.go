@@ -38,9 +38,11 @@ Define your servers once in mcphub.yaml (or the Studio TUI), and:
 
 Every proxied tool call is recorded locally so 'mcphub stats' can show which
 servers actually earn their place in your context window.`,
-		Version:       fmt.Sprintf("%s (commit %s, built %s)", version.Version, version.Commit, version.Date),
-		SilenceUsage:  true,
-		SilenceErrors: false,
+		Version:      fmt.Sprintf("%s (commit %s, built %s)", version.Version, version.Commit, version.Date),
+		SilenceUsage: true,
+		// Execute is the single error emitter. Keeping Cobra silent prevents
+		// every CLI failure from being printed once by Cobra and again below.
+		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("mcphub {{.Version}}\n")
 	root.PersistentFlags().StringVar(&flagConfig, "config", "", "path to mcphub.yaml (default: ./mcphub.yaml or ~/.config/mcphub/mcphub.yaml)")

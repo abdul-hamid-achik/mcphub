@@ -270,6 +270,8 @@ agents:
     # disabled: true                 # skip during sync without deleting the definition
     # servers: [codemap, vecgrep]    # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__codemap_find] # gateway-only: only these server__tool names (omit = all; [] = none)
+    # pin: []                        # gateway-only + lazy: replace global pins; [] = meta-tools only
+    # tool_schema_budget: 8KB        # cap complete downstream definitions advertised directly
   local-agent:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
@@ -286,6 +288,8 @@ agents:
 | `disabled` | bool | no | Skip this agent during `sync` without deleting its definition. |
 | `servers` | list of strings | no | Which enabled downstream servers this agent may reach. Omitted means all; an explicit `[]` means none. |
 | `tools` | list of strings | no | Which `server__tool` names this agent may call. **Gateway mode only.** Omitted means every tool of the allowed servers; an explicit `[]` means none. |
+| `pin` | list of strings | no | Per-agent override for the top-level pins under `expose: lazy`. **Gateway mode only.** Omitted inherits global pins; `[]` advertises no pinned downstream definitions but does not remove lazy call authority. Pins do not affect `expose: all`. |
+| `tool_schema_budget` | byte size | no | Maximum serialized bytes of complete downstream tool definitions advertised directly to this gateway agent. Omitted is unlimited; `0` keeps only the eight management tools. |
 
 ### `type`
 
@@ -375,6 +379,39 @@ exact `server__tool` names — no wildcards — and when the agent also has a
 `mcphub doctor` reports each agent's scope (`routes to N/M enabled servers`)
 and flags any listed-but-disabled server.
 
+### `pin` and `tool_schema_budget`: per-agent advertisement
+
+Call scope and provider-visible advertisement are separate controls. This is
+useful for small local models that should retain the complete lazy catalog
+without paying for every pinned schema on the first prompt:
+
+```yaml
+agents:
+  local-agent:
+    type: local-agent
+    path: ~/.config/local-agent/config.yaml
+    mode: gateway
+    pin: []
+```
+
+With `expose: lazy`, this advertises only mcphub's eight management tools.
+Hidden tools allowed by `servers`/`tools` are still discoverable through
+`mcphub_resolve_tool` or `mcphub_search_tools` and callable through
+`mcphub_call_tool`.
+
+Use a finite budget when a few direct pins are still helpful:
+
+```yaml
+    pin: [bob__bob_context, cortex__cortex_status]
+    tool_schema_budget: 8KB
+```
+
+The budget measures the complete namespaced tool definitions, including input
+and output schemas, annotations, icons, and metadata. Definitions are never
+truncated: deterministic admission keeps only complete definitions that fit.
+Both fields are gateway-only and automatically make `sync` include
+`--agent <name>`.
+
 ::: warning Curation, not a security boundary
 Routing controls what the gateway *advertises and honors* for a well-behaved
 agent — it keeps context lean and agents on-task. It is not a hard isolation
@@ -415,7 +452,7 @@ servers:
     tags: [code, search]
     use_when: ["find code by meaning when exact names are unknown"]
   bob:
-    command: /Users/abdulachik/go/bin/bob
+    command: bob
     args: [mcp, serve, --allow-any-workspace]
     enabled: true
     description: Deterministic repository factory and lifecycle reconciler

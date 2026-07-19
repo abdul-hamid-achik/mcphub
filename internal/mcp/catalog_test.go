@@ -273,6 +273,16 @@ func TestAssessRouteRequiresCoverageAndMargin(t *testing.T) {
 			status: "ambiguous",
 			reason: "close_scores",
 		},
+		{
+			name:  "long query with a misleading clear margin",
+			query: "implementation phase in mcphub code format compile agent pin override tool definition budget changes focused tests without changing config",
+			matches: []toolMatch{
+				{Namespaced: "minerva__profile_create", Score: 78, MatchedTerms: []string{"build", "agent"}},
+				{Namespaced: "cortex__note", Score: 65, MatchedTerms: []string{"phase", "code", "agent", "chang"}},
+			},
+			status: "ambiguous",
+			reason: "low_matched_fraction",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -281,6 +291,65 @@ func TestAssessRouteRequiresCoverageAndMargin(t *testing.T) {
 				t.Fatalf("assessment = %+v, want status=%s reason=%s", got, test.status, test.reason)
 			}
 		})
+	}
+}
+
+func TestResolveToolKeepsLongLowCoverageImplementationQueryAmbiguous(t *testing.T) {
+	downstream := sdk.NewServer(&sdk.Implementation{Name: "minerva-fixture", Version: "1"}, nil)
+	downstream.AddTool(&sdk.Tool{
+		Name:        "minerva_profile_create",
+		Title:       "Create a new agent profile",
+		Description: "Create a new agent profile with name, description, model, skills, MCP servers, and system prompt.",
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"name": map[string]any{"type": "string"}},
+			"required":   []string{"name"},
+		},
+	}, func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+		return &sdk.CallToolResult{}, nil
+	})
+	downstream.AddTool(&sdk.Tool{
+		Name:        "minerva_analytics",
+		Title:       "View usage analytics",
+		Description: "Return local skill activation and profile usage analytics.",
+		InputSchema: map[string]any{"type": "object"},
+	}, func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+		return &sdk.CallToolResult{}, nil
+	})
+	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return downstream }, nil)
+	httpServer := httptest.NewServer(handler)
+	t.Cleanup(httpServer.Close)
+
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"minerva": {
+			URL:         httpServer.URL,
+			Transport:   "http",
+			Enabled:     true,
+			Description: "Agent self-improvement, profiles, prompts, and local usage analytics",
+			Tags:        []string{"agent", "profiles"},
+			UseWhen:     []string{"manage agent profiles, skills, and system prompts"},
+		},
+	}}
+	h := hub.New(cfg, nil, nil)
+	h.Connect(context.Background())
+	t.Cleanup(func() { _ = h.Close() })
+	s := &Server{hub: h, cfg: cfg}
+
+	query := "Implement and verify context-budget savings for small local Ollama models in local-agent and mcphub, including TUI cancellation behavior, lazy tool admission, prompt-aware ICE, and regression tests"
+	_, resolvedAny, err := s.handleResolveTool(context.Background(), nil, resolveToolInput{Query: query})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := resolvedAny.(map[string]any)
+	if resolved["status"] != "ambiguous" || resolved["ambiguous"] != true || resolved["confidence"] != "low" {
+		t.Fatalf("low-coverage implementation query was treated as executable: %#v", resolved)
+	}
+	reasons := resolved["reason_codes"].([]string)
+	if !slices.Contains(reasons, "low_matched_fraction") {
+		t.Fatalf("resolver reasons = %v, want low_matched_fraction", reasons)
+	}
+	if hint := resolved["hint"].(string); !strings.Contains(hint, "do not auto-run") {
+		t.Fatalf("ambiguous resolver hint invites execution: %q", hint)
 	}
 }
 
@@ -609,6 +678,103 @@ func TestListServersCountsAndPinsRespectToolScope(t *testing.T) {
 	empty := emptyAny.(map[string]any)
 	if empty["total_tools"] != 0 || len(empty["pinned"].([]string)) != 0 || empty["servers"].([]serverInfo)[0].Tools != 0 {
 		t.Fatalf("empty tool scope leaked counts or pins: %#v", empty)
+	}
+}
+
+func TestLazyAgentPinOverrideRemovesGlobalPinsWithoutRestrictingCalls(t *testing.T) {
+	fixture := connectedCatalogServer(t, nil)
+	fixture.cfg.Expose = config.ExposeLazy
+	fixture.cfg.Pin = []string{"hitspec"}
+	noPins := []string{}
+	scope := &agentScope{pin: &noPins}
+	s := NewServer(fixture.cfg, fixture.hub, nil, scope)
+	if err := s.mountDownstreamTools(); err != nil {
+		t.Fatal(err)
+	}
+
+	client := connectServerClient(t, s.srv)
+	list, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Tools) != managementToolCount {
+		t.Fatalf("empty agent pin override advertised %d tools, want only %d management tools", len(list.Tools), managementToolCount)
+	}
+	for _, tool := range list.Tools {
+		if strings.HasPrefix(tool.Name, "hitspec__") {
+			t.Fatalf("global pin leaked through empty agent override: %s", tool.Name)
+		}
+	}
+
+	// Pin policy affects tools/list only. The in-scope downstream tool remains
+	// reachable through the lazy gateway call path.
+	res, err := client.CallTool(context.Background(), &sdk.CallToolParams{
+		Name:      "mcphub_call_tool",
+		Arguments: json.RawMessage(`{"tool":"hitspec__hitspec_fetch"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unadvertised in-scope tool call failed: %s", textContent(res))
+	}
+}
+
+func TestExposeAllIgnoresAgentPinOverride(t *testing.T) {
+	fixture := connectedCatalogServer(t, nil)
+	fixture.cfg.Expose = config.ExposeAll
+	noPins := []string{}
+	s := NewServer(fixture.cfg, fixture.hub, nil, &agentScope{pin: &noPins})
+	if err := s.mountDownstreamTools(); err != nil {
+		t.Fatal(err)
+	}
+	client := connectServerClient(t, s.srv)
+	list, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(list.Tools), managementToolCount+25; got != want {
+		t.Fatalf("expose all with empty pin override advertised %d tools, want %d", got, want)
+	}
+}
+
+func TestToolSchemaBudgetKeepsManagementToolsAndReportsSavings(t *testing.T) {
+	fixture := connectedCatalogServer(t, nil)
+	fixture.cfg.Expose = config.ExposeLazy
+	fixture.cfg.Pin = []string{"hitspec"}
+	zero := 0
+	s := NewServer(fixture.cfg, fixture.hub, nil, &agentScope{toolSchemaBudget: &zero})
+	if err := s.mountDownstreamTools(); err != nil {
+		t.Fatal(err)
+	}
+
+	client := connectServerClient(t, s.srv)
+	list, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Tools) != managementToolCount {
+		t.Fatalf("zero schema budget advertised %d tools, want %d management tools", len(list.Tools), managementToolCount)
+	}
+	if s.toolMountReport == nil ||
+		s.toolMountReport.EligibleTools != 25 ||
+		s.toolMountReport.AdvertisedTools != 0 ||
+		s.toolMountReport.OmittedTools != 25 ||
+		s.toolMountReport.EligibleDefinitionBytes == 0 {
+		t.Fatalf("schema budget report = %+v", s.toolMountReport)
+	}
+
+	_, outAny, err := s.handleListServers(context.Background(), nil, emptyInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := outAny.(map[string]any)
+	report, ok := out["tool_schema_budget"].(hub.ToolMountReport)
+	if !ok || report.EligibleTools != 25 || report.AdvertisedTools != 0 {
+		t.Fatalf("list_servers budget diagnostic = %#v", out["tool_schema_budget"])
+	}
+	if out["management_tools"] != managementToolCount || out["advertised_downstream_tools"] != 0 {
+		t.Fatalf("list_servers surface diagnostic = %#v", out)
 	}
 }
 

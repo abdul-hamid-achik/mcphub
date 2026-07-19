@@ -80,6 +80,25 @@ func TestStudioRendersTabsAndHeader(t *testing.T) {
 	}
 }
 
+func TestStudioRendersAdvertisementOnlyAgentPolicy(t *testing.T) {
+	m, _ := testModel(t)
+	noPins := []string{}
+	m.cfg.Agents["claude"] = config.Agent{
+		Type:             "claude",
+		Path:             "~/.claude.json",
+		Mode:             config.ModeGateway,
+		Pin:              &noPins,
+		ToolSchemaBudget: "8KB",
+	}
+	m.tab = tabAgents
+	body := view(m)
+	for _, want := range []string{"gateway: pin=[]", "tool_schema_budget=8KB"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("agents tab missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestStudioShowsDiscoveryStateAndRoutingHints(t *testing.T) {
 	m, _ := testModel(t)
 	body := view(m)

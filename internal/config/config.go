@@ -99,21 +99,29 @@ const (
 // Lazy reports whether the gateway should use on-demand (lazy) tool exposure.
 func (c *Config) Lazy() bool { return c.Expose == ExposeLazy }
 
-// PinMatches reports whether a namespaced `server__tool` name is pinned. A pin
-// entry may be an exact `server__tool`, a bare `server` (pins all of that
-// server's tools), or a `server__*` wildcard (same as the bare form).
-func (c *Config) PinMatches(namespaced string) bool {
+// PinListMatches reports whether a namespaced `server__tool` name matches one
+// entry in pins. A pin may be exact, a bare server, or a whole-server wildcard.
+// Keeping this helper independent of Config lets per-agent pin overrides reuse
+// the exact same matching contract as the top-level pin list.
+func PinListMatches(pins []string, namespaced string) bool {
 	server := namespaced
 	if i := strings.Index(namespaced, "__"); i >= 0 {
 		server = namespaced[:i]
 	}
-	for _, p := range c.Pin {
+	for _, p := range pins {
 		switch p {
 		case namespaced, server, server + "__*":
 			return true
 		}
 	}
 	return false
+}
+
+// PinMatches reports whether a namespaced `server__tool` name is pinned. A pin
+// entry may be an exact `server__tool`, a bare `server` (pins all of that
+// server's tools), or a `server__*` wildcard (same as the bare form).
+func (c *Config) PinMatches(namespaced string) bool {
+	return PinListMatches(c.Pin, namespaced)
 }
 
 // PinServer extracts the server name a pin entry refers to (the part before the
@@ -263,12 +271,28 @@ type Agent struct {
 	// Gateway-only: in direct mode the agent talks to each server itself, so
 	// per-tool filtering isn't possible and Validate rejects it.
 	Tools *[]string `yaml:"tools,omitempty" toml:"tools,omitempty" json:"tools,omitempty"`
+	// Pin overrides the top-level pin list for this gateway agent in lazy mode.
+	// A nil pointer (omitted) inherits the global pins. A non-nil empty slice
+	// advertises no pinned downstream tools while leaving every in-scope tool
+	// callable through mcphub_call_tool. expose: all does not consult pins.
+	// Entries use the same exact, bare-server, or server__* forms as the
+	// top-level pin list. Gateway-only.
+	Pin *[]string `yaml:"pin,omitempty" toml:"pin,omitempty" json:"pin,omitempty"`
+	// ToolSchemaBudget bounds the total serialized bytes of downstream tool
+	// definitions advertised directly by this gateway agent. It is applied
+	// after server/tool scope and pin selection, never removes mcphub's
+	// management meta-tools, and never changes what mcphub_call_tool may invoke.
+	// Omit it for the historical unlimited behavior; "0" means meta-tools only.
+	// Gateway-only. Examples: "8KB", "16KB", "0".
+	ToolSchemaBudget string `yaml:"tool_schema_budget,omitempty" toml:"tool_schema_budget,omitempty" json:"tool_schema_budget,omitempty"`
 }
 
-// HasRouting reports whether the agent restricts its server or tool set —
-// i.e. whether a gateway spawned for it needs the `--agent <name>` scope. A
-// non-nil but empty slice still counts as routing (it means "none of these").
-func (a Agent) HasRouting() bool { return a.Servers != nil || a.Tools != nil }
+// HasRouting reports whether the agent has call-routing or direct-advertisement
+// policy that requires a gateway spawned with `--agent <name>`. A non-nil but
+// empty slice still counts: it is an intentional "none of these" override.
+func (a Agent) HasRouting() bool {
+	return a.Servers != nil || a.Tools != nil || a.Pin != nil || a.ToolSchemaBudget != ""
+}
 
 // AllowedServers returns the enabled servers this agent may reach, preserving
 // the order of `all`. When Servers is nil the agent is unscoped and all enabled
@@ -305,6 +329,21 @@ func (a Agent) ToolScope() (map[string]bool, bool) {
 		set[t] = true
 	}
 	return set, true
+}
+
+// ToolSchemaBudgetBytes parses this agent's optional direct-advertisement
+// budget. The bool is false only when the setting is omitted. Config validation
+// rejects malformed values before runtime; invalid direct calls defensively
+// resolve to a configured zero-byte budget.
+func (a Agent) ToolSchemaBudgetBytes() (int, bool) {
+	if a.ToolSchemaBudget == "" {
+		return 0, false
+	}
+	n, err := humanReadableBytes(a.ToolSchemaBudget)
+	if err != nil || n < 0 {
+		return 0, true
+	}
+	return n, true
 }
 
 // ResolvedMode returns the agent's mode, defaulting to gateway.
@@ -584,6 +623,20 @@ func (c *Config) Validate() error {
 		if a.ResolvedMode() == ModeDirect && a.Tools != nil {
 			problems = append(problems, fmt.Sprintf("agent %q: tools routing is gateway-only (direct agents call servers directly)", name))
 		}
+		if a.ResolvedMode() == ModeDirect && a.Pin != nil {
+			problems = append(problems, fmt.Sprintf("agent %q: pin override is gateway-only (direct agents receive downstream servers directly)", name))
+		}
+		if a.ResolvedMode() == ModeDirect && a.ToolSchemaBudget != "" {
+			problems = append(problems, fmt.Sprintf("agent %q: tool_schema_budget is gateway-only (direct agents receive downstream servers directly)", name))
+		}
+		if a.ToolSchemaBudget != "" {
+			n, err := humanReadableBytes(a.ToolSchemaBudget)
+			if err != nil {
+				problems = append(problems, fmt.Sprintf("agent %q: tool_schema_budget %q: use a non-negative byte size such as 8KB, 16KB, or 0", name, a.ToolSchemaBudget))
+			} else if n < 0 {
+				problems = append(problems, fmt.Sprintf("agent %q: tool_schema_budget must not be negative", name))
+			}
+		}
 		if a.Tools != nil {
 			for _, t := range *a.Tools {
 				if t == "" {
@@ -618,6 +671,49 @@ func (c *Config) Validate() error {
 					}
 					if !allowed {
 						problems = append(problems, fmt.Sprintf("agent %q: tool %q references server %q not in its servers list", name, t, srv))
+					}
+				}
+			}
+		}
+		if a.Pin != nil {
+			for _, p := range *a.Pin {
+				if p == "" {
+					problems = append(problems, fmt.Sprintf("agent %q: pin entries must not be empty", name))
+					continue
+				}
+				srv := PinServer(p)
+				if _, known := c.Servers[srv]; !known {
+					problems = append(problems, fmt.Sprintf("agent %q: pin %q references unknown server %q", name, p, srv))
+					continue
+				}
+				if strings.Contains(p, "*") && p != srv+"__*" {
+					problems = append(problems, fmt.Sprintf("agent %q: pin %q: only whole-server wildcards (%s__*) are supported", name, p, srv))
+				}
+				if strings.HasSuffix(p, "__") {
+					problems = append(problems, fmt.Sprintf("agent %q: pin %q: trailing %q matches no tool; use %q or %s__* instead", name, p, "__", srv, srv))
+				}
+				if a.Servers != nil {
+					allowed := false
+					for _, allowedServer := range *a.Servers {
+						if allowedServer == srv {
+							allowed = true
+							break
+						}
+					}
+					if !allowed {
+						problems = append(problems, fmt.Sprintf("agent %q: pin %q references server %q not in its servers list", name, p, srv))
+					}
+				}
+				if a.Tools != nil && strings.Contains(p, "__") && p != srv+"__*" {
+					allowed := false
+					for _, allowedTool := range *a.Tools {
+						if allowedTool == p {
+							allowed = true
+							break
+						}
+					}
+					if !allowed {
+						problems = append(problems, fmt.Sprintf("agent %q: exact pin %q is not in its tools allowlist", name, p))
 					}
 				}
 			}

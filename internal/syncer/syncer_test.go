@@ -77,6 +77,16 @@ func TestDesiredRouting(t *testing.T) {
 	if len(gwPlain[0].Args) != 2 {
 		t.Errorf("gateway no-routing args = %v, want 2 (no --agent)", gwPlain[0].Args)
 	}
+	// Advertisement-only policy still needs --agent even when the callable
+	// server/tool scope is otherwise unrestricted.
+	gwPolicy := Desired(c, "local", config.Agent{
+		Mode:             config.ModeGateway,
+		Pin:              &[]string{},
+		ToolSchemaBudget: "8KB",
+	}, "/bin/mcphub")
+	if got := strings.Join(gwPolicy[0].Args, " "); got != "mcp serve --agent local" {
+		t.Errorf("gateway advertisement policy args = %v", gwPolicy[0].Args)
+	}
 
 	// Direct + Servers filter => only listed enabled servers, disabled dropped.
 	d := Desired(c, "x", config.Agent{Mode: config.ModeDirect, Servers: &[]string{"a", "c", "off"}}, "/bin/mcphub")

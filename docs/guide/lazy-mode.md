@@ -46,6 +46,35 @@ talks to each server itself, so it always loads every enabled server's full
 tool list. See [Concepts](/guide/concepts) for the two modes.
 :::
 
+### A no-schema profile for small local models
+
+You can keep the full in-scope lazy catalog while exposing no downstream schema
+definitions directly to one gateway agent:
+
+```yaml
+expose: lazy
+
+agents:
+  local-agent:
+    type: local-agent
+    path: ~/.config/local-agent/config.yaml
+    mode: gateway
+    pin: []
+    tool_schema_budget: "0"
+```
+
+`pin: []` overrides any global pins for this agent. `tool_schema_budget: "0"`
+keeps only the eight management tools. Neither setting removes downstream call
+authority: after resolving or searching, the agent can still use
+`mcphub_call_tool` for every tool permitted by its `servers` and `tools`
+scope. Use a finite byte budget instead when a few complete pinned definitions
+are worth their recurring prompt cost. The gateway never truncates a schema to
+fit a budget.
+
+Run `mcphub sync` to preview the generated harness entry and `mcphub sync
+--write` to apply it. Restart the harness afterward so it launches
+`mcphub mcp serve --agent local-agent` with the new policy.
+
 ## The eight meta-tools
 
 In lazy mode this is the entire advertised surface:
@@ -86,6 +115,20 @@ servers:
 
 These hints do not mount or pin anything. They are lightweight vocabulary for
 the resolver and search index.
+
+## Catalog changes and reconnects
+
+The gateway watches unavailable downstreams and reconnects them in the
+background. It also refreshes the catalog when a connected downstream reports
+that its tool list changed. A successful refresh updates the mounted surface
+and emits the MCP tool-list-change notification, so clients that cache a
+listing or resolver result should obtain a fresh one when the catalog revision
+changes.
+
+A failed call is different from a successful refresh: its outcome is unknown.
+mcphub does not replay that request, because the downstream may already have
+performed a mutation before the transport failed. Reconnect restores future
+calls; it is not evidence about the failed one.
 
 ## The discovery loop
 
@@ -181,9 +224,13 @@ processes reload the config.
 :::
 
 ::: warning Scoped agents
-If an agent has [per-agent routing](/guide/routing) (`servers:` /
-`tools:` lists), a pin outside that agent's scope is silently skipped for it.
-The pin still applies to unscoped agents.
+If an agent has [per-agent routing](/guide/routing) (`servers:` / `tools:`
+lists), a pin outside that agent's scope is silently skipped for it. An
+agent-specific `pin` replaces the global list for that harness; `pin: []`
+publishes only the eight meta-tools while retaining lazy access to every
+in-scope hidden tool. `tool_schema_budget` can instead keep complete pinned
+definitions up to a byte budget. The global pin still applies to agents that
+omit the override.
 :::
 
 ## When to prefer `expose: all`

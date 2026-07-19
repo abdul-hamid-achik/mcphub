@@ -118,6 +118,15 @@ func TestAgentRoutingHelpers(t *testing.T) {
 	if (Agent{}).HasRouting() {
 		t.Error("nil Servers/Tools should not count as routing")
 	}
+	// Advertisement policy also needs --agent even when call authority is
+	// otherwise unscoped. An explicit empty pin override means meta-tools only.
+	emptyPin := Agent{Pin: &[]string{}}
+	if !emptyPin.HasRouting() {
+		t.Error("non-nil empty Pin should count as routing")
+	}
+	if !(Agent{ToolSchemaBudget: "0"}).HasRouting() {
+		t.Error("tool_schema_budget should count as routing")
+	}
 }
 
 func equalStrings(a, b []string) bool {
@@ -143,6 +152,20 @@ func TestValidateRejectsBadRouting(t *testing.T) {
 		"tool unknown server":    {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{"zzz__x"}}}},
 		"tool server not listed": {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Servers: &[]string{"a"}, Tools: &[]string{"b__x"}}}},
 		"empty tool entry":       {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{""}}}},
+		"pins on direct agent":   {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Mode: ModeDirect, Pin: &[]string{}}}},
+		"budget on direct agent": {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Mode: ModeDirect, ToolSchemaBudget: "8KB"}}},
+		"malformed budget":       {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", ToolSchemaBudget: "many"}}},
+		"negative budget":        {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", ToolSchemaBudget: "-1KB"}}},
+		"agent pin unknown":      {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Pin: &[]string{"ghost"}}}},
+		"agent pin bad wildcard": {Servers: servers, Agents: map[string]Agent{"x": {Type: "claude", Path: "~/x", Pin: &[]string{"a__pre*"}}}},
+		"agent pin outside servers": {
+			Servers: servers,
+			Agents:  map[string]Agent{"x": {Type: "claude", Path: "~/x", Servers: &[]string{"a"}, Pin: &[]string{"b"}}},
+		},
+		"exact pin outside tools": {
+			Servers: servers,
+			Agents:  map[string]Agent{"x": {Type: "claude", Path: "~/x", Tools: &[]string{"a__x"}, Pin: &[]string{"a__y"}}},
+		},
 	}
 	for name, c := range cases {
 		if err := c.Validate(); err == nil {
@@ -160,6 +183,15 @@ func TestValidateAcceptsGoodRouting(t *testing.T) {
 			"tools-all-servers":  {Type: "claude", Path: "~/z", Tools: &[]string{"a__x"}},
 			"empty-servers-none": {Type: "claude", Path: "~/e", Servers: &[]string{}}, // no servers (valid: minimal agent)
 			"empty-tools-none":   {Type: "claude", Path: "~/t", Tools: &[]string{}},   // no tools (valid)
+			"empty-pins-none":    {Type: "claude", Path: "~/p", Pin: &[]string{}},
+			"pins-and-budget": {
+				Type:             "claude",
+				Path:             "~/b",
+				Servers:          &[]string{"a"},
+				Tools:            &[]string{"a__x"},
+				Pin:              &[]string{"a"},
+				ToolSchemaBudget: "8KB",
+			},
 		},
 	}
 	if err := c.Validate(); err != nil {
@@ -177,9 +209,22 @@ func TestRoutingEmptyVsAbsentRoundTrip(t *testing.T) {
 		Version: 1,
 		Servers: map[string]Server{"a": {Command: "a", Enabled: true}},
 		Agents: map[string]Agent{
-			"absent": {Type: "claude", Path: "~/p"},                                           // nil = all
-			"empty":  {Type: "claude", Path: "~/p", Servers: &[]string{}, Tools: &[]string{}}, // non-nil empty = none
-			"set":    {Type: "claude", Path: "~/p", Servers: &[]string{"a"}, Tools: &[]string{"a__x"}},
+			"absent": {Type: "claude", Path: "~/p"}, // nil = all
+			"empty": {
+				Type:    "claude",
+				Path:    "~/p",
+				Servers: &[]string{},
+				Tools:   &[]string{},
+				Pin:     &[]string{},
+			}, // non-nil empty = none/inherit nothing
+			"set": {
+				Type:             "claude",
+				Path:             "~/p",
+				Servers:          &[]string{"a"},
+				Tools:            &[]string{"a__x"},
+				Pin:              &[]string{"a__x"},
+				ToolSchemaBudget: "4KB",
+			},
 		},
 	}
 	if err := Save(path, c); err != nil {
@@ -189,8 +234,8 @@ func TestRoutingEmptyVsAbsentRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if loaded.Agents["absent"].Servers != nil || loaded.Agents["absent"].Tools != nil {
-		t.Errorf("absent should stay nil, got Servers=%v Tools=%v", loaded.Agents["absent"].Servers, loaded.Agents["absent"].Tools)
+	if loaded.Agents["absent"].Servers != nil || loaded.Agents["absent"].Tools != nil || loaded.Agents["absent"].Pin != nil {
+		t.Errorf("absent should stay nil, got Servers=%v Tools=%v Pin=%v", loaded.Agents["absent"].Servers, loaded.Agents["absent"].Tools, loaded.Agents["absent"].Pin)
 	}
 	e := loaded.Agents["empty"]
 	if e.Servers == nil || len(*e.Servers) != 0 {
@@ -198,6 +243,9 @@ func TestRoutingEmptyVsAbsentRoundTrip(t *testing.T) {
 	}
 	if e.Tools == nil || len(*e.Tools) != 0 {
 		t.Errorf("empty Tools should be non-nil empty, got %v", e.Tools)
+	}
+	if e.Pin == nil || len(*e.Pin) != 0 {
+		t.Errorf("empty Pin should be non-nil empty, got %v", e.Pin)
 	}
 	// Empty = none: AllowedServers returns nothing.
 	if got := e.AllowedServers([]string{"a"}); len(got) != 0 {
@@ -209,6 +257,21 @@ func TestRoutingEmptyVsAbsentRoundTrip(t *testing.T) {
 	s := loaded.Agents["set"]
 	if s.Servers == nil || len(*s.Servers) != 1 || (*s.Servers)[0] != "a" {
 		t.Errorf("set Servers wrong after round-trip: %v", s.Servers)
+	}
+	if s.Pin == nil || len(*s.Pin) != 1 || (*s.Pin)[0] != "a__x" || s.ToolSchemaBudget != "4KB" {
+		t.Errorf("set advertisement policy wrong after round-trip: Pin=%v budget=%q", s.Pin, s.ToolSchemaBudget)
+	}
+}
+
+func TestToolSchemaBudgetBytes(t *testing.T) {
+	if n, configured := (Agent{}).ToolSchemaBudgetBytes(); configured || n != 0 {
+		t.Fatalf("omitted budget = %d,%t, want 0,false", n, configured)
+	}
+	if n, configured := (Agent{ToolSchemaBudget: "8KB"}).ToolSchemaBudgetBytes(); !configured || n != 8*1024 {
+		t.Fatalf("8KB budget = %d,%t", n, configured)
+	}
+	if n, configured := (Agent{ToolSchemaBudget: "0"}).ToolSchemaBudgetBytes(); !configured || n != 0 {
+		t.Fatalf("zero budget = %d,%t, want 0,true", n, configured)
 	}
 }
 
@@ -324,6 +387,10 @@ func TestMultiFormatRoundTrip(t *testing.T) {
 			want := Starter()
 			want.Expose = ExposeLazy
 			want.Pin = []string{"codemap__codemap_semantic"}
+			codex := want.Agents["codex"]
+			codex.Pin = &[]string{}
+			codex.ToolSchemaBudget = "8KB"
+			want.Agents["codex"] = codex
 			if err := Save(path, want); err != nil {
 				t.Fatalf("Save(%s): %v", ext, err)
 			}
@@ -346,6 +413,9 @@ func TestMultiFormatRoundTrip(t *testing.T) {
 			}
 			if a := got.Agents["opencode"]; a.Type != "opencode" || a.ResolvedMode() != ModeDirect {
 				t.Errorf("%s: opencode agent not round-tripped: %+v", ext, a)
+			}
+			if a := got.Agents["codex"]; a.Pin == nil || len(*a.Pin) != 0 || a.ToolSchemaBudget != "8KB" {
+				t.Errorf("%s: codex advertisement policy not round-tripped: %+v", ext, a)
 			}
 		})
 	}

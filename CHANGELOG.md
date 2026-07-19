@@ -4,6 +4,44 @@ All notable changes to mcphub are documented here. The format is loosely based
 on [Keep a Changelog](https://keepachangelog.com/), and the project aims to
 follow [Semantic Versioning](https://semver.org/) once it tags releases.
 
+## [0.18.0] - 2026-07-19
+
+### Added
+
+- **Per-agent advertisement budgets.** Gateway agents can override global lazy
+  pins with `pin` (including `pin: []`) and cap complete directly advertised
+  downstream definitions with `tool_schema_budget`. Hidden in-scope tools
+  remain discoverable and callable through the eight management tools.
+- **Live downstream catalog refresh.** MCP `tools/list_changed` notifications
+  now refresh the affected catalog and mounted tool surface without restarting
+  the gateway. Reconnect restores future calls but never replays a failed call
+  whose outcome may already include a mutation.
+
+### Changed
+
+- Resolver instructions now require a confident, unambiguous recommendation
+  before automatic invocation and direct ambiguous results toward comparison,
+  a narrower search, or user direction.
+- Scoped doctor probes connect only the requested server and return a non-zero
+  status after rendering their human or JSON report when registration, PATH,
+  or MCP initialization fails.
+
+### Fixed
+
+- Protected downstream session, error, and tool-catalog state with coherent
+  snapshots, removing races between transport invalidation, reconnects,
+  catalog refresh, doctor, and management-tool reads.
+- Dynamic mounts now remove stale definitions before adding replacements, so a
+  concurrent `tools/list` cannot observe a temporary union that exceeds the
+  selected agent scope or schema budget.
+
+### Security
+
+- TinyVault control credentials are stripped from unrelated stdio children.
+  Startup stderr and `tvault://` header failures are bounded, credential
+  redacted, and reduced to closed diagnostic classes; decrypted header output
+  is size- and timeout-bounded.
+
 ## [0.17.0] - 2026-07-16
 
 ### Fixed
@@ -427,7 +465,9 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   `config.mts` and set the package type. `npm run docs:build` (and `task
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.3...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.3...v0.17.0
 [0.16.3]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.0...v0.16.1

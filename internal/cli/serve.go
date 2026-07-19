@@ -33,10 +33,10 @@ enabled downstream server, aggregates their tools under 'server__tool' names,
 and records each proxied call to the local intelligence db. Point your agents
 at 'mcphub mcp serve' (gateway mode) to front them all with one connection.
 
-When --agent <name> is given, the gateway scopes its advertised tools (and the
-mcphub_* meta-tools) to that agent's ` + "`servers`" + ` / ` + "`tools`" + ` allowlists from
-mcphub.yaml — this is how per-agent routing works in gateway mode. A bare
-'mcphub mcp serve' (no --agent) is unscoped and advertises everything.`,
+When --agent <name> is given, the gateway applies that agent's ` + "`servers`" + ` /
+` + "`tools`" + ` call scope plus its optional ` + "`pin`" + ` and ` + "`tool_schema_budget`" + `
+advertisement policy from mcphub.yaml. A bare 'mcphub mcp serve' (no --agent)
+is unscoped and uses the global exposure policy.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, _, err := loadConfig()
 			if err != nil {
@@ -67,6 +67,6 @@ mcphub.yaml — this is how per-agent routing works in gateway mode. A bare
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&agentName, "agent", "", "agent name this gateway serves (scopes tools to its servers/tools allowlists)")
+	cmd.Flags().StringVar(&agentName, "agent", "", "agent name this gateway serves (applies servers/tools scope and pin/schema advertisement policy)")
 	return cmd
 }

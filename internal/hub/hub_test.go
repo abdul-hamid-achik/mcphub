@@ -410,6 +410,113 @@ func TestMountPreservesDownstreamToolMetadata(t *testing.T) {
 	}
 }
 
+func TestMountMatchingBudgetedIsDeterministicAndPreservesMetadata(t *testing.T) {
+	readOnly := true
+	downstreamServer := mcp.NewServer(&mcp.Implementation{Name: "budget", Version: "1"}, nil)
+	downstreamServer.AddTool(&mcp.Tool{
+		Name:        "a_huge",
+		Description: strings.Repeat("large definition ", 200),
+		InputSchema: map[string]any{"type": "object"},
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+	downstreamServer.AddTool(&mcp.Tool{
+		Meta:        mcp.Meta{"audience": []any{"agent"}},
+		Name:        "b_compact",
+		Title:       "Compact tool",
+		Description: "Small enough to fit after the earlier oversized candidate is skipped.",
+		InputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"query": map[string]any{"type": "string"}},
+		},
+		OutputSchema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+		},
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
+		Icons:       []mcp.Icon{{Source: "data:image/svg+xml;base64,PHN2Zy8+"}},
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+	downstreamSession := connectInMemoryClient(t, downstreamServer)
+	list, err := downstreamSession.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compact *mcp.Tool
+	for _, tool := range list.Tools {
+		if tool.Name == "b_compact" {
+			compact = tool
+			break
+		}
+	}
+	if compact == nil {
+		t.Fatal("compact downstream tool not found")
+	}
+	encodedCompact, err := json.Marshal(namespacedTool("fixture", compact))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := New(&config.Config{}, nil, nil)
+	h.downstreams = []*Downstream{{Name: "fixture", session: downstreamSession, Tools: list.Tools}}
+	gateway := mcp.NewServer(&mcp.Implementation{Name: "gateway", Version: "1"}, nil)
+	report, err := h.MountMatchingBudgeted(gateway, func(string) bool { return true }, len(encodedCompact))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.EligibleTools != 2 || report.AdvertisedTools != 1 || report.OmittedTools != 1 {
+		t.Fatalf("budget report = %+v", report)
+	}
+	if report.AdvertisedDefinitionBytes != len(encodedCompact) || report.EligibleDefinitionBytes <= report.AdvertisedDefinitionBytes {
+		t.Fatalf("budget byte accounting = %+v, compact=%d", report, len(encodedCompact))
+	}
+	if report.AdvertisedEstimatedTokens != (len(encodedCompact)+3)/4 {
+		t.Fatalf("estimated tokens = %d, want %d", report.AdvertisedEstimatedTokens, (len(encodedCompact)+3)/4)
+	}
+
+	client := connectInMemoryClient(t, gateway)
+	mounted, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mounted.Tools) != 1 || mounted.Tools[0].Name != "fixture__b_compact" {
+		t.Fatalf("budget selected tools = %#v", mounted.Tools)
+	}
+	got := mounted.Tools[0]
+	if got.Title != compact.Title ||
+		!reflect.DeepEqual(got.InputSchema, compact.InputSchema) ||
+		!reflect.DeepEqual(got.OutputSchema, compact.OutputSchema) ||
+		!reflect.DeepEqual(got.Annotations, compact.Annotations) ||
+		!reflect.DeepEqual(got.Icons, compact.Icons) ||
+		!reflect.DeepEqual(got.Meta, compact.Meta) {
+		t.Fatalf("budgeted mount dropped metadata:\n got  %#v\n want %#v", got, compact)
+	}
+}
+
+func TestMountMatchingBudgetedZeroAdvertisesNoDownstreamTools(t *testing.T) {
+	session, tool := inMemoryDownstream(t, &mcp.CallToolResult{})
+	h := New(&config.Config{}, nil, nil)
+	h.downstreams = []*Downstream{{Name: "memory", session: session, Tools: []*mcp.Tool{tool}}}
+	gateway := mcp.NewServer(&mcp.Implementation{Name: "gateway", Version: "1"}, nil)
+
+	report, err := h.MountMatchingBudgeted(gateway, func(string) bool { return true }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.EligibleTools != 1 || report.AdvertisedTools != 0 || report.OmittedTools != 1 || report.AdvertisedDefinitionBytes != 0 {
+		t.Fatalf("zero-budget report = %+v", report)
+	}
+	client := connectInMemoryClient(t, gateway)
+	list, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Tools) != 0 {
+		t.Fatalf("zero budget advertised %d downstream tools", len(list.Tools))
+	}
+}
+
 func TestBoundedLosslessMountedCallReconstructsExactResult(t *testing.T) {
 	st, _ := openHubStore(t)
 	cfg := &config.Config{ResponseBudget: "900B"}

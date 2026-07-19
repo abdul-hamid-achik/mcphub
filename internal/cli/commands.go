@@ -523,9 +523,13 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 				defer st.Close()
 				rep := buildScopedServerReport(cmd.Context(), c, st, server, probe)
 				if flagJSON {
-					return printJSON(cmd, rep)
+					if err := printJSON(cmd, rep); err != nil {
+						return err
+					}
+				} else if err := renderScopedServerReport(cmd, rep); err != nil {
+					return err
 				}
-				return renderScopedServerReport(cmd, rep)
+				return scopedDoctorError(rep, probe)
 			}
 
 			var checks []checkResult
@@ -574,6 +578,12 @@ failed) — a real connectivity check, not just a PATH lookup.`,
 					routingDetail := fmt.Sprintf("routes to %d/%d enabled servers", len(allowed), len(c.EnabledServers()))
 					if a.Tools != nil && len(*a.Tools) > 0 {
 						routingDetail += fmt.Sprintf(", %d tools", len(*a.Tools))
+					}
+					if a.Pin != nil {
+						routingDetail += fmt.Sprintf(", %d agent pins", len(*a.Pin))
+					}
+					if a.ToolSchemaBudget != "" {
+						routingDetail += ", tool schema budget " + a.ToolSchemaBudget
 					}
 					checks = append(checks, checkResult{"agent:" + name + ":routing", true, routingDetail})
 					if a.Servers != nil {
@@ -632,25 +642,41 @@ func probeServers(ctx context.Context, c *config.Config) []checkResult {
 	var out []checkResult
 	for _, d := range h.Downstreams() {
 		if d.Connected() {
-			out = append(out, checkResult{"probe:" + d.Name, true, fmt.Sprintf("%d tools", len(d.Tools))})
+			out = append(out, checkResult{"probe:" + d.Name, true, fmt.Sprintf("%d tools", len(d.ToolsSnapshot()))})
 		} else {
-			out = append(out, checkResult{"probe:" + d.Name, false, d.Err.Error()})
+			err := d.ErrorSnapshot()
+			detail := "server is not connected"
+			if err != nil {
+				detail = err.Error()
+			}
+			out = append(out, checkResult{"probe:" + d.Name, false, detail})
 		}
 	}
 	return out
 }
 
 func reportChecks(cmd *cobra.Command, checks []checkResult) error {
+	allOK := true
+	for _, c := range checks {
+		if !c.OK {
+			allOK = false
+			break
+		}
+	}
 	if flagJSON {
-		return printJSON(cmd, checks)
+		if err := printJSON(cmd, checks); err != nil {
+			return err
+		}
+		if !allOK {
+			return fmt.Errorf("doctor found problems")
+		}
+		return nil
 	}
 	out := cmd.OutOrStdout()
-	allOK := true
 	for _, c := range checks {
 		mark := "✔"
 		if !c.OK {
 			mark = "✗"
-			allOK = false
 		}
 		fmt.Fprintf(out, "%s %-18s %s\n", mark, c.Name, c.Detail)
 	}

@@ -354,5 +354,5 @@ A harness integration is ready when:
 - [Lazy mode and pinning](/guide/lazy-mode) — configure the lazy catalog.
 - [Per-agent routing](/guide/routing) — restrict the catalog per harness.
 - [Gateway meta-tools](/reference/meta-tools) — exact management-tool contract.
-- [Fetch HTTP responses with Hitspec](/guide/hitspec) — bounded HTTP fetches,
+- [Search, fetch, and capture with Hitspec](/guide/hitspec) — bounded web discovery, retrieval,
   saved-request validation, and an explicit file.cheap handoff.

@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -39,10 +38,66 @@ type Downstream struct {
 	session *mcp.ClientSession
 	Tools   []*mcp.Tool
 	Err     error // non-nil if the server failed to connect
+
+	stateMu       sync.RWMutex // guards session and Err after publication in Hub
+	toolsMu       sync.RWMutex
+	toolRefreshMu sync.Mutex
+
+	refreshStateMu sync.Mutex
+	refreshLive    bool
+	refreshRunning bool
+	refreshPending bool
 }
 
 // Connected reports whether the downstream is live.
-func (d *Downstream) Connected() bool { return d.session != nil && d.Err == nil }
+func (d *Downstream) Connected() bool {
+	session, err := d.connectionSnapshot()
+	return session != nil && err == nil
+}
+
+// connectionSnapshot returns the current session and connection error together.
+// Hub publishes downstream pointers to concurrent MCP handlers, so these two
+// fields must be read as one coherent state rather than after Hub.mu is
+// released by Downstreams or downstream.
+func (d *Downstream) connectionSnapshot() (*mcp.ClientSession, error) {
+	d.stateMu.RLock()
+	defer d.stateMu.RUnlock()
+	return d.session, d.Err
+}
+
+func (d *Downstream) setConnection(session *mcp.ClientSession, err error) {
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
+	d.session = session
+	d.Err = err
+}
+
+func (d *Downstream) setError(err error) {
+	d.stateMu.Lock()
+	defer d.stateMu.Unlock()
+	d.Err = err
+}
+
+// ErrorSnapshot returns the current connection error, if any.
+func (d *Downstream) ErrorSnapshot() error {
+	_, err := d.connectionSnapshot()
+	return err
+}
+
+// ToolsSnapshot returns a stable copy of the latest downstream tool catalog.
+// Tool-list change notifications may replace the catalog while gateway
+// handlers are concurrently searching, mounting, or reporting it.
+func (d *Downstream) ToolsSnapshot() []*mcp.Tool {
+	d.toolsMu.RLock()
+	defer d.toolsMu.RUnlock()
+	return append([]*mcp.Tool(nil), d.Tools...)
+}
+
+func (d *Downstream) setTools(tools []*mcp.Tool) {
+	d.toolsMu.Lock()
+	defer d.toolsMu.Unlock()
+	d.Tools = append([]*mcp.Tool(nil), tools...)
+}
 
 // Hub aggregates downstream MCP servers.
 type Hub struct {
@@ -69,6 +124,9 @@ type Hub struct {
 
 	reconnectMu    sync.Mutex             // guards reconnectLocks
 	reconnectLocks map[string]*sync.Mutex // serializes immediate reconnects per server
+
+	changeMu   sync.Mutex
+	changeSubs map[chan struct{}]struct{}
 }
 
 // New creates a hub over the given config. store may be nil (telemetry is then
@@ -85,6 +143,45 @@ func New(cfg *config.Config, st *store.Store, logger *log.Logger) *Hub {
 		now:            time.Now,
 		shutdownCtx:    shutdownCtx,
 		shutdownCancel: shutdownCancel,
+	}
+}
+
+// SubscribeChanges registers a coalescing notification stream for downstream
+// connection or tool-catalog changes. Each subscriber has its own one-element
+// buffer, so a slow consumer never blocks reconnects; consumers always
+// recompute from the latest Hub snapshot. The returned unsubscribe is safe to
+// call more than once.
+func (h *Hub) SubscribeChanges() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	h.changeMu.Lock()
+	if h.changeSubs == nil {
+		h.changeSubs = make(map[chan struct{}]struct{})
+	}
+	h.changeSubs[ch] = struct{}{}
+	h.changeMu.Unlock()
+
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			h.changeMu.Lock()
+			delete(h.changeSubs, ch)
+			h.changeMu.Unlock()
+		})
+	}
+}
+
+func (h *Hub) notifyDownstreamChange() {
+	h.changeMu.Lock()
+	subs := make([]chan struct{}, 0, len(h.changeSubs))
+	for ch := range h.changeSubs {
+		subs = append(subs, ch)
+	}
+	h.changeMu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -123,22 +220,29 @@ func (h *Hub) ConnectMatching(ctx context.Context, allow func(string) bool) {
 
 	h.mu.Lock()
 	old := h.downstreams
+	for _, d := range old {
+		d.deactivateToolRefresh()
+	}
 	h.downstreams = results
 	h.mu.Unlock()
+	for _, d := range results {
+		d.activateToolRefresh(h)
+	}
+	h.notifyDownstreamChange()
 
 	// Close any sessions a previous Connect opened so a second call (a Studio
 	// refresh, a reconnect) can't orphan child processes / SSE connections.
 	for _, d := range old {
-		if d.session != nil {
-			_ = d.session.Close()
+		if session, _ := d.connectionSnapshot(); session != nil {
+			_ = session.Close()
 		}
 	}
 
 	for _, d := range results {
-		if d.Err != nil {
-			h.log.Warn("downstream unavailable", "server", d.Name, "err", d.Err)
+		if err := d.ErrorSnapshot(); err != nil {
+			h.log.Warn("downstream unavailable", "server", d.Name, "err", err)
 		} else {
-			h.log.Info("downstream connected", "server", d.Name, "tools", len(d.Tools))
+			h.log.Info("downstream connected", "server", d.Name, "tools", len(d.ToolsSnapshot()))
 		}
 	}
 }
@@ -151,46 +255,144 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 	// Resolve tvault:// references in remote-server headers before creating
 	// the transport. Fail fast with a clear error if a secret can't be fetched.
 	if len(srv.Headers) > 0 {
-		resolved, err := resolveVaultHeaders(srv.Headers)
+		resolved, err := resolveVaultHeaders(cctx, srv.Headers)
 		if err != nil {
-			d.Err = fmt.Errorf("resolve vault headers: %w", err)
+			d.setError(fmt.Errorf("resolve vault headers: %w", err))
 			return d
 		}
 		srv.Headers = resolved
 	}
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "mcphub", Version: version.Version}, nil)
-	transport := transportFor(srv)
-	session, err := client.Connect(cctx, transport, nil)
+	client := mcp.NewClient(
+		&mcp.Implementation{Name: "mcphub", Version: version.Version},
+		&mcp.ClientOptions{
+			ToolListChangedHandler: func(_ context.Context, req *mcp.ToolListChangedRequest) {
+				// Coalesce notifications before starting work. A notification
+				// can arrive while connectOne is still listing tools, so the
+				// downstream is activated only after it is published in Hub.
+				h.requestDownstreamToolRefresh(d, req.Session)
+			},
+		},
+	)
+	prepared := prepareTransport(srv)
+	session, err := client.Connect(cctx, prepared.transport, nil)
 	if err != nil {
-		d.Err = fmt.Errorf("connect: %w", err)
+		if detail := prepared.startupDetail(); detail != "" {
+			d.setError(fmt.Errorf("connect: %w; downstream stderr: %s", err, detail))
+		} else {
+			d.setError(fmt.Errorf("connect: %w", err))
+		}
 		return d
 	}
+	d.toolRefreshMu.Lock()
 	list, err := session.ListTools(cctx, nil)
+	d.toolRefreshMu.Unlock()
 	if err != nil {
 		_ = session.Close()
-		d.Err = fmt.Errorf("list tools: %w", err)
+		d.setError(fmt.Errorf("list tools: %w", err))
 		return d
 	}
-	d.session = session
-	d.Tools = list.Tools
+	d.setConnection(session, nil)
+	d.setTools(list.Tools)
 	return d
 }
 
-func transportFor(srv config.Server) mcp.Transport {
-	if srv.IsRemote() {
-		httpClient := httpClientFor(srv)
-		switch srv.Transport {
-		case "sse":
-			return &mcp.SSEClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}
-		default: // "http" or unset
-			return &mcp.StreamableClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}
+func (d *Downstream) activateToolRefresh(h *Hub) {
+	if h.closing.Load() {
+		return
+	}
+	d.refreshStateMu.Lock()
+	d.refreshLive = true
+	start := d.refreshPending && !d.refreshRunning
+	if start {
+		d.refreshPending = false
+		d.refreshRunning = true
+	}
+	d.refreshStateMu.Unlock()
+	if start {
+		session, _ := d.connectionSnapshot()
+		go h.runDownstreamToolRefresh(d, session)
+	}
+}
+
+func (d *Downstream) deactivateToolRefresh() {
+	d.refreshStateMu.Lock()
+	d.refreshLive = false
+	d.refreshPending = false
+	d.refreshStateMu.Unlock()
+}
+
+func (h *Hub) requestDownstreamToolRefresh(d *Downstream, session *mcp.ClientSession) {
+	if session == nil || h.closing.Load() {
+		return
+	}
+	d.refreshStateMu.Lock()
+	d.refreshPending = true
+	start := d.refreshLive && !d.refreshRunning
+	if start {
+		d.refreshPending = false
+		d.refreshRunning = true
+	}
+	d.refreshStateMu.Unlock()
+	if start {
+		go h.runDownstreamToolRefresh(d, session)
+	}
+}
+
+func (h *Hub) runDownstreamToolRefresh(d *Downstream, session *mcp.ClientSession) {
+	for {
+		h.refreshDownstreamTools(h.shutdownCtx, d, session)
+
+		d.refreshStateMu.Lock()
+		if !d.refreshLive || h.closing.Load() {
+			d.refreshRunning = false
+			d.refreshPending = false
+			d.refreshStateMu.Unlock()
+			return
+		}
+		if d.refreshPending {
+			d.refreshPending = false
+			d.refreshStateMu.Unlock()
+			continue
+		}
+		d.refreshRunning = false
+		d.refreshStateMu.Unlock()
+		return
+	}
+}
+
+func (h *Hub) refreshDownstreamTools(ctx context.Context, d *Downstream, session *mcp.ClientSession) {
+	if session == nil || h.closing.Load() {
+		return
+	}
+	d.toolRefreshMu.Lock()
+	defer d.toolRefreshMu.Unlock()
+	rctx, cancel := context.WithTimeout(ctx, h.connectTimeout)
+	defer cancel()
+	list, err := session.ListTools(rctx, nil)
+	if err != nil {
+		h.log.Warn("refresh downstream tools failed", "server", d.Name, "err", err)
+		return
+	}
+
+	installed := false
+	h.mu.Lock()
+	for _, current := range h.downstreams {
+		currentSession, _ := current.connectionSnapshot()
+		if !h.closing.Load() && current == d && currentSession == session && current.Connected() {
+			d.setTools(list.Tools)
+			installed = true
+			break
 		}
 	}
-	command, cargs := srv.SpawnCommand()
-	cmd := exec.Command(command, cargs...)
-	cmd.Env = append(os.Environ(), envPairs(srv.Env)...)
-	return &mcp.CommandTransport{Command: cmd}
+	h.mu.Unlock()
+	if installed {
+		h.notifyDownstreamChange()
+	}
+}
+
+func transportFor(srv config.Server) mcp.Transport {
+	return prepareTransport(srv).transport
 }
 
 // httpClientFor builds an *http.Client for remote transports. When the server
@@ -245,49 +447,183 @@ func isLocalhostHTTPS(rawURL string) bool {
 	return false
 }
 
-func envPairs(env map[string]string) []string {
-	out := make([]string, 0, len(env))
-	for k, v := range env {
-		out = append(out, k+"="+v)
-	}
-	return out
-}
-
 // Mount registers every aggregated downstream tool onto srv (expose: all).
 // Returns the number of tools mounted.
 func (h *Hub) Mount(srv *mcp.Server) int {
-	return h.mount(srv, func(string) bool { return true })
+	return h.MountMatching(srv, func(string) bool { return true })
 }
 
 // MountMatching registers only the tools whose namespaced (server__tool) name
 // satisfies `pred` — used in lazy mode to keep pinned tools directly callable.
 // Returns the number mounted.
 func (h *Hub) MountMatching(srv *mcp.Server, pred func(namespaced string) bool) int {
-	return h.mount(srv, pred)
+	tools := h.MatchingTools(pred)
+	for _, tool := range tools {
+		srv.AddTool(tool.Definition, tool.Handler)
+	}
+	return len(tools)
 }
 
-// mount registers each connected downstream tool that `want` accepts, with a
-// namespaced name and a telemetry-recording forwarding handler.
-func (h *Hub) mount(srv *mcp.Server, want func(namespaced string) bool) int {
-	h.mu.Lock()
-	downstreams := h.downstreams
-	h.mu.Unlock()
+// ToolMount is one complete downstream definition and forwarding handler
+// selected for direct advertisement by the gateway.
+type ToolMount struct {
+	Definition *mcp.Tool
+	Handler    mcp.ToolHandler
+}
 
-	count := 0
-	for _, d := range downstreams {
+// ToolMountReport describes an opt-in admission pass over directly advertised
+// downstream tool definitions. Byte counts cover the complete namespaced
+// mcp.Tool JSON values (description, schemas, annotations, icons, _meta, and
+// future SDK fields), not just InputSchema. The token figures are explicitly
+// approximate at four serialized bytes per token.
+type ToolMountReport struct {
+	BudgetBytes               int `json:"budget_bytes"`
+	EligibleTools             int `json:"eligible_tools"`
+	AdvertisedTools           int `json:"advertised_tools"`
+	OmittedTools              int `json:"omitted_tools"`
+	EligibleDefinitionBytes   int `json:"eligible_definition_bytes"`
+	AdvertisedDefinitionBytes int `json:"advertised_definition_bytes"`
+	EligibleEstimatedTokens   int `json:"eligible_estimated_tokens"`
+	AdvertisedEstimatedTokens int `json:"advertised_estimated_tokens"`
+}
+
+type budgetedToolCandidate struct {
+	server     string
+	tool       string
+	namespaced string
+	definition *mcp.Tool
+	bytes      int
+}
+
+// MountMatchingBudgeted deterministically mounts the complete definitions
+// accepted by pred while their aggregate serialized size fits budgetBytes.
+// Candidates are ordered by namespaced name so connection scheduling and
+// downstream tools/list order cannot change the selected surface. A definition
+// that does not fit is skipped while later smaller definitions may still use
+// the remaining budget. A zero-byte budget mounts no downstream tools.
+//
+// Metadata preservation remains identical to MountMatching: the selected
+// definition is a full copy made by namespacedTool and only its protocol name
+// and description prefix differ from the downstream value.
+func (h *Hub) MountMatchingBudgeted(srv *mcp.Server, pred func(namespaced string) bool, budgetBytes int) (ToolMountReport, error) {
+	tools, report, err := h.MatchingToolsBudgeted(pred, budgetBytes)
+	if err != nil {
+		return report, err
+	}
+	for _, tool := range tools {
+		srv.AddTool(tool.Definition, tool.Handler)
+	}
+	return report, nil
+}
+
+// MatchingTools returns the deterministic desired direct-advertisement set
+// without mutating an MCP server. Callers can diff this plan against a
+// previously mounted set before using AddTool/RemoveTools.
+func (h *Hub) MatchingTools(pred func(namespaced string) bool) []ToolMount {
+	var mounts []ToolMount
+	for _, catalog := range h.toolCatalogSnapshot() {
+		for _, tool := range catalog.tools {
+			if tool == nil {
+				continue
+			}
+			namespaced := catalog.server + "__" + tool.Name
+			if !pred(namespaced) {
+				continue
+			}
+			mounts = append(mounts, ToolMount{
+				Definition: namespacedTool(catalog.server, tool),
+				Handler:    h.forward(catalog.server, tool.Name, namespaced),
+			})
+		}
+	}
+	sort.Slice(mounts, func(i, j int) bool {
+		return mounts[i].Definition.Name < mounts[j].Definition.Name
+	})
+	return mounts
+}
+
+// MatchingToolsBudgeted returns the deterministic desired mount set and its
+// byte/token report without mutating an MCP server.
+func (h *Hub) MatchingToolsBudgeted(pred func(namespaced string) bool, budgetBytes int) ([]ToolMount, ToolMountReport, error) {
+	report := ToolMountReport{BudgetBytes: budgetBytes}
+	if budgetBytes < 0 {
+		return nil, report, fmt.Errorf("tool definition budget must not be negative")
+	}
+
+	var candidates []budgetedToolCandidate
+	for _, catalog := range h.toolCatalogSnapshot() {
+		for _, tool := range catalog.tools {
+			if tool == nil {
+				continue
+			}
+			namespaced := catalog.server + "__" + tool.Name
+			if !pred(namespaced) {
+				continue
+			}
+			definition := namespacedTool(catalog.server, tool)
+			encoded, err := json.Marshal(definition)
+			if err != nil {
+				return nil, report, fmt.Errorf("measure tool definition %s: %w", namespaced, err)
+			}
+			candidates = append(candidates, budgetedToolCandidate{
+				server:     catalog.server,
+				tool:       tool.Name,
+				namespaced: namespaced,
+				definition: definition,
+				bytes:      len(encoded),
+			})
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].namespaced < candidates[j].namespaced
+	})
+
+	report.EligibleTools = len(candidates)
+	var mounts []ToolMount
+	for _, candidate := range candidates {
+		report.EligibleDefinitionBytes += candidate.bytes
+		if report.AdvertisedDefinitionBytes+candidate.bytes > budgetBytes {
+			continue
+		}
+		mounts = append(mounts, ToolMount{
+			Definition: candidate.definition,
+			Handler:    h.forward(candidate.server, candidate.tool, candidate.namespaced),
+		})
+		report.AdvertisedTools++
+		report.AdvertisedDefinitionBytes += candidate.bytes
+	}
+	report.OmittedTools = report.EligibleTools - report.AdvertisedTools
+	report.EligibleEstimatedTokens = estimatedDefinitionTokens(report.EligibleDefinitionBytes)
+	report.AdvertisedEstimatedTokens = estimatedDefinitionTokens(report.AdvertisedDefinitionBytes)
+	return mounts, report, nil
+}
+
+func estimatedDefinitionTokens(serializedBytes int) int {
+	if serializedBytes <= 0 {
+		return 0
+	}
+	return (serializedBytes + 3) / 4
+}
+
+type downstreamToolCatalog struct {
+	server string
+	tools  []*mcp.Tool
+}
+
+func (h *Hub) toolCatalogSnapshot() []downstreamToolCatalog {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	catalogs := make([]downstreamToolCatalog, 0, len(h.downstreams))
+	for _, d := range h.downstreams {
 		if !d.Connected() {
 			continue
 		}
-		for _, tool := range d.Tools {
-			namespaced := d.Name + "__" + tool.Name
-			if !want(namespaced) {
-				continue
-			}
-			srv.AddTool(namespacedTool(d.Name, tool), h.forward(d, tool.Name, namespaced))
-			count++
-		}
+		catalogs = append(catalogs, downstreamToolCatalog{
+			server: d.Name,
+			tools:  d.ToolsSnapshot(),
+		})
 	}
-	return count
+	return catalogs
 }
 
 // namespacedTool copies a downstream tool definition, changing only the
@@ -303,13 +639,13 @@ func namespacedTool(server string, tool *mcp.Tool) *mcp.Tool {
 
 // forward returns a raw passthrough handler used when a tool is mounted
 // directly (expose: all). It simply relays to Call.
-func (h *Hub) forward(d *Downstream, toolName, namespaced string) mcp.ToolHandler {
+func (h *Hub) forward(server, toolName, namespaced string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args json.RawMessage
 		if req.Params != nil {
 			args = req.Params.Arguments
 		}
-		return h.Call(ctx, d.Name, toolName, args)
+		return h.Call(ctx, server, toolName, args)
 	}
 }
 
@@ -358,12 +694,15 @@ func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
 		// Close has not begun, so it must later take h.mu and will tear down
 		// whatever we swap in.
 		h.mu.Unlock()
-		_ = nd.session.Close()
+		if session, _ := nd.connectionSnapshot(); session != nil {
+			_ = session.Close()
+		}
 		return false
 	}
 	for i, d := range h.downstreams {
 		if d.Name == server {
-			stale = d.session
+			d.deactivateToolRefresh()
+			stale, _ = d.connectionSnapshot()
 			h.downstreams[i] = nd
 			swapped = true
 			break
@@ -373,7 +712,9 @@ func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
 	if !swapped {
 		// The server vanished from the downstream set (a concurrent scoped
 		// refresh); close the fresh session instead of leaking it.
-		_ = nd.session.Close()
+		if session, _ := nd.connectionSnapshot(); session != nil {
+			_ = session.Close()
+		}
 		return false
 	}
 	if stale != nil {
@@ -384,6 +725,8 @@ func (h *Hub) ReconnectOne(ctx context.Context, server string) bool {
 		// hub operation waiting on the lock.
 		go func() { _ = stale.Close() }()
 	}
+	nd.activateToolRefresh(h)
+	h.notifyDownstreamChange()
 	return true
 }
 
@@ -409,7 +752,8 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	if d == nil {
 		return nil, fmt.Errorf("unknown server %q", server)
 	}
-	if !d.Connected() {
+	session, connectionErr := d.connectionSnapshot()
+	if session == nil || connectionErr != nil {
 		return nil, fmt.Errorf("server %q is not connected", server)
 	}
 	canonical, _, ok := h.CanonicalTool(server, tool)
@@ -419,7 +763,7 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	tool = canonical
 	namespaced := server + "__" + tool
 	start := time.Now()
-	res, callErr := d.session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
+	res, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 	if callErr != nil {
 		h.record(ctx, server, tool, namespaced, time.Since(start), callErr, len(args), 0, res)
 		// A transport/protocol failure does not prove the downstream skipped the
@@ -452,13 +796,18 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 // observed on an already-replaced session cannot invalidate the fresh
 // connection a concurrent reconnect just installed.
 func (h *Hub) invalidateDownstream(target *Downstream) {
+	changed := false
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for _, d := range h.downstreams {
 		if d == target {
-			d.Err = fmt.Errorf("session invalidated after transport failure")
+			d.setError(fmt.Errorf("session invalidated after transport failure"))
+			changed = true
 			break
 		}
+	}
+	h.mu.Unlock()
+	if changed {
+		h.notifyDownstreamChange()
 	}
 }
 
@@ -480,7 +829,7 @@ func (h *Hub) FindTool(server, tool string) (*mcp.Tool, bool) {
 	if d == nil {
 		return nil, false
 	}
-	for _, t := range d.Tools {
+	for _, t := range d.ToolsSnapshot() {
 		if t.Name == tool {
 			return t, true
 		}
@@ -678,7 +1027,7 @@ func (h *Hub) ToolCount() int {
 	n := 0
 	for _, d := range h.downstreams {
 		if d.Connected() {
-			n += len(d.Tools)
+			n += len(d.ToolsSnapshot())
 		}
 	}
 	return n
@@ -694,8 +1043,9 @@ func (h *Hub) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, d := range h.downstreams {
-		if d.session != nil {
-			_ = d.session.Close()
+		d.deactivateToolRefresh()
+		if session, _ := d.connectionSnapshot(); session != nil {
+			_ = session.Close()
 		}
 	}
 	return nil
@@ -745,19 +1095,30 @@ func (h *Hub) reconnectFailed(ctx context.Context) {
 	for _, f := range toReconnect {
 		nd := h.connectOne(ctx, f.name, f.srv)
 		if nd.Connected() {
+			swapped := false
 			h.mu.Lock()
 			// Guard against a concurrent Connect/refresh that may have replaced
 			// the slice already; only swap if the old pointer still matches.
 			if i := indexOf(h.downstreams, f.old); i >= 0 {
+				f.old.deactivateToolRefresh()
 				h.downstreams[i] = nd
+				swapped = true
 			}
 			h.mu.Unlock()
-			if f.old.session != nil {
-				_ = f.old.session.Close()
+			if !swapped {
+				if session, _ := nd.connectionSnapshot(); session != nil {
+					_ = session.Close()
+				}
+				continue
 			}
-			h.log.Info("downstream reconnected", "server", f.name, "tools", len(nd.Tools))
+			if session, _ := f.old.connectionSnapshot(); session != nil {
+				_ = session.Close()
+			}
+			nd.activateToolRefresh(h)
+			h.notifyDownstreamChange()
+			h.log.Info("downstream reconnected", "server", f.name, "tools", len(nd.ToolsSnapshot()))
 		} else {
-			h.log.Warn("downstream still unavailable", "server", f.name, "err", nd.Err)
+			h.log.Warn("downstream still unavailable", "server", f.name, "err", nd.ErrorSnapshot())
 		}
 	}
 }
