@@ -162,11 +162,11 @@ entries:
 
 ```yaml
 tools:
-  - hitspec__hitspec_fetch
-  - hitspec__hitspec_capture_webpage
-  - hitspec__hitspec_list_requests
-  - hitspec__hitspec_validate
-  - hitspec_web__hitspec_search_web
+  - hitspec__fetch
+  - hitspec__capture_webpage
+  - hitspec__list_requests
+  - hitspec__validate
+  - hitspec_web__search_web
 ```
 
 Preview the generated local-agent config before applying it:
@@ -179,7 +179,7 @@ mcphub sync local-agent --write
 Restart local-agent after the sync. On its next MCP connection, mcphub supplies
 bounded initialization instructions and the in-scope `use_when` hints. A task
 such as “fetch this public API guide as Markdown” can then resolve to
-`hitspec__hitspec_fetch` without pinning the tool or hardcoding Hitspec in the
+`hitspec__fetch` without pinning the tool or hardcoding Hitspec in the
 harness.
 
 See [Contextual routing for harnesses](/guide/contextual-routing) for the task
@@ -188,19 +188,20 @@ and phase triggers local-agent should use.
 ## Tool contract
 
 Hitspec always exposes three core tools and conditionally exposes two more.
-mcphub prefixes their names with the configured server name:
+mcphub namespaces them as `server__tool`, stripping Hitspec's own self-prefix
+so names stay clean:
 
 | Hitspec tool | Namespaced name | Purpose |
 | --- | --- | --- |
-| `hitspec_fetch` | `hitspec__hitspec_fetch` | Fetch one direct URL or one saved request as `raw`, `text`, `markdown`, or `json`. |
-| `hitspec_list_requests` | `hitspec__hitspec_list_requests` | List request names, methods, source lines, and tags in the fixed workspace. |
-| `hitspec_validate` | `hitspec__hitspec_validate` | Parse and structurally validate one workspace file without executing it. |
-| `hitspec_search_web` | `hitspec__hitspec_search_web` | Optional. Search through the server-configured provider and return bounded discovery candidates without persisting them. |
-| `hitspec_capture_webpage` | `hitspec__hitspec_capture_webpage` | Optional. Fetch one public webpage, render Markdown, and persist it through the fixed file.cheap adapter. |
+| `hitspec_fetch` | `hitspec__fetch` | Fetch one direct URL or one saved request as `raw`, `text`, `markdown`, or `json`. |
+| `hitspec_list_requests` | `hitspec__list_requests` | List request names, methods, source lines, and tags in the fixed workspace. |
+| `hitspec_validate` | `hitspec__validate` | Parse and structurally validate one workspace file without executing it. |
+| `hitspec_search_web` | `hitspec__search_web` | Optional. Search through the server-configured provider and return bounded discovery candidates without persisting them. |
+| `hitspec_capture_webpage` | `hitspec__capture_webpage` | Optional. Fetch one public webpage, render Markdown, and persist it through the fixed file.cheap adapter. |
 
 `hitspec_search_web` is present only when `--search-provider tavily` is
 configured. In the split example it is named
-`hitspec_web__hitspec_search_web`; the unprotected `hitspec` core deliberately
+`hitspec_web__search_web`; the unprotected `hitspec` core deliberately
 uses `--search-provider none`.
 `hitspec_capture_webpage` is present only when `--fcheap-path` resolves to a
 valid executable.
@@ -333,7 +334,7 @@ mcphub add fcheap \
 
 Add `fcheap` to local-agent's `servers` scope if that scope is explicit. If it
 has an exact `tools` allowlist, add only the required operations, such as
-`fcheap__fcheap_save`, `fcheap__fcheap_search`, and `fcheap__fcheap_info`.
+`fcheap__save`, `fcheap__search`, and `fcheap__info`.
 
 For edited, combined, or otherwise transformed content, the manual handoff
 remains deliberately explicit:
@@ -342,7 +343,7 @@ remains deliberately explicit:
 2. Review the inline content and provenance.
 3. Let a trusted host or user write the accepted content to a known workspace
    path. mcphub does not turn arbitrary MCP output into a file.
-4. Describe `fcheap__fcheap_save` if its current schema is not already known.
+4. Describe `fcheap__save` if its current schema is not already known.
 5. Call `fcheap_save` with the reviewed absolute path.
 
 After the host has created `/absolute/api-workspace/artifacts/example-guide.md`,
@@ -456,7 +457,7 @@ review it, create a trusted workspace file, then call `fcheap_save` explicitly.
 ### local-agent does not select Hitspec
 
 Confirm the server is connected, the agent scope includes `hitspec`, and an
-exact tool scope includes `hitspec__hitspec_fetch` when needed. Keep the tool
+exact tool scope includes `hitspec__fetch` when needed. Keep the tool
 unpinned, describe the desired outcome in `use_when`, restart local-agent so it
 receives current initialization instructions, and inspect the route with
 `mcphub_resolve_tool`.

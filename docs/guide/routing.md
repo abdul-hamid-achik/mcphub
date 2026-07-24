@@ -21,7 +21,7 @@ agents:
     path: ~/.codex/config.toml
     mode: gateway
     servers: [codemap, vecgrep]                            # which servers it may reach
-    tools: [codemap__codemap_find, vecgrep__vecgrep_search] # which exact tools it may call
+    tools: [codemap__find, vecgrep__search] # which exact tools it may call
 ```
 
 - **`servers`** — which downstream servers this agent may reach.
@@ -170,7 +170,7 @@ agents:
     path: ~/.claude.json
     mode: gateway
     servers: [codemap]
-    tools: [codemap__codemap_find]   # OK: codemap is in servers
+    tools: [codemap__find]   # OK: codemap is in servers
     # tools: [vecgrep__search]       # error: vecgrep not in this agent's servers list
     # tools: [codemap__*]            # error: wildcards are not supported
 ```

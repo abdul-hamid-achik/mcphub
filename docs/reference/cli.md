@@ -238,7 +238,7 @@ tool:
 ```sh
 mcphub pin codemap vecgrep              # whole servers
 mcphub pin codemap__*                   # same, explicit wildcard
-mcphub pin codemap__codemap_semantic    # one tool
+mcphub pin codemap__semantic    # one tool
 mcphub pin --top 8                      # auto-pin your 8 most-called tools (from stats)
 mcphub pin                              # list current pins
 ```
@@ -260,7 +260,7 @@ Remove pins. Takes the same server / `server__tool` names as [`pin`](#pin).
 
 ```sh
 mcphub unpin codemap
-mcphub unpin codemap__codemap_semantic
+mcphub unpin codemap__semantic
 ```
 
 ---

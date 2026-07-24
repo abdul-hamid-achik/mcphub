@@ -267,12 +267,12 @@ type searchInput struct {
 
 type describeInput struct {
 	Server string `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
-	Tool   string `json:"tool" jsonschema:"tool name; may be the combined server__tool form. A server's own name prefix may be collapsed: hitspec__search_web resolves to hitspec__hitspec_search_web"`
+	Tool   string `json:"tool" jsonschema:"tool name; may be the combined server__tool form. Self-prefixed downstream names are accepted: hitspec__hitspec_search_web and hitspec__search_web both resolve"`
 }
 
 type callInput struct {
 	Server    string         `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
-	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form. A server's own name prefix may be collapsed: hitspec__search_web resolves to hitspec__hitspec_search_web"`
+	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form. Self-prefixed downstream names are accepted: hitspec__hitspec_search_web and hitspec__search_web both resolve"`
 	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"arguments object passed to the downstream tool"`
 	Detach    bool           `json:"detach,omitempty" jsonschema:"run the call in the background and return a callId immediately; collect the result with mcphub_poll_result. Use for long-running tools that could exceed the client tool-call timeout"`
 	TimeoutMs int64          `json:"timeout_ms,omitempty" jsonschema:"optional per-call timeout in milliseconds, clamped by the gateway's call_timeout config (default 30m). Bounds a detached call's background execution; on a synchronous call it can only shorten the effective deadline"`
@@ -394,23 +394,29 @@ func (s *Server) handleDescribeTool(_ context.Context, _ *sdk.CallToolRequest, i
 	if server == "" || tool == "" {
 		return result(map[string]any{"error": "need server and tool (or a server__tool name)"})
 	}
-	// Adopt the canonical downstream name before the scope check so the
-	// stutter-collapsed alias (hitspec__search_web for hitspec's own
-	// hitspec_search_web) is scoped and described as the tool it names.
+	// Adopt the canonical downstream wire name before the scope check so both
+	// the clean public form (hitspec__search_web) and the legacy stutter form
+	// (hitspec__hitspec_search_web) describe the same tool.
 	canonical, t, found := s.hub.CanonicalTool(server, tool)
 	if found {
 		tool = canonical
 	}
 	if !s.scope.allows(server, tool) {
-		return nil, nil, fmt.Errorf("tool %s__%s is out of scope for this agent", server, tool)
+		return nil, nil, fmt.Errorf("tool %s is out of scope for this agent", s.hub.PublicNamespaced(server, tool))
 	}
 	if !found {
 		return result(map[string]any{"error": "tool not found", "server": server, "tool": tool})
 	}
+	public := s.hub.PublicNamespaced(server, tool)
+	publicTool := tool
+	if i := strings.Index(public, "__"); i >= 0 {
+		publicTool = public[i+2:]
+	}
 	return result(map[string]any{
 		"server":       server,
-		"tool":         tool,
-		"namespaced":   server + "__" + tool,
+		"tool":         publicTool,
+		"downstream":   tool,
+		"namespaced":   public,
 		"description":  t.Description,
 		"input_schema": t.InputSchema,
 	})
@@ -463,9 +469,10 @@ func (s *Server) handleResolveTool(_ context.Context, _ *sdk.CallToolRequest, in
 	ambiguous := assessment.Status == "ambiguous"
 	// Extract a bounded top-level argument summary. Full schemas remain available
 	// through mcphub_describe_tool when fields or encoded input are omitted.
-	t, ok := s.hub.FindTool(top.Server, top.Tool)
+	// top.Tool is the public fragment; CanonicalTool maps it to the downstream wire name.
+	_, t, ok := s.hub.CanonicalTool(top.Server, top.Tool)
 	required, template, templateTruncated := []string{}, map[string]any{}, false
-	if ok && t.InputSchema != nil {
+	if ok && t != nil && t.InputSchema != nil {
 		required, template, templateTruncated = summarizeInputSchema(t.InputSchema)
 	}
 	return result(map[string]any{
@@ -621,16 +628,16 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 	if server == "" || tool == "" {
 		return nil, nil, fmt.Errorf("need server and tool (or a server__tool name)")
 	}
-	// Adopt the canonical downstream name before the scope check so the
-	// stutter-collapsed alias (hitspec__search_web for hitspec's own
-	// hitspec_search_web) is scoped, called, and recorded as the tool it
-	// names. An unresolvable name passes through — Call/StartDetached report
+	// Adopt the canonical downstream wire name before the scope check so both
+	// the clean public form and the legacy stutter form invoke the same tool.
+	// An unresolvable name passes through — Call/StartDetached report
 	// unknown-server/not-found with their existing errors.
 	if canonical, _, ok := s.hub.CanonicalTool(server, tool); ok {
 		tool = canonical
 	}
+	publicNS := s.hub.PublicNamespaced(server, tool)
 	if !s.scope.allows(server, tool) {
-		return nil, nil, fmt.Errorf("tool %s__%s is out of scope for this agent", server, tool)
+		return nil, nil, fmt.Errorf("tool %s is out of scope for this agent", publicNS)
 	}
 	var args json.RawMessage
 	if in.Arguments != nil {
@@ -644,14 +651,19 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 	if in.Detach {
 		callID, err := s.hub.StartDetached(ctx, server, tool, args, timeout)
 		if err != nil {
-			return nil, nil, fmt.Errorf("detach %s__%s: %w", server, tool, err)
+			return nil, nil, fmt.Errorf("detach %s: %w", publicNS, err)
+		}
+		publicTool := tool
+		if i := strings.Index(publicNS, "__"); i >= 0 {
+			publicTool = publicNS[i+2:]
 		}
 		return result(map[string]any{
 			"status":     "accepted",
 			"callId":     callID,
 			"server":     server,
-			"tool":       tool,
-			"namespaced": server + "__" + tool,
+			"tool":       publicTool,
+			"downstream": tool,
+			"namespaced": publicNS,
 			"timeoutMs":  timeout.Milliseconds(),
 			"nextAction": "The call is running in the background. Call mcphub_poll_result with this callId; status pending means poll again after a delay, and a completed call returns the tool result itself (or a stored-result receipt for mcphub_get_result if it is oversized).",
 		})
@@ -665,7 +677,7 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 	}
 	res, err := s.hub.Call(ctx, server, tool, args)
 	if err != nil {
-		return nil, nil, fmt.Errorf("call %s__%s: %w", server, tool, err)
+		return nil, nil, fmt.Errorf("call %s: %w", publicNS, err)
 	}
 	return res, nil, nil
 }

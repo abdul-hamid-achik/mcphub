@@ -468,7 +468,7 @@ func TestMountMatchingBudgetedIsDeterministicAndPreservesMetadata(t *testing.T) 
 	if compact == nil {
 		t.Fatal("compact downstream tool not found")
 	}
-	encodedCompact, err := json.Marshal(namespacedTool("fixture", compact))
+	encodedCompact, err := json.Marshal(namespacedTool("fixture", compact, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

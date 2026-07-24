@@ -6,6 +6,25 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-24
+
+### Changed
+
+- **Clean public `server__tool` names (no more stutter).** Downstream servers
+  that self-prefix tools (`hitspec_search_web`) used to mount as
+  `hitspec__hitspec_search_web`. The gateway now strips a redundant
+  `{server}_` self-prefix when safe, so the public form is `hitspec__search_web`
+  (and search/resolve/describe report the same). The exact downstream wire name
+  is still used on the call to the backing server. Collisions are collision-safe:
+  if both `echo` and `live_echo` exist on server `live`, strip is skipped for the
+  self-prefixed peer so a real tool is never shadowed.
+
+### Fixed
+
+- **Legacy stutter names still work.** Pins, tool scopes, `mcphub_call_tool`,
+  and `mcphub_describe_tool` accept both the clean public form and the old
+  `server__server_tool` form. Telemetry and receipts use the clean public name.
+
 ## [0.18.1] - 2026-07-19
 
 ### Fixed

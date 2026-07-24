@@ -83,7 +83,7 @@ agents:
     mode: gateway
     # disabled: true         # skip during sync without deleting the definition
     # servers: [codemap, vecgrep]      # per-agent routing (optional)
-    # tools: [codemap__codemap_find]   # gateway-only tool allowlist (optional)
+    # tools: [codemap__find]   # gateway-only tool allowlist (optional)
 ```
 
 Valid types: **`claude`**, **`opencode`**, **`codex`**, **`crush`**,

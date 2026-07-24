@@ -160,7 +160,7 @@ list. A typical result contains:
   "matched_fraction": 0.75,
   "score_gap": 18,
   "recommendation": {
-    "namespaced": "hitspec__hitspec_fetch",
+    "namespaced": "hitspec__fetch",
     "server": "hitspec",
     "tool": "hitspec_fetch",
     "required_fields": [],
@@ -233,7 +233,7 @@ The combined name is also accepted:
 
 ```json
 {
-  "tool": "hitspec__hitspec_fetch",
+  "tool": "hitspec__fetch",
   "arguments": {
     "url": "https://example.com/guide",
     "format": "markdown"
@@ -258,12 +258,12 @@ in harness code.
 
 | Activity context | Likely recommendation |
 | --- | --- |
-| Fetch a public URL as bounded Markdown text | `hitspec__hitspec_fetch` |
-| Investigate codebases, databases, and CLI evidence together | `cortex__cortex_investigate` |
-| Plan a repository feature before implementation | `bob__bob_plan` |
-| Find code by meaning | A semantic-search tool such as `vecgrep__vecgrep_search` |
+| Fetch a public URL as bounded Markdown text | `hitspec__fetch` |
+| Investigate codebases, databases, and CLI evidence together | `cortex__investigate` |
+| Plan a repository feature before implementation | `bob__plan` |
+| Find code by meaning | A semantic-search tool such as `vecgrep__search` |
 | Inspect symbols, references, or blast radius | A `codemap` exploration or context tool |
-| Search or inspect a saved artifact | `fcheap__fcheap_search` or `fcheap__fcheap_info` |
+| Search or inspect a saved artifact | `fcheap__search` or `fcheap__info` |
 
 Change these outcomes by improving the server or tool metadata and `use_when`
 hints in `mcphub.yaml`. Use `tool_use_when` when one server exposes several

@@ -50,9 +50,9 @@ never aborts the whole gateway. The remaining servers stay available.
 ```
                  ┌─────────────────────── mcphub mcp serve ───────────────────────┐
    one agent ──▶ │  gateway MCP server                                             │
-   (stdio)       │   ├─ codemap__codemap_find      ─┐                              │
-                 │   ├─ codemap__codemap_impact      ├─▶ codemap   (stdio child)   │
-                 │   ├─ vecgrep__vecgrep_search     ─┼─▶ vecgrep   (stdio child)   │
+   (stdio)       │   ├─ codemap__find      ─┐                              │
+                 │   ├─ codemap__impact      ├─▶ codemap   (stdio child)   │
+                 │   ├─ vecgrep__search     ─┼─▶ vecgrep   (stdio child)   │
                  │   ├─ memory__memory_recall       ─┼─▶ memory    (remote http)   │
                  │   └─ mcphub_list_servers / ...    ┘   (meta-tools)              │
                  └─────────────────────────────────────────────────────────────────┘
@@ -206,7 +206,7 @@ agents:
     path: ~/.codex/config.toml
     mode: gateway
     servers: [codemap, vecgrep]                # only these enabled servers
-    tools: [codemap__codemap_find, vecgrep__vecgrep_search]  # gateway-only
+    tools: [codemap__find, vecgrep__search]  # gateway-only
 ```
 
 - **`servers`** — which enabled downstream servers the agent may reach.

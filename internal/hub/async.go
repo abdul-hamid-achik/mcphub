@@ -100,7 +100,7 @@ func (h *Hub) StartDetached(ctx context.Context, server, tool string, args json.
 		ID:         id,
 		Server:     server,
 		Tool:       tool,
-		Namespaced: server + "__" + tool,
+		Namespaced: h.PublicNamespaced(server, tool),
 		Status:     DetachedPending,
 		StartedAt:  h.now(),
 	}

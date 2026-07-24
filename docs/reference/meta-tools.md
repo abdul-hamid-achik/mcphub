@@ -40,8 +40,8 @@ In lazy mode an agent works the catalog in a short loop —
 **resolve/search → describe if needed → call → get_result**:
 
 ```
-mcphub_resolve_tool "find code by meaning"   # 1. route: → vecgrep__vecgrep_search + template
-mcphub_describe_tool vecgrep__vecgrep_search # 2. optional: inspect the complete schema
+mcphub_resolve_tool "find code by meaning"   # 1. route: → vecgrep__search + template
+mcphub_describe_tool vecgrep__search         # 2. optional: inspect the complete schema
 mcphub_call_tool {server, tool, arguments}   # 3. invoke through the gateway
 mcphub_get_result {callId, cursor}           # 4. only if the result was oversized
 ```
@@ -93,15 +93,16 @@ schema** — enough to construct a valid `mcphub_call_tool` request. It accepts
 the server and tool separately or the combined `server__tool` form.
 
 Many downstream servers self-prefix their tool names (hitspec's search tool is
-`hitspec_search_web`), which makes the namespaced form stutter
-(`hitspec__hitspec_search_web`). Since v0.16.1 the gateway also resolves the
-**stutter-collapsed alias**: `hitspec__search_web` — or
-`{server: "hitspec", tool: "search_web"}` — resolves to the canonical
-downstream name whenever the bare name matches nothing on that server. The
-exact name always wins, so a real downstream tool can never be shadowed by the
-alias. This applies to `mcphub_describe_tool` and to `mcphub_call_tool` (both
-synchronous and detached); responses, receipts, and telemetry always report
-the canonical name.
+`hitspec_search_web`). The gateway **strips that redundant prefix** for the
+public `server__tool` form, so the advertised name is `hitspec__search_web`
+rather than `hitspec__hitspec_search_web`. The exact downstream wire name is
+still used when invoking the backing server. Legacy stutter names and bare
+fragments (`{server: "hitspec", tool: "search_web"}`) continue to resolve.
+If stripping would collide with another tool on the same server, the full
+downstream name is kept so a real tool can never be shadowed. This applies to
+mounted tools, search/resolve hits, `mcphub_describe_tool`, and
+`mcphub_call_tool` (sync and detached). Responses report the clean public
+`namespaced` form (plus `downstream` on describe/detach receipts).
 
 **When to call it:** after a search hit (or when you already know the tool
 name) but before invoking, if you are not certain what arguments the tool

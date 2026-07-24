@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
+	"github.com/abdul-hamid-achik/mcphub/internal/hub"
 )
 
 const contextualRoutingContractVersion = 1
@@ -52,6 +53,10 @@ const (
 
 // catalog returns every connected, in-scope downstream tool enriched with the
 // server-level vocabulary configured in mcphub.yaml.
+//
+// Namespaced names use the clean public form (self-prefix stripped when safe).
+// Tool is the public fragment agents should pass to mcphub_call_tool; the hub
+// still resolves it to the exact downstream wire name on invoke.
 func (s *Server) catalog() []toolMatch {
 	var entries []toolMatch
 	for _, d := range s.hub.Downstreams() {
@@ -59,10 +64,16 @@ func (s *Server) catalog() []toolMatch {
 			continue
 		}
 		srv := s.cfg.Servers[d.Name]
-		for _, tool := range d.ToolsSnapshot() {
-			namespaced := d.Name + "__" + tool.Name
-			if !s.scope.allowsNS(namespaced) {
+		tools := d.ToolsSnapshot()
+		plan := hub.PlanPublicNames(d.Name, tools)
+		for _, tool := range tools {
+			namespaced := hub.PublicNamespacedFor(d.Name, tool.Name, plan)
+			if !s.scope.allows(d.Name, tool.Name) {
 				continue
+			}
+			publicTool := plan[tool.Name]
+			if publicTool == "" {
+				publicTool = hub.PublicToolName(d.Name, tool.Name)
 			}
 			title := tool.Title
 			if title == "" && tool.Annotations != nil {
@@ -77,7 +88,7 @@ func (s *Server) catalog() []toolMatch {
 			entries = append(entries, toolMatch{
 				Namespaced:        namespaced,
 				Server:            d.Name,
-				Tool:              tool.Name,
+				Tool:              publicTool,
 				Title:             title,
 				Description:       tool.Description,
 				ServerDescription: srv.Description,

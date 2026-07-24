@@ -112,8 +112,10 @@ Each agent declares a `mode` in `mcphub.yaml`:
 ### Namespaced `server__tool`
 
 The gateway connects to each downstream server and exposes its tools under a namespaced name:
-a `search` tool on a server named `vecgrep` becomes `vecgrep__search`. Names never collide, and
-you always know which server a tool came from.
+a `search` tool on a server named `vecgrep` becomes `vecgrep__search`. When a downstream already
+self-prefixes (`hitspec_search_web`), the gateway strips that redundant prefix so the public form
+stays clean (`hitspec__search_web`) instead of stuttering. Names never collide, and you always know
+which server a tool came from.
 
 ### Local intelligence
 
@@ -234,7 +236,7 @@ agents:
     # disabled: true       # skip during sync without deleting the definition
     # Per-agent routing (optional) — restrict what this agent can reach:
     # servers: [codemap, vecgrep]   # only these enabled servers (omit = all; [] = none)
-    # tools: [codemap__codemap_find]  # gateway-only: only these server__tool names (omit = all; [] = none)
+    # tools: [codemap__find]  # gateway-only: only these server__tool names (omit = all; [] = none)
     # pin: []                       # gateway-only + lazy: override global pins; [] = meta-tools only
     # tool_schema_budget: 8KB       # optional cap for directly advertised downstream definitions
   local-agent:
@@ -267,7 +269,7 @@ agents:
     path: ~/.codex/config.toml
     mode: gateway
     servers: [codemap, vecgrep]
-    tools: [codemap__codemap_find, vecgrep__vecgrep_search]
+    tools: [codemap__find, vecgrep__search]
 ```
 
 In gateway mode a scoped agent's harness entry is launched as `mcphub mcp serve --agent <name>`,

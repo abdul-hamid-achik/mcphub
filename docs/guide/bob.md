@@ -49,20 +49,20 @@ Bob exposes six tools. MCPHub prefixes each one with `bob__`:
 
 | MCPHub tool | Purpose |
 | --- | --- |
-| `bob__bob_inspect` | Inspect Bob-managed state and offline specialist availability. |
-| `bob__bob_plan` | Return a bounded repository plan and deterministic digest. |
-| `bob__bob_check` | Check convergence, conflicts, and lock drift. |
-| `bob__bob_validate_manifest` | Strictly validate a workspace manifest or bounded inline YAML. |
-| `bob__bob_recipe_describe` | Describe the embedded recipe contract. |
-| `bob__bob_stats` | Summarize Bob's opt-in, local-only usage aggregates. |
+| `bob__inspect` | Inspect Bob-managed state and offline specialist availability. |
+| `bob__plan` | Return a bounded repository plan and deterministic digest. |
+| `bob__check` | Check convergence, conflicts, and lock drift. |
+| `bob__validate_manifest` | Strictly validate a workspace manifest or bounded inline YAML. |
+| `bob__recipe_describe` | Describe the embedded recipe contract. |
+| `bob__stats` | Summarize Bob's opt-in, local-only usage aggregates. |
 
 With `expose: all`, MCPHub advertises all six automatically. With
 `expose: lazy`, Bob remains discoverable through contextual resolution; pin
 the tools you also want advertised directly without a catalog lookup:
 
 ```sh
-mcphub pin bob__bob_inspect bob__bob_plan bob__bob_check \
-  bob__bob_validate_manifest bob__bob_recipe_describe bob__bob_stats
+mcphub pin bob__inspect bob__plan bob__check \
+  bob__validate_manifest bob__recipe_describe bob__stats
 ```
 
 MCPHub changes only the protocol name and prefixes the description when it
@@ -92,7 +92,7 @@ mcphub sync --write
 
 MCPHub records aggregate gateway call intelligence in its local SQLite store.
 Bob can separately record opt-in local usage under its XDG state directory and
-expose only aggregates through `bob__bob_stats`. Neither feature sends usage
+expose only aggregates through `bob__stats`. Neither feature sends usage
 data over the network.
 
 ## See also

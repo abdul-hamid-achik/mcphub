@@ -178,7 +178,7 @@ itself from becoming a context spike; `byte_limited` and
 { "server": "vecgrep", "tool": "vecgrep_search", "arguments": { "query": "auth middleware" } }
 ```
 
-`tool` may also be the combined form (`"tool": "vecgrep__vecgrep_search"`),
+`tool` may also be the combined form (`"tool": "vecgrep__search"`),
 with or without `server` set — the gateway routes it either way. Every call is
 recorded to the [intelligence store](/guide/intelligence), same as in
 `expose: all`.
@@ -200,7 +200,7 @@ agents call them by their `server__tool` name automatically.
 ```sh
 mcphub pin codemap vecgrep              # whole servers (all their tools)
 mcphub pin codemap__*                   # same, explicit wildcard
-mcphub pin codemap__codemap_semantic    # one tool
+mcphub pin codemap__semantic    # one tool
 mcphub pin --top 8                      # auto-pin your 8 most-called tools (from stats)
 mcphub pin                              # list current pins
 ```
@@ -214,7 +214,7 @@ naming an unknown server is rejected.
 Removing pins mirrors adding them:
 
 ```sh
-mcphub unpin codemap__codemap_semantic  # remove one exact pin
+mcphub unpin codemap__semantic  # remove one exact pin
 mcphub unpin codemap                    # remove every pin resolving to that server
 ```
 

@@ -61,7 +61,7 @@ verbatim: false         # true = never spool or replace downstream results
 connect_timeout: 30s    # per-downstream connect timeout (default 30s)
 call_timeout: 30m       # clamps timeout_ms and bounds detached calls; sync calls without timeout_ms follow the client's deadline
 pin:                    # tools always mounted, even in lazy mode (optional)
-  - codemap__codemap_semantic
+  - codemap__semantic
 
 servers:
   # name -> server definition
@@ -80,7 +80,7 @@ agents:
 | --- | --- | --- | --- |
 | `version` | int | yes | Config schema version. Currently `1`. |
 | `expose` | `all` \| `lazy` | no | Gateway tool exposure. `all` (default) mounts every downstream tool as `server__tool`; `lazy` advertises only mcphub's eight meta-tools and serves the rest on demand via `mcphub_call_tool`. See [Lazy mode](/guide/lazy-mode). |
-| `pin` | list of strings | no | Tools that stay mounted even in `lazy` mode, so agents call them directly instead of discovering them first. Each entry is a bare server (`codemap` — all its tools), a whole-server wildcard (`codemap__*`), or one tool (`codemap__codemap_semantic`) — those are the only shapes; any other wildcard or a trailing `__` fails validation, as does a pin naming an unknown server. Manage with `mcphub pin` / `mcphub unpin` (`--top N` auto-pins your N most-called tools from `mcphub stats`), or `p` in Studio. |
+| `pin` | list of strings | no | Tools that stay mounted even in `lazy` mode, so agents call them directly instead of discovering them first. Each entry is a bare server (`codemap` — all its tools), a whole-server wildcard (`codemap__*`), or one tool (`codemap__semantic`) — those are the only shapes; any other wildcard or a trailing `__` fails validation, as does a pin naming an unknown server. Legacy stutter pins (`codemap__codemap_semantic`) still match. Manage with `mcphub pin` / `mcphub unpin` (`--top N` auto-pins your N most-called tools from `mcphub stats`), or `p` in Studio. |
 | `response_budget` | byte-size string | no | Complete serialized MCP result budget. Default `32KB`; `"0"` is unlimited. A non-zero value must be at least `512B` so a recovery receipt can fit. Oversized results are stored locally for 24 hours and recovered with `mcphub_get_result`. |
 | `verbatim` | bool | no | Return every downstream result unchanged and disable result spooling entirely. Default `false`. |
 | `connect_timeout` | duration string | no | Per-downstream connect timeout, e.g. `30s`, `60s`, `2m`. Default `30s`. |
@@ -269,7 +269,7 @@ agents:
     mode: gateway
     # disabled: true                 # skip during sync without deleting the definition
     # servers: [codemap, vecgrep]    # only these enabled servers (omit = all; [] = none)
-    # tools: [codemap__codemap_find] # gateway-only: only these server__tool names (omit = all; [] = none)
+    # tools: [codemap__find] # gateway-only: only these server__tool names (omit = all; [] = none)
     # pin: []                        # gateway-only + lazy: replace global pins; [] = meta-tools only
     # tool_schema_budget: 8KB        # cap complete downstream definitions advertised directly
   local-agent:
@@ -353,7 +353,7 @@ agents:
     path: ~/.codex/config.toml
     mode: gateway
     servers: [codemap, vecgrep]
-    tools: [codemap__codemap_find, vecgrep__vecgrep_search]
+    tools: [codemap__find, vecgrep__search]
 ```
 
 Both fields distinguish **omitted** from **empty**, which matters:
@@ -402,7 +402,7 @@ Hidden tools allowed by `servers`/`tools` are still discoverable through
 Use a finite budget when a few direct pins are still helpful:
 
 ```yaml
-    pin: [bob__bob_context, cortex__cortex_status]
+    pin: [bob__context, cortex__status]
     tool_schema_budget: 8KB
 ```
 
@@ -488,7 +488,7 @@ groups:
 
 # Tools that stay mounted directly even under expose: lazy
 pin:
-  - codemap__codemap_semantic
+  - codemap__semantic
 
 # Agent harnesses mcphub keeps in sync
 agents:
@@ -507,7 +507,7 @@ agents:
     # disabled: true                # skip during sync without deleting the definition
     # Per-agent routing (optional) — restrict what this agent can reach:
     # servers: [codemap, vecgrep]        # only these enabled servers (omit = all; [] = none)
-    # tools: [codemap__codemap_find]     # gateway-only: only these server__tool names (omit = all; [] = none)
+    # tools: [codemap__find]     # gateway-only: only these server__tool names (omit = all; [] = none)
 ```
 
 The Bob entry uses `--allow-any-workspace`, which grants its read-only MCP

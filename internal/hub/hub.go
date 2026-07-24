@@ -529,19 +529,25 @@ func (h *Hub) MountMatchingBudgeted(srv *mcp.Server, pred func(namespaced string
 // MatchingTools returns the deterministic desired direct-advertisement set
 // without mutating an MCP server. Callers can diff this plan against a
 // previously mounted set before using AddTool/RemoveTools.
+//
+// Public names strip a redundant server_ self-prefix when safe (hitspec's
+// hitspec_fetch mounts as hitspec__fetch). Predicates that still name the
+// legacy stutter form (hitspec__hitspec_fetch) continue to admit the tool; the
+// mounted protocol name is always the clean public form.
 func (h *Hub) MatchingTools(pred func(namespaced string) bool) []ToolMount {
 	var mounts []ToolMount
 	for _, catalog := range h.toolCatalogSnapshot() {
+		plan := PlanPublicNames(catalog.server, catalog.tools)
 		for _, tool := range catalog.tools {
 			if tool == nil {
 				continue
 			}
-			namespaced := catalog.server + "__" + tool.Name
-			if !pred(namespaced) {
+			namespaced, ok := admitNamespaced(pred, catalog.server, tool.Name, plan)
+			if !ok {
 				continue
 			}
 			mounts = append(mounts, ToolMount{
-				Definition: namespacedTool(catalog.server, tool),
+				Definition: namespacedTool(catalog.server, tool, plan),
 				Handler:    h.forward(catalog.server, tool.Name, namespaced),
 			})
 		}
@@ -562,15 +568,16 @@ func (h *Hub) MatchingToolsBudgeted(pred func(namespaced string) bool, budgetByt
 
 	var candidates []budgetedToolCandidate
 	for _, catalog := range h.toolCatalogSnapshot() {
+		plan := PlanPublicNames(catalog.server, catalog.tools)
 		for _, tool := range catalog.tools {
 			if tool == nil {
 				continue
 			}
-			namespaced := catalog.server + "__" + tool.Name
-			if !pred(namespaced) {
+			namespaced, ok := admitNamespaced(pred, catalog.server, tool.Name, plan)
+			if !ok {
 				continue
 			}
-			definition := namespacedTool(catalog.server, tool)
+			definition := namespacedTool(catalog.server, tool, plan)
 			encoded, err := json.Marshal(definition)
 			if err != nil {
 				return nil, report, fmt.Errorf("measure tool definition %s: %w", namespaced, err)
@@ -638,15 +645,43 @@ func (h *Hub) toolCatalogSnapshot() []downstreamToolCatalog {
 	return catalogs
 }
 
+// admitNamespaced reports whether pred admits a downstream tool under its
+// public name or any legacy alias, and returns the public namespaced form to
+// mount/advertise.
+func admitNamespaced(pred func(namespaced string) bool, server, downstreamTool string, plan map[string]string) (string, bool) {
+	public := PublicNamespacedFor(server, downstreamTool, plan)
+	if pred == nil || pred(public) {
+		return public, true
+	}
+	for _, alias := range NamespacedAliases(server, downstreamTool) {
+		if alias != public && pred(alias) {
+			return public, true
+		}
+	}
+	return public, false
+}
+
 // namespacedTool copies a downstream tool definition, changing only the
 // protocol name and description needed by the gateway. Copying the complete
 // SDK value preserves titles, input/output schemas, annotations, icons, _meta,
 // and fields added by future SDK releases instead of rebuilding a partial tool.
-func namespacedTool(server string, tool *mcp.Tool) *mcp.Tool {
+// plan is the collision-safe public-fragment map from PlanPublicNames.
+func namespacedTool(server string, tool *mcp.Tool, plan map[string]string) *mcp.Tool {
 	mounted := *tool
-	mounted.Name = server + "__" + tool.Name
+	mounted.Name = PublicNamespacedFor(server, tool.Name, plan)
 	mounted.Description = fmt.Sprintf("[%s] %s", server, tool.Description)
 	return &mounted
+}
+
+// PublicNamespaced returns the collision-safe public gateway name for a
+// connected downstream tool. When the server is unknown or the tool is not in
+// its catalog, falls back to the pure strip rule.
+func (h *Hub) PublicNamespaced(server, downstreamTool string) string {
+	d := h.downstream(server)
+	if d == nil {
+		return Namespaced(server, downstreamTool)
+	}
+	return PublicNamespacedFor(server, downstreamTool, PlanPublicNames(server, d.ToolsSnapshot()))
 }
 
 // forward returns a raw passthrough handler used when a tool is mounted
@@ -773,7 +808,9 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 		return nil, fmt.Errorf("tool %q not found on server %q", tool, server)
 	}
 	tool = canonical
-	namespaced := server + "__" + tool
+	// Telemetry and receipts use the clean public form; the wire call below
+	// still uses the exact downstream tool name.
+	namespaced := h.PublicNamespaced(server, tool)
 	start := time.Now()
 	res, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
 	if callErr != nil {
@@ -791,13 +828,13 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 		// context); respawning the downstream now would race the teardown and
 		// leave a fresh session/child process nothing will ever close.
 		if h.closing.Load() {
-			return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (hub is shutting down; request was not retried and no reconnect was attempted)", server, tool, callErr)
+			return nil, fmt.Errorf("call %s outcome unknown after transport failure: %w (hub is shutting down; request was not retried and no reconnect was attempted)", namespaced, callErr)
 		}
 		if h.ReconnectOne(context.WithoutCancel(ctx), server) {
 			h.log.Info("immediate reconnect succeeded; uncertain call was not replayed", "server", server, "tool", tool)
-			return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (connection restored for future calls; request was not retried)", server, tool, callErr)
+			return nil, fmt.Errorf("call %s outcome unknown after transport failure: %w (connection restored for future calls; request was not retried)", namespaced, callErr)
 		}
-		return nil, fmt.Errorf("call %s__%s outcome unknown after transport failure: %w (reconnect failed; request was not retried and the background watcher will restore the connection)", server, tool, callErr)
+		return nil, fmt.Errorf("call %s outcome unknown after transport failure: %w (reconnect failed; request was not retried and the background watcher will restore the connection)", namespaced, callErr)
 	}
 	return h.finalizeCall(ctx, server, tool, namespaced, time.Since(start), len(args), res), nil
 }
@@ -849,14 +886,11 @@ func (h *Hub) FindTool(server, tool string) (*mcp.Tool, bool) {
 	return nil, false
 }
 
-// CanonicalTool resolves tool to its exact downstream name on server,
-// accepting the stutter-collapsed alias. Downstream servers commonly
-// self-prefix their tool names (hitspec's search tool is hitspec_search_web),
-// so the gateway-namespaced form stutters (hitspec__hitspec_search_web) and
-// callers reasonably try hitspec__search_web or {server: "hitspec", tool:
-// "search_web"} — and previously got a bare "tool not found". The exact name
-// always wins; the server-prefixed fallback applies only when the bare name
-// matches nothing, so a genuine downstream tool can never be shadowed.
+// CanonicalTool resolves tool to its exact downstream wire name on server.
+// Callers may pass either the downstream name (hitspec_search_web) or the
+// public fragment after self-prefix strip (search_web). The exact downstream
+// name always wins; the server-prefixed fallback applies only when the bare
+// name matches nothing, so a genuine tool can never be shadowed by expansion.
 func (h *Hub) CanonicalTool(server, tool string) (string, *mcp.Tool, bool) {
 	if t, ok := h.FindTool(server, tool); ok {
 		return tool, t, true

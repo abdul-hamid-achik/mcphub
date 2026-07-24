@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
+	"github.com/abdul-hamid-achik/mcphub/internal/hub"
 )
 
 // agentScope is the per-agent curation applied when a gateway is spawned with
@@ -31,7 +32,10 @@ func (s *agentScope) allowsServer(name string) bool {
 	return s == nil || s.servers == nil || s.servers[name]
 }
 
-// allows reports whether a (server, tool) pair is in scope.
+// allows reports whether a (server, tool) pair is in scope. tool may be the
+// downstream wire name or the public fragment; allowlist entries may use the
+// clean public form (hitspec__fetch) or the legacy stutter form
+// (hitspec__hitspec_fetch).
 func (s *agentScope) allows(server, tool string) bool {
 	if s == nil {
 		return true
@@ -42,7 +46,12 @@ func (s *agentScope) allows(server, tool string) bool {
 	if s.tools == nil {
 		return true
 	}
-	return s.tools[server+"__"+tool]
+	for _, ns := range hub.NamespacedAliases(server, tool) {
+		if s.tools[ns] {
+			return true
+		}
+	}
+	return false
 }
 
 // allowsNS reports whether a namespaced `server__tool` name is in scope.
@@ -94,9 +103,33 @@ func (s *agentScope) configuredPins(cfg *config.Config) []string {
 // pinMatches reports whether a directly advertised downstream tool matches
 // this agent's effective pins. This policy is deliberately separate from
 // allows: a tool can remain callable through mcphub_call_tool without spending
-// context on a direct definition.
+// context on a direct definition. Legacy stutter pins (server__server_tool)
+// still match the clean public name (server__tool).
 func (s *agentScope) pinMatches(cfg *config.Config, namespaced string) bool {
-	return config.PinListMatches(s.configuredPins(cfg), namespaced)
+	pins := s.configuredPins(cfg)
+	if config.PinListMatches(pins, namespaced) {
+		return true
+	}
+	// When the advertised name is the clean form, also try aliases so a pin
+	// written as hitspec__hitspec_fetch still admits hitspec__fetch.
+	server, tool, ok := splitServerTool(namespaced)
+	if !ok {
+		return false
+	}
+	for _, alias := range hub.NamespacedAliases(server, tool) {
+		if alias != namespaced && config.PinListMatches(pins, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitServerTool(namespaced string) (server, tool string, ok bool) {
+	i := strings.Index(namespaced, "__")
+	if i <= 0 || i == len(namespaced)-2 {
+		return "", "", false
+	}
+	return namespaced[:i], namespaced[i+2:], true
 }
 
 // schemaBudget returns the optional serialized downstream tool-definition

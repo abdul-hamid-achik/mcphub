@@ -21,27 +21,27 @@ import (
 func routingFixture() []toolMatch {
 	return []toolMatch{
 		{
-			Namespaced:        "hitspec__hitspec_fetch",
+			Namespaced:        "hitspec__fetch",
 			Server:            "hitspec",
-			Tool:              "hitspec_fetch",
+			Tool:              "fetch",
 			Description:       "Fetch one direct HTTP URL or one saved request as raw, text, Markdown, or JSON.",
 			ServerDescription: "Bounded HTTP fetches and saved-request validation",
 			Tags:              []string{"web", "http", "markdown"},
 			UseWhen:           []string{"fetch a public HTTP URL as raw, text, Markdown, or JSON"},
 		},
 		{
-			Namespaced:        "cortex__cortex_investigate",
+			Namespaced:        "cortex__investigate",
 			Server:            "cortex",
-			Tool:              "cortex_investigate",
+			Tool:              "investigate",
 			Description:       "Investigate a task using multiple evidence sources.",
 			ServerDescription: "Evidence-guided agent kernel",
 			Tags:              []string{"research", "orchestration"},
 			UseWhen:           []string{"analyze sources from codebases, databases, and CLI results"},
 		},
 		{
-			Namespaced:        "bob__bob_plan",
+			Namespaced:        "bob__plan",
 			Server:            "bob",
-			Tool:              "bob_plan",
+			Tool:              "plan",
 			Title:             "Plan repository construction",
 			Description:       "Plan a repository change from inspected state.",
 			ServerDescription: "Deterministic repository factory",
@@ -71,16 +71,17 @@ func TestRankCatalogPrefersBobPlanAcrossRealMultiToolShape(t *testing.T) {
 	entries := make([]toolMatch, 0, len(tools))
 	for _, tool := range tools {
 		entry := common
-		entry.Tool = tool.name
-		entry.Namespaced = "bob__" + tool.name
+		// Public form strips the bob_ self-prefix (bob_plan → bob__plan).
+		entry.Tool = strings.TrimPrefix(tool.name, "bob_")
+		entry.Namespaced = "bob__" + entry.Tool
 		entry.Title = tool.title
 		entry.Description = tool.description
 		entries = append(entries, entry)
 	}
 
 	ranked := rankCatalog("desarrollar una feature en este repositorio", entries)
-	if len(ranked) == 0 || ranked[0].Namespaced != "bob__bob_plan" {
-		t.Fatalf("real-shape Bob routing = %+v, want bob__bob_plan first", ranked)
+	if len(ranked) == 0 || ranked[0].Namespaced != "bob__plan" {
+		t.Fatalf("real-shape Bob routing = %+v, want bob__plan first", ranked)
 	}
 	if len(ranked) > 1 && ranked[0].Score == ranked[1].Score {
 		t.Fatalf("bob_plan remained ambiguous: %+v", ranked[:2])
@@ -99,13 +100,13 @@ func TestRankCatalogDistinguishesArtifactReadFromSave(t *testing.T) {
 		common,
 		common,
 	}
-	entries[0].Namespaced, entries[0].Tool, entries[0].Description, entries[0].InputFields = "fcheap__fcheap_info", "fcheap_info", "Get detailed info about a stash including file list and metadata.", []string{"id"}
-	entries[1].Namespaced, entries[1].Tool, entries[1].Description, entries[1].InputFields = "fcheap__fcheap_save", "fcheap_save", "Save a file or directory to the stash vault. Returns the stash ID and manifest.", []string{"path"}
-	entries[2].Namespaced, entries[2].Tool, entries[2].Description, entries[2].InputFields = "fcheap__fcheap_drop", "fcheap_drop", "Permanently delete a stash and all its files.", []string{"id", "force"}
+	entries[0].Namespaced, entries[0].Tool, entries[0].Description, entries[0].InputFields = "fcheap__info", "info", "Get detailed info about a stash including file list and metadata.", []string{"id"}
+	entries[1].Namespaced, entries[1].Tool, entries[1].Description, entries[1].InputFields = "fcheap__save", "save", "Save a file or directory to the stash vault. Returns the stash ID and manifest.", []string{"path"}
+	entries[2].Namespaced, entries[2].Tool, entries[2].Description, entries[2].InputFields = "fcheap__drop", "drop", "Permanently delete a stash and all its files.", []string{"id", "force"}
 
 	ranked := rankCatalog("Retrieve and inspect a saved artifact by its exact ID", entries)
-	if len(ranked) == 0 || ranked[0].Namespaced != "fcheap__fcheap_info" {
-		t.Fatalf("artifact read routing = %+v, want fcheap__fcheap_info first", ranked)
+	if len(ranked) == 0 || ranked[0].Namespaced != "fcheap__info" {
+		t.Fatalf("artifact read routing = %+v, want fcheap__info first", ranked)
 	}
 	if len(ranked) > 1 && ranked[0].Score == ranked[1].Score {
 		t.Fatalf("artifact read remained ambiguous: %+v", ranked[:2])
@@ -126,27 +127,27 @@ func TestRankCatalogRoutesNaturalLanguageContext(t *testing.T) {
 		{
 			name:  "spanish web capture",
 			query: "Estoy investigando una PÁGINA web; necesito bajar la URL como Markdown",
-			want:  "hitspec__hitspec_fetch",
+			want:  "hitspec__fetch",
 		},
 		{
 			name:  "multi source investigation",
 			query: "analizar fuentes de codebases, databases y resultados de CLI",
-			want:  "cortex__cortex_investigate",
+			want:  "cortex__investigate",
 		},
 		{
 			name:  "feature implementation",
 			query: "planear y desarrollar un feature en este repositorio",
-			want:  "bob__bob_plan",
+			want:  "bob__plan",
 		},
 		{
 			name:  "spanish planning phase",
 			query: "planificar el cambio de este repositorio antes de editar",
-			want:  "bob__bob_plan",
+			want:  "bob__plan",
 		},
 		{
 			name:  "full english sentence not exact substring",
 			query: "Please fetch this website as bounded Markdown text for research",
-			want:  "hitspec__hitspec_fetch",
+			want:  "hitspec__fetch",
 		},
 	}
 
@@ -216,7 +217,7 @@ func TestToolUseWhenDisambiguatesToolsOnOneServer(t *testing.T) {
 func TestRankCatalogDeterminismAndNoMatch(t *testing.T) {
 	entries := routingFixture()
 	got := rankCatalog("fetch webpage", entries)
-	if len(got) == 0 || got[0].Namespaced != "hitspec__hitspec_fetch" {
+	if len(got) == 0 || got[0].Namespaced != "hitspec__fetch" {
 		t.Fatalf("exact tool query did not win: %+v", got)
 	}
 	if got := rankCatalog("quantum entanglement", entries); len(got) != 0 {
@@ -577,7 +578,7 @@ func TestCatalogHandlersRouteAndBoundResults(t *testing.T) {
 		t.Fatalf("versioned resolver control fields = %#v", resolved)
 	}
 	recommendation := resolved["recommendation"].(map[string]any)
-	if recommendation["namespaced"] != "hitspec__hitspec_fetch" {
+	if recommendation["namespaced"] != "hitspec__fetch" || recommendation["tool"] != "fetch" {
 		t.Fatalf("recommendation = %#v", recommendation)
 	}
 	if recommendation["title"] != "Fetch one HTTP response" {
@@ -643,7 +644,9 @@ func TestCatalogHandlersRespectToolScope(t *testing.T) {
 		t.Fatalf("scoped search output = %#v", out)
 	}
 	matches := out["matches"].([]toolMatch)
-	if len(matches) != 1 || matches[0].Namespaced != "hitspec__hitspec_fetch" {
+	// Clean public form is advertised even when the scope allowlist still uses
+	// the legacy stutter name (hitspec__hitspec_fetch).
+	if len(matches) != 1 || matches[0].Namespaced != "hitspec__fetch" || matches[0].Tool != "fetch" {
 		t.Fatalf("scoped matches = %#v", matches)
 	}
 }
@@ -780,16 +783,15 @@ func TestToolSchemaBudgetKeepsManagementToolsAndReportsSavings(t *testing.T) {
 
 func TestDescribeToolAcceptsStutterCollapsedAlias(t *testing.T) {
 	// Downstream servers self-prefix their tool names (hitspec_fetch on the
-	// hitspec server), so the namespaced form stutters
-	// (hitspec__hitspec_fetch). Callers reasonably try the collapsed
-	// hitspec__fetch or {server: hitspec, tool: fetch} and previously got
-	// "tool not found"; both must resolve to the canonical downstream name.
+	// hitspec server). The public gateway form strips that prefix
+	// (hitspec__fetch); legacy stutter (hitspec__hitspec_fetch) still resolves.
+	// Responses report the clean public name plus the exact downstream wire name.
 	s := connectedCatalogServer(t, nil)
 	for _, in := range []describeInput{
 		{Tool: "hitspec__fetch"},
 		{Server: "hitspec", Tool: "fetch"},
-		{Server: "hitspec", Tool: "hitspec_fetch"}, // exact split form
-		{Tool: "hitspec__hitspec_fetch"},           // exact combined form
+		{Server: "hitspec", Tool: "hitspec_fetch"}, // exact downstream form
+		{Tool: "hitspec__hitspec_fetch"},           // legacy combined form
 	} {
 		_, describedAny, err := s.handleDescribeTool(context.Background(), nil, in)
 		if err != nil {
@@ -799,8 +801,8 @@ func TestDescribeToolAcceptsStutterCollapsedAlias(t *testing.T) {
 		if described["error"] != nil {
 			t.Fatalf("describe %+v returned error: %#v", in, described)
 		}
-		if described["tool"] != "hitspec_fetch" || described["namespaced"] != "hitspec__hitspec_fetch" {
-			t.Errorf("describe %+v should report the canonical name, got %#v", in, described)
+		if described["tool"] != "fetch" || described["namespaced"] != "hitspec__fetch" || described["downstream"] != "hitspec_fetch" {
+			t.Errorf("describe %+v should report clean public + downstream names, got %#v", in, described)
 		}
 	}
 	// A name that matches nothing even after prefixing still misses.
