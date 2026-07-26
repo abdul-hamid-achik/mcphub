@@ -42,7 +42,7 @@ type Server struct {
 const managementToolCount = 8
 
 // NewServer builds the gateway server and registers mcphub's management tools.
-// Run connects the downstream hub before it mounts or serves any proxy tools.
+// Run serves those immediately while the scoped downstream hub connects.
 func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScope) *Server {
 	impl := &sdk.Implementation{Name: "mcphub", Version: version.Version}
 	instructions := "mcphub is a gateway that fronts many MCP servers behind one connection. " +
@@ -80,25 +80,42 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScop
 	return s
 }
 
-// Run connects only the servers admitted by this gateway's agent scope, mounts
-// the aggregated tools (all of them unless lazy; just the pinned ones in lazy
-// mode), and serves on stdio. Applying scope before Connect keeps excluded
-// commands, remote connections, and secret resolution inactive.
+// Run serves the scoped management surface immediately, then connects only the
+// admitted downstream servers in the background. Applying scope before Connect
+// keeps excluded commands, remote connections, and secret resolution inactive.
 func (s *Server) Run(ctx context.Context) error {
+	return s.run(ctx, &sdk.StdioTransport{})
+}
+
+func (s *Server) run(ctx context.Context, transport sdk.Transport) error {
 	changes, unsubscribe := s.hub.SubscribeChanges()
 	defer unsubscribe()
-	s.hub.ConnectMatching(ctx, s.scope.allowsServer)
 	defer s.hub.Close()
+
+	// Establish the initial management-only/pin-empty projection before the
+	// handshake. Later downstream publications reuse the same atomic mount path
+	// and emit tools/list_changed through the SDK.
 	if err := s.mountDownstreamTools(); err != nil {
 		return fmt.Errorf("mount downstream tools: %w", err)
 	}
-	// Background watcher: reconnect downstreams that fail or die mid-session,
-	// so a crashed server self-heals without restarting the agent.
 	watchCtx, cancelWatchers := context.WithCancel(ctx)
 	defer cancelWatchers()
-	go s.hub.Watch(watchCtx)
 	go s.watchDownstreamTools(watchCtx, changes)
-	return s.srv.Run(ctx, &sdk.StdioTransport{})
+	go s.hub.Watch(watchCtx)
+
+	connectDone := make(chan struct{})
+	go func() {
+		defer close(connectDone)
+		s.hub.ConnectMatching(watchCtx, s.scope.allowsServer)
+	}()
+
+	err := s.srv.Run(ctx, transport)
+	// A transport can end before the parent context is cancelled (for example,
+	// stdin EOF). Stop and join connection ownership before Hub.Close tears down
+	// any sessions a late dial might otherwise publish.
+	cancelWatchers()
+	<-connectDone
+	return err
 }
 
 // mountDownstreamTools applies agent authorization, per-agent pin selection,

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -401,6 +402,62 @@ func connectServerClient(t *testing.T, server *sdk.Server) *sdk.ClientSession {
 		_ = serverSession.Close()
 	})
 	return clientSession
+}
+
+func TestRunAnswersInitializeBeforeDownstreamConnectCompletes(t *testing.T) {
+	release := make(chan struct{})
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer downstream.Close()
+
+	cfg := &config.Config{
+		Expose:         config.ExposeLazy,
+		ConnectTimeout: "5s",
+		Servers: map[string]config.Server{
+			"slow": {URL: downstream.URL, Transport: "http", Enabled: true},
+		},
+	}
+	s := NewServer(cfg, hub.New(cfg, nil, nil), nil, nil)
+	serverTransport, clientTransport := sdk.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.run(ctx, serverTransport) }()
+
+	client := sdk.NewClient(&sdk.Implementation{Name: "startup-test", Version: "1"}, nil)
+	connectCtx, cancelConnect := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	session, err := client.Connect(connectCtx, clientTransport, nil)
+	cancelConnect()
+	if err != nil {
+		cancel()
+		<-done
+		t.Fatalf("gateway initialize waited for downstream: %v", err)
+	}
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools.Tools) != managementToolCount {
+		t.Fatalf("startup tools = %d, want management-only %d", len(tools.Tools), managementToolCount)
+	}
+
+	// Let the synthetic downstream return, then verify Run joins its connector
+	// before closing the hub. Cancellation behavior of real transports is owned
+	// by the SDK/Hub lifecycle tests; this regression owns handshake ordering.
+	close(release)
+	cancel()
+	_ = session.Close()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("server shutdown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not join cancelled downstream connect")
+	}
 }
 
 func TestLazyServerInstructionsForbidAmbiguousAutoExecution(t *testing.T) {
