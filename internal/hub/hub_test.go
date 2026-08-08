@@ -1169,3 +1169,16 @@ func TestCanonicalToolCollapsesServerPrefixStutter(t *testing.T) {
 		t.Error("unknown tool should not resolve")
 	}
 }
+
+// The clientInfo a gateway presents downstream carries the agent it fronts,
+// so caller ledgers can tell agents apart instead of recording "mcphub".
+func TestClientNameCarriesAgent(t *testing.T) {
+	h := New(&config.Config{}, nil, nil)
+	if got := h.clientName(); got != "mcphub" {
+		t.Fatalf("bare gateway should be mcphub, got %q", got)
+	}
+	h.SetAgentName("sonar")
+	if got := h.clientName(); got != "mcphub/sonar" {
+		t.Fatalf("scoped gateway should carry the agent, got %q", got)
+	}
+}

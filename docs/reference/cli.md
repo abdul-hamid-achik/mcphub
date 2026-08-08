@@ -565,7 +565,7 @@ mcphub mcp serve --agent codex   # apply this agent's scope and advertisement po
 
 | Flag           | Description |
 | -------------- | ----------- |
-| `--agent <name>` | Apply this agent's `servers`/`tools` call scope and optional `pin`/`tool_schema_budget` advertisement policy from `mcphub.yaml`. |
+| `--agent <name>` | Apply this agent's `servers`/`tools` call scope and optional `pin`/`tool_schema_budget` advertisement policy from `mcphub.yaml`. Downstreams see `mcphub/<name>` as the connecting client, so caller ledgers can tell agents apart. |
 
 You normally don't run this by hand — the agent launches it, because that's
 what [`mcphub sync`](#sync) writes into the agent's config in gateway mode.

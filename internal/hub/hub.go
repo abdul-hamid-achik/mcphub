@@ -128,6 +128,25 @@ type Hub struct {
 
 	changeMu   sync.Mutex
 	changeSubs map[chan struct{}]struct{}
+
+	// agentName, when set, joins the clientInfo this hub presents to
+	// downstreams ("mcphub/sonar" instead of "mcphub"). Downstream products
+	// that ledger their callers by client name (BlankCode's harness sessions,
+	// for one) otherwise record every agent behind the gateway as the same
+	// anonymous "mcphub".
+	agentName string
+}
+
+// SetAgentName records which agent this gateway fronts, for downstream
+// clientInfo. Call before Connect; connections made earlier keep the plain
+// name.
+func (h *Hub) SetAgentName(name string) { h.agentName = name }
+
+func (h *Hub) clientName() string {
+	if h.agentName == "" {
+		return "mcphub"
+	}
+	return "mcphub/" + h.agentName
 }
 
 // New creates a hub over the given config. store may be nil (telemetry is then
@@ -265,7 +284,7 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 	}
 
 	client := mcp.NewClient(
-		&mcp.Implementation{Name: "mcphub", Version: version.Version},
+		&mcp.Implementation{Name: h.clientName(), Version: version.Version},
 		&mcp.ClientOptions{
 			ToolListChangedHandler: func(_ context.Context, req *mcp.ToolListChangedRequest) {
 				// Coalesce notifications before starting work. A notification

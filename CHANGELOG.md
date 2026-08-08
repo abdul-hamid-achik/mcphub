@@ -6,6 +6,16 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-08-08
+
+### Added
+
+- **Downstreams see which agent a gateway fronts.** A gateway started with
+  `--agent sonar` now presents `mcphub/sonar` as its MCP clientInfo name
+  (bare gateways stay `mcphub`). Products that ledger their callers by
+  client name — BlankCode's harness sessions, for one — previously recorded
+  every agent behind the gateway as the same anonymous `mcphub`.
+
 ## [0.21.0] - 2026-08-08
 
 ### Added

@@ -77,6 +77,10 @@ is unscoped and uses the global exposure policy.`,
 			defer cancel()
 
 			h := hub.New(c, st, logger)
+			// Downstreams see which agent this gateway fronts, so a product
+			// that ledgers its callers can tell sonar from codex instead of
+			// recording every gateway as "mcphub".
+			h.SetAgentName(agentName)
 			srv := hubmcp.NewServer(c, h, st, scope)
 			if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
 				return fmt.Errorf("mcp serve: %w", err)
