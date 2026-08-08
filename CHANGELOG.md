@@ -6,6 +6,34 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-08-08
+
+### Fixed
+
+- **First-turn calls no longer race the initial downstream connect.** Since
+  0.20.0 the gateway serves its management tools before downstreams finish
+  connecting, so an agent's first `mcphub_call_tool` could land before the
+  target was published and fail with `unknown server "<name>"` — as if the
+  config entry did not exist. `Call` and detached calls now wait (bounded by
+  the caller's context and the connect timeout) for a configured, enabled
+  server to be published before dispatching; names the config cannot produce
+  still fail immediately. Observed in the wild: a fresh sonar session calling
+  `blankcode__whoami` within a second of gateway boot.
+- **"Not connected" errors now say why.** A downstream whose connect failed
+  reports the stored cause (`server "x" is not connected: resolve vault
+  headers: …`) instead of a bare `not connected`, and a disabled server is
+  reported as disabled rather than unknown.
+
+## [0.20.0] - 2026-07-26
+
+### Changed
+
+- **Management tools are served before downstreams connect.** The gateway
+  answers `initialize` and lists its management surface immediately;
+  downstream servers (child processes, remote connections, secret
+  resolution) connect in the background. Agents get a responsive first
+  turn instead of waiting out the slowest downstream.
+
 ## [0.19.0] - 2026-07-24
 
 ### Changed

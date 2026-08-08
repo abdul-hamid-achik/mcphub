@@ -109,6 +109,24 @@ process-boundary behavior.
 
 ## Common failure modes
 
+### Calls in the first seconds after gateway start
+
+The gateway serves its management tools immediately and connects downstream
+servers in the background, so an agent's first turn can arrive before a
+downstream is ready. Since 0.20.1 a call to a configured, enabled server
+simply waits for that initial connect (bounded by the connect timeout)
+instead of failing. The errors you can still see, and what they mean:
+
+- `unknown server "x"` — the name is not in `mcphub.yaml` at all. A typo, or
+  the config file the gateway loaded is not the one you edited.
+- `server "x" is disabled in the config` — present but `enabled: false`.
+- `server "x" is still connecting` — the caller's own timeout ended before
+  the downstream finished connecting; retry, or raise `connect_timeout`.
+- `server "x" is not connected: <cause>` — the connect itself failed, and
+  `<cause>` is the real problem (a missing binary, an unreachable URL, a
+  `resolve vault headers` failure when a `tvault://` reference cannot be
+  read). Fix the cause; the background watcher reconnects on its own.
+
 ### Server binary not on PATH
 
 `doctor` reports `command not on PATH: <cmd>`. mcphub resolves each stdio

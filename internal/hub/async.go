@@ -74,12 +74,12 @@ func (h *Hub) StartDetached(ctx context.Context, server, tool string, args json.
 	if h.closing.Load() {
 		return "", fmt.Errorf("hub is shutting down")
 	}
-	d := h.downstream(server)
-	if d == nil {
-		return "", fmt.Errorf("unknown server %q", server)
+	d, err := h.awaitDownstream(ctx, server)
+	if err != nil {
+		return "", err
 	}
 	if !d.Connected() {
-		return "", fmt.Errorf("server %q is not connected", server)
+		return "", notConnectedError(server, d)
 	}
 	canonical, _, ok := h.CanonicalTool(server, tool)
 	if !ok {

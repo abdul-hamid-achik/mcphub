@@ -53,6 +53,55 @@ func TestCallAndFindTool(t *testing.T) {
 	h.record(ctx, "live", "echo", "live__echo", 0, nil, 0, 0, nil)
 }
 
+// The gateway serves management tools before downstreams finish connecting,
+// so a first-turn call can race the initial publication. A configured,
+// enabled server must make the call wait for the publish — not fail as
+// "unknown server" — while a name the config cannot produce fails at once.
+func TestAwaitDownstreamWaitsForInitialPublish(t *testing.T) {
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"late": {URL: "http://127.0.0.1:1", Transport: "http", Enabled: true},
+		"off":  {URL: "http://127.0.0.1:1", Transport: "http", Enabled: false},
+	}}
+	h := New(cfg, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := h.awaitDownstream(ctx, "ghost"); err == nil || !strings.Contains(err.Error(), "unknown server") {
+		t.Fatalf("ghost should fail immediately: got %v", err)
+	}
+	if _, err := h.awaitDownstream(ctx, "off"); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("disabled server should fail immediately: got %v", err)
+	}
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		h.mu.Lock()
+		h.downstreams = []*Downstream{{Name: "late", Tools: []*mcp.Tool{{Name: "echo"}}}}
+		h.mu.Unlock()
+		h.notifyDownstreamChange()
+	}()
+	d, err := h.awaitDownstream(ctx, "late")
+	if err != nil || d == nil || d.Name != "late" {
+		t.Fatalf("await should return the published downstream: d=%v err=%v", d, err)
+	}
+}
+
+// A caller whose context ends before the publication lands gets an error that
+// says the server is still connecting — not that it does not exist.
+func TestAwaitDownstreamContextCancelled(t *testing.T) {
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"slow": {URL: "http://127.0.0.1:1", Transport: "http", Enabled: true},
+	}}
+	h := New(cfg, nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := h.awaitDownstream(ctx, "slow")
+	if err == nil || !strings.Contains(err.Error(), "still connecting") {
+		t.Fatalf("cancelled wait should report still connecting: got %v", err)
+	}
+}
+
 func TestConnectMatchingDoesNotActivateExcludedServers(t *testing.T) {
 	var allowedRequests atomic.Int32
 	allowed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

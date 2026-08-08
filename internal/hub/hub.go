@@ -795,13 +795,13 @@ func (h *Hub) serverReconnectLock(server string) *sync.Mutex {
 }
 
 func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessage) (*mcp.CallToolResult, error) {
-	d := h.downstream(server)
-	if d == nil {
-		return nil, fmt.Errorf("unknown server %q", server)
+	d, err := h.awaitDownstream(ctx, server)
+	if err != nil {
+		return nil, err
 	}
 	session, connectionErr := d.connectionSnapshot()
 	if session == nil || connectionErr != nil {
-		return nil, fmt.Errorf("server %q is not connected", server)
+		return nil, notConnectedError(server, d)
 	}
 	canonical, _, ok := h.CanonicalTool(server, tool)
 	if !ok {
@@ -870,6 +870,71 @@ func (h *Hub) downstream(name string) *Downstream {
 		}
 	}
 	return nil
+}
+
+// awaitDownstream returns the downstream for server, waiting while the
+// background connect started at gateway boot has not yet published it.
+//
+// The gateway serves its management tools before any downstream finishes
+// connecting, so an agent's first turn can race the initial ConnectMatching:
+// the server is real, enabled, and seconds from available, but a plain lookup
+// reports `unknown server` — indistinguishable from a typo, and enough to
+// derail the turn. A name the config does not enable still fails immediately;
+// waiting cannot conjure it.
+//
+// The wait is bounded by ctx and by the connect timeout (plus slack for the
+// publication swap), whichever ends first. One caveat inherited from scoped
+// gateways: a server excluded by this agent's scope is never published, so a
+// direct hub call for it waits out the timeout — the management surface
+// rejects out-of-scope tools before they reach the hub, so only misuse of the
+// hub API pays that wait.
+func (h *Hub) awaitDownstream(ctx context.Context, server string) (*Downstream, error) {
+	if d := h.downstream(server); d != nil {
+		return d, nil
+	}
+	srv, configured := h.cfg.Servers[server]
+	if !configured {
+		return nil, fmt.Errorf("unknown server %q", server)
+	}
+	if !srv.Enabled {
+		return nil, fmt.Errorf("server %q is disabled in the config", server)
+	}
+
+	changes, unsubscribe := h.SubscribeChanges()
+	defer unsubscribe()
+	// Re-check after subscribing: the publication may have landed between the
+	// first lookup and the subscription, and its notification would then have
+	// predated the subscriber.
+	if d := h.downstream(server); d != nil {
+		return d, nil
+	}
+	deadline := time.NewTimer(h.connectTimeout + 5*time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case <-changes:
+			if d := h.downstream(server); d != nil {
+				return d, nil
+			}
+		case <-ctx.Done():
+			return nil, fmt.Errorf("server %q is still connecting: %w", server, ctx.Err())
+		case <-h.shutdownCtx.Done():
+			return nil, fmt.Errorf("hub is shutting down")
+		case <-deadline.C:
+			return nil, fmt.Errorf("server %q was not published within the connect timeout (%s) — still connecting, or excluded by this agent's scope", server, h.connectTimeout)
+		}
+	}
+}
+
+// notConnectedError explains why a published downstream cannot take a call,
+// including the stored connect failure when there is one. The difference
+// matters to the caller: "not connected: resolve vault headers: …" is
+// actionable in a way a bare "not connected" never was.
+func notConnectedError(server string, d *Downstream) error {
+	if err := d.ErrorSnapshot(); err != nil {
+		return fmt.Errorf("server %q is not connected: %w", server, err)
+	}
+	return fmt.Errorf("server %q is not connected", server)
 }
 
 // FindTool returns the downstream tool definition for (server, tool).
