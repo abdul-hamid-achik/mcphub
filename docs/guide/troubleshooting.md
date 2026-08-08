@@ -107,6 +107,26 @@ gateway intentionally fails closed while the vault cannot provide the selected
 secret. See [Secrets](/guide/secrets#a-vaulted-server-is-unavailable) for the
 process-boundary behavior.
 
+## Gateway log files and `debug bundle`
+
+Gateway stderr goes to the parent agent and disappears with its session —
+which is exactly when you need it. Since 0.21.0 every `mcp serve` also
+writes its log to `~/.local/share/mcphub/logs/` (one file per gateway
+identity per day; previous days gzip-compressed; pruned after 14 days).
+`MCPHUB_LOG_DIR` overrides the location, `MCPHUB_LOG_DIR=off` disables it.
+
+When something went wrong and you want to hand the evidence to someone (or
+some agent), one command collects logs, the `doctor` report, and recent call
+telemetry into a shareable [fcheap](https://file.cheap) stash:
+
+```sh
+mcphub debug bundle          # prints a stash id you can share
+mcphub debug bundle --no-save  # just assemble the directory
+```
+
+The config file is deliberately excluded from bundles — headers can carry
+literal credentials — and fcheap runs its save-time secret scan on top.
+
 ## Common failure modes
 
 ### Calls in the first seconds after gateway start
@@ -245,6 +265,7 @@ explicit flag, then environment variable, then default.
 | ---------------- | ---------- | --------------- | -------------------------------------------------- |
 | Config           | `--config` | `MCPHUB_CONFIG` | `./mcphub.yaml`, else `~/.config/mcphub/mcphub.yaml` |
 | Intelligence DB  | `--db`     | `MCPHUB_DB`     | `~/.local/share/mcphub/mcphub.db`                   |
+| Gateway logs     | —          | `MCPHUB_LOG_DIR` (`off` disables) | `~/.local/share/mcphub/logs/`     |
 
 ::: warning A silent config mismatch is the most common "it worked yesterday"
 If `mcphub sync` / `doctor` / `stats` suddenly look empty or stale, check

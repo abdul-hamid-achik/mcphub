@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,7 +12,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/hub"
+	"github.com/abdul-hamid-achik/mcphub/internal/logsink"
 	hubmcp "github.com/abdul-hamid-achik/mcphub/internal/mcp"
+	"github.com/abdul-hamid-achik/mcphub/internal/version"
 )
 
 func newMCPCmd() *cobra.Command {
@@ -53,8 +56,22 @@ is unscoped and uses the global exposure policy.`,
 				return err
 			}
 
-			// Logs go to stderr so they never corrupt the stdio JSON-RPC stream.
-			logger := log.NewWithOptions(os.Stderr, log.Options{Prefix: "mcphub", ReportTimestamp: true})
+			// Logs go to stderr so they never corrupt the stdio JSON-RPC
+			// stream — and to a per-day file, because in gateway mode stderr
+			// belongs to the parent agent and dies with its session, which is
+			// exactly when the logs are needed. `mcphub debug bundle` collects
+			// them; MCPHUB_LOG_DIR=off opts out.
+			sinkName := "gateway"
+			if agentName != "" {
+				sinkName = "gateway-" + agentName
+			}
+			var logWriter io.Writer = os.Stderr
+			if sink, sinkErr := logsink.New(logsink.DefaultDir(), sinkName); sinkErr == nil {
+				defer sink.Close()
+				logWriter = io.MultiWriter(os.Stderr, sink)
+			}
+			logger := log.NewWithOptions(logWriter, log.Options{Prefix: "mcphub", ReportTimestamp: true})
+			logger.Info("gateway starting", "version", version.Version, "agent", agentName)
 
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()

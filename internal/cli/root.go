@@ -66,6 +66,7 @@ servers actually earn their place in your context window.`,
 		newStatusCmd(),
 		newStatsCmd(),
 		newDoctorCmd(),
+		newDebugCmd(),
 		newMCPCmd(),
 		newAgentsCmd(),
 	)

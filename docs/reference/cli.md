@@ -68,6 +68,7 @@ usable in scripts and CI.
 | [`studio`](#studio) (`tui`) | Launch the interactive TUI. |
 | [`stats`](#stats)           | Show local tool-call intelligence. |
 | [`doctor`](#doctor)         | Diagnose config, server availability, and agent targets. |
+| [`debug bundle`](#debug-bundle) | Stash logs + doctor + telemetry with fcheap for sharing. |
 | [`agents`](#agents)         | List supported agent harnesses and their status. |
 | [`mcp serve`](#mcp-serve)   | Run mcphub as an MCP server (the gateway). |
 | `completion`                | Generate a shell autocompletion script. |
@@ -497,6 +498,33 @@ performs the real handshake and adds `handshake_ok` + `tool_count`. With
 `handshake_ok` and `tool_count` are only present with `--probe`; an
 unregistered server yields `{"server":"<name>","registered":false}`.
 [`status --server`](#status) emits the same shape without the probe fields.
+
+---
+
+## `debug bundle`
+
+Collect the last days of gateway log files, the current `doctor` report,
+recent call telemetry, and the build version into one directory, then save it
+with [fcheap](https://file.cheap) (tagged `mcphub-debug`) so a single stash id
+can be shared with whoever is debugging.
+
+```sh
+mcphub debug bundle                 # gather 3 days, fcheap save, print the stash id
+mcphub debug bundle --days 7        # widen the window
+mcphub debug bundle --no-save       # assemble the directory only, print its path
+mcphub debug bundle --ttl 7d        # shorter stash retention (default 30d)
+```
+
+`mcphub.yaml` is deliberately **not** included: server headers can carry
+literal credentials when they have not been moved to `tvault://` references
+yet, and a debug artifact should be safe to share by construction. fcheap
+additionally runs its save-time secret scan. Without fcheap on `PATH` the
+bundle directory is still assembled and printed.
+
+Gateway log files come from `~/.local/share/mcphub/logs` (override with
+`MCPHUB_LOG_DIR`, disable file logging with `MCPHUB_LOG_DIR=off`): one file
+per gateway identity per day, previous days gzip-compressed, pruned after 14
+days.
 
 ---
 

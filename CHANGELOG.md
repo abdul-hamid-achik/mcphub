@@ -6,6 +6,26 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-08
+
+### Added
+
+- **Gateway log files.** Every `mcp serve` now writes its log to
+  `~/.local/share/mcphub/logs/` as well as stderr — one file per gateway
+  identity per day, previous days gzip-compressed, pruned after 14 days.
+  Gateway stderr belongs to the parent agent and dies with its session,
+  which was exactly when the logs were needed. `MCPHUB_LOG_DIR` overrides
+  the location; `MCPHUB_LOG_DIR=off` disables file logging. The sink is
+  fail-open: a full disk or permission problem degrades to stderr-only and
+  never takes down serving.
+- **`mcphub debug bundle`.** One command that collects the last days of
+  gateway logs, the current `doctor` report, recent call telemetry, and the
+  build version, then saves the bundle with fcheap (tagged `mcphub-debug`,
+  default TTL 30d) and prints the stash id to share. `--no-save` assembles
+  the directory only. The config file is deliberately excluded — server
+  headers can carry literal credentials — and fcheap's save-time secret
+  scan runs on top.
+
 ## [0.20.2] - 2026-08-08
 
 ### Fixed
