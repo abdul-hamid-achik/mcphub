@@ -74,6 +74,7 @@ func (h *Hub) StartDetached(ctx context.Context, server, tool string, args json.
 	if h.closing.Load() {
 		return "", fmt.Errorf("hub is shutting down")
 	}
+	args = normalizeArgs(args)
 	d, err := h.awaitDownstream(ctx, server)
 	if err != nil {
 		return "", err

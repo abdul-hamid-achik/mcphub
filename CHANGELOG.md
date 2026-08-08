@@ -6,7 +6,17 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
-## [0.20.1] - 2026-08-08
+## [0.20.2] - 2026-08-08
+
+### Fixed
+
+- **Argument-less tool calls no longer break strict downstreams.** A call
+  without an `arguments` field was forwarded as `"arguments": null`, which
+  the TypeScript MCP SDK's validation rejects (`expected record, received
+  null`) — so any no-parameter tool (a `whoami`, a `get_progress`) failed
+  through the gateway when the agent reasonably omitted the field. The hub
+  now normalizes an absent or `null` payload to an explicit `{}` on every
+  call path (direct mounts, pins, `mcphub_call_tool`, detached calls).
 
 ### Fixed
 

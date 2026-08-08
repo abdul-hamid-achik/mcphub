@@ -87,6 +87,29 @@ func TestAwaitDownstreamWaitsForInitialPublish(t *testing.T) {
 	}
 }
 
+// An argument-less call must reach the downstream as an explicit empty
+// object: a nil RawMessage marshals as JSON null, which strict servers (the
+// TypeScript SDK's zod layer) reject with "expected record, received null".
+// Observed in the wild: a sonar session calling blankcode__whoami — a tool
+// with no parameters — through mcphub_call_tool without an arguments field.
+func TestNormalizeArgs(t *testing.T) {
+	for _, tc := range []struct {
+		in   json.RawMessage
+		want string
+	}{
+		{nil, `{}`},
+		{json.RawMessage(``), `{}`},
+		{json.RawMessage(`null`), `{}`},
+		{json.RawMessage(` null `), `{}`},
+		{json.RawMessage(`{}`), `{}`},
+		{json.RawMessage(`{"a":1}`), `{"a":1}`},
+	} {
+		if got := string(normalizeArgs(tc.in)); got != tc.want {
+			t.Errorf("normalizeArgs(%q) = %q, want %q", string(tc.in), got, tc.want)
+		}
+	}
+}
+
 // A caller whose context ends before the publication lands gets an error that
 // says the server is still connecting — not that it does not exist.
 func TestAwaitDownstreamContextCancelled(t *testing.T) {

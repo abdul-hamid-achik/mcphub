@@ -10,6 +10,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -794,7 +795,21 @@ func (h *Hub) serverReconnectLock(server string) *sync.Mutex {
 	return l
 }
 
+// normalizeArgs turns an absent argument payload into an explicit empty
+// object. The spec makes tools/call "arguments" optional, but a nil
+// RawMessage marshals as JSON null, and strict downstreams — the TypeScript
+// SDK's zod layer among them — reject null where an object is expected
+// ("expected record, received null"). An agent calling a no-parameter tool
+// without an arguments field is the common case, not an error.
+func normalizeArgs(args json.RawMessage) json.RawMessage {
+	if len(args) == 0 || bytes.Equal(bytes.TrimSpace(args), []byte("null")) {
+		return json.RawMessage(`{}`)
+	}
+	return args
+}
+
 func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessage) (*mcp.CallToolResult, error) {
+	args = normalizeArgs(args)
 	d, err := h.awaitDownstream(ctx, server)
 	if err != nil {
 		return nil, err

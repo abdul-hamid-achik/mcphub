@@ -127,6 +127,13 @@ instead of failing. The errors you can still see, and what they mean:
   `resolve vault headers` failure when a `tvault://` reference cannot be
   read). Fix the cause; the background watcher reconnects on its own.
 
+### `expected record, received null` from a downstream
+
+A tool call that omitted the `arguments` field used to be forwarded as
+`"arguments": null`, which servers built on the TypeScript MCP SDK reject —
+so exactly the tools that take no parameters were the ones that failed.
+Fixed in 0.20.2 (the gateway sends `{}`); if you see this error, upgrade.
+
 ### Server binary not on PATH
 
 `doctor` reports `command not on PATH: <cmd>`. mcphub resolves each stdio
