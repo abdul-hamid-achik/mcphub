@@ -85,6 +85,7 @@ agents:
 | `verbatim` | bool | no | Return every downstream result unchanged and disable result spooling entirely. Default `false`. |
 | `connect_timeout` | duration string | no | Per-downstream connect timeout, e.g. `30s`, `60s`, `2m`. Default `30s`. |
 | `call_timeout` | duration string | no | Gateway-side call bound, e.g. `10m`, `30m`, `1h`. Default `30m`. Clamps a caller's `timeout_ms` and bounds how long a detached (`detach: true`) call may run in the background. It is **not** a blanket ceiling: a synchronous `mcphub_call_tool` without `timeout_ms`, and any directly-mounted (`expose: all`) tool call, is bounded only by the client's own request deadline. |
+| `listen` | `host:port` | no | Shared streamable-HTTP bind, e.g. `127.0.0.1:9820`. When set, `mcphub sync` writes this URL into gateway-mode agents and `mcphub up` (or `mcp serve --listen`) serves one daemon instead of a stdio process per agent. |
 | `servers` | map | yes | The downstream MCP servers mcphub manages. |
 | `groups` | map | no | Named bundles of server names. |
 | `agents` | map | yes | The agent harnesses mcphub keeps in sync. |
@@ -138,6 +139,7 @@ servers:
 | `command` | string | stdio | The executable to spawn for a local stdio server. |
 | `args` | list of strings | stdio | Arguments passed to `command`. |
 | `env` | map of string→string | stdio | Environment variables for the spawned process (merged over the inherited environment). |
+| `cwd` | string | stdio | Working directory for the child. Empty inherits the gateway process cwd (often the agent session). Supports `~`. |
 | `url` | string | remote | The endpoint of a remote server. |
 | `transport` | string | remote | `http` (default, streamable HTTP) or `sse`. |
 | `headers` | map of string→string | remote | Custom HTTP headers sent with every request. A value that starts with `tvault://` is resolved to a secret at connect time instead of read literally — see [Secrets](/guide/secrets#tvault-refs-secrets-in-remote-headers). |
@@ -282,7 +284,7 @@ agents:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `type` | string | yes | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`, `kilo`, `kimi`, or `local-agent`. |
+| `type` | string | yes | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`, `kilo`, `kimi`, `local-agent`, `cursor`, or `claude-desktop`. |
 | `path` | string | yes | The harness config file. Supports leading `~` expansion. |
 | `mode` | string | no | `gateway` (default) or `direct`. |
 | `disabled` | bool | no | Skip this agent during `sync` without deleting its definition. |

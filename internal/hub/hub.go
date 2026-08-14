@@ -40,6 +40,9 @@ type Downstream struct {
 	Tools   []*mcp.Tool
 	Err     error // non-nil if the server failed to connect
 
+	Resources []*mcp.Resource
+	Prompts   []*mcp.Prompt
+
 	stateMu       sync.RWMutex // guards session and Err after publication in Hub
 	toolsMu       sync.RWMutex
 	toolRefreshMu sync.Mutex
@@ -100,6 +103,30 @@ func (d *Downstream) setTools(tools []*mcp.Tool) {
 	d.Tools = append([]*mcp.Tool(nil), tools...)
 }
 
+func (d *Downstream) ResourcesSnapshot() []*mcp.Resource {
+	d.toolsMu.RLock()
+	defer d.toolsMu.RUnlock()
+	return append([]*mcp.Resource(nil), d.Resources...)
+}
+
+func (d *Downstream) setResources(resources []*mcp.Resource) {
+	d.toolsMu.Lock()
+	defer d.toolsMu.Unlock()
+	d.Resources = append([]*mcp.Resource(nil), resources...)
+}
+
+func (d *Downstream) PromptsSnapshot() []*mcp.Prompt {
+	d.toolsMu.RLock()
+	defer d.toolsMu.RUnlock()
+	return append([]*mcp.Prompt(nil), d.Prompts...)
+}
+
+func (d *Downstream) setPrompts(prompts []*mcp.Prompt) {
+	d.toolsMu.Lock()
+	defer d.toolsMu.Unlock()
+	d.Prompts = append([]*mcp.Prompt(nil), prompts...)
+}
+
 // Hub aggregates downstream MCP servers.
 type Hub struct {
 	cfg   *config.Config
@@ -147,6 +174,19 @@ func (h *Hub) clientName() string {
 		return "mcphub"
 	}
 	return "mcphub/" + h.agentName
+}
+
+// ReplaceConfig swaps the live registry used for reconnects, spawn, and
+// advertisement. Callers must ConnectMatching afterwards so the downstream set
+// matches the new file. Safe to call while the gateway is serving.
+func (h *Hub) ReplaceConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	h.mu.Lock()
+	h.cfg = cfg
+	h.connectTimeout = cfg.ConnectTimeoutDuration()
+	h.mu.Unlock()
 }
 
 // New creates a hub over the given config. store may be nil (telemetry is then
@@ -314,6 +354,8 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 	}
 	d.setConnection(session, nil)
 	d.setTools(list.Tools)
+	d.setResources(listResources(cctx, session))
+	d.setPrompts(listPrompts(cctx, session))
 	return d
 }
 
@@ -1136,6 +1178,8 @@ func (h *Hub) record(ctx context.Context, server, tool, namespaced string, dur t
 		Server:      server,
 		Tool:        tool,
 		Namespaced:  namespaced,
+		Agent:       h.agentName,
+		Via:         viaFrom(ctx),
 		Duration:    dur,
 		Err:         recErr,
 		ArgsBytes:   argsBytes,
@@ -1196,8 +1240,20 @@ func (h *Hub) Close() error {
 		}
 	}
 	h.mu.Unlock()
+	const sessionCloseTimeout = 5 * time.Second
 	for _, session := range sessions {
-		_ = session.Close()
+		done := make(chan struct{})
+		go func() {
+			_ = session.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(sessionCloseTimeout):
+			if h.log != nil {
+				h.log.Warn("downstream session close timed out", "timeout", sessionCloseTimeout)
+			}
+		}
 	}
 	return nil
 }

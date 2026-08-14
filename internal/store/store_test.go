@@ -90,6 +90,33 @@ func TestRecordAndAggregate(t *testing.T) {
 	}
 }
 
+func TestRecordCallAgentAndVia(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	if err := st.RecordCall(ctx, CallRecord{Server: "s", Tool: "t", Namespaced: "s__t", Agent: "claude", Via: "call_tool"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.RecentCalls(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].Agent != "claude" || rows[0].Via != "call_tool" {
+		t.Fatalf("agent/via = %q/%q", rows[0].Agent, rows[0].Via)
+	}
+	// Re-open the same file to prove 0004 is recorded and not re-applied.
+	path := filepath.Join(t.TempDir(), "reopen.db")
+	st1, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st1.Close()
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatalf("second Open after ALTER migration: %v", err)
+	}
+	st2.Close()
+}
+
 func TestEstTokens(t *testing.T) {
 	if got := estTokens(40, 80); got != 30 {
 		t.Errorf("estTokens(40,80) = %d, want 30", got)

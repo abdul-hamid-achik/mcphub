@@ -20,14 +20,14 @@ disagree, **AGENTS.md wins**.
 
 `mcphub.yaml` is the single source of truth. From it:
 
-- **`mcphub mcp serve`** runs one gateway MCP stdio server. It connects to every
+- **`mcphub mcp serve`** runs one gateway MCP server (stdio, or streamable HTTP with `--listen` / `mcphub up`). It connects to every
   *enabled* downstream server as an MCP **client**, aggregates their tools under
-  namespaced names `server__tool`, and re-exposes them on ONE stdio connection.
+  namespaced names `server__tool`, and re-exposes them on ONE connection.
   An agent connects to one server instead of a dozen. Every proxied call is
   timed and recorded in a local SQLite db.
 - **`mcphub sync`** writes the right MCP config into every agent harness (Claude
   Code, opencode, Codex, Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi
-  Code CLI, Crush, Forge, Hermes, local-agent). Non-destructive merge, writes a timestamped
+  Code CLI, Crush, Forge, Hermes, local-agent, Cursor, Claude Desktop). Non-destructive merge, writes a timestamped
   `.bak`, and is **dry-run by default** (needs `--write` to apply).
 - **`mcphub studio`** (alias `tui`) is a bubbletea v2 TUI to browse/toggle
   servers and view usage stats.

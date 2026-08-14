@@ -9,10 +9,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
+	"github.com/abdul-hamid-achik/mcphub/internal/hub"
 )
 
 func newPinCmd() *cobra.Command {
 	var top int
+	var since string
 	cmd := &cobra.Command{
 		Use:   "pin [server | server__tool | server__* ...]",
 		Short: "Pin tools so they stay directly callable even in lazy mode",
@@ -26,10 +28,11 @@ A pin can be a whole server (pins all its tools), a wildcard, or a single tool:
   mcphub pin codemap__*                   # same, explicit wildcard
   mcphub pin codemap__codemap_semantic    # one tool
   mcphub pin --top 8                      # auto-pin your 8 most-called tools (from stats)
+  mcphub pin --top 8 --since 7d           # same, last 7 days only
   mcphub pin                              # list current pins
 
-In gateway mode no sync is needed — the change takes effect the next time the
-gateway starts, so restart your agents to pick it up.`,
+A running gateway hot-reloads mcphub.yaml within a few seconds. Otherwise
+restart the agent (or mcphub up) to pick pins up.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, path, err := loadConfig()
 			if err != nil {
@@ -51,20 +54,22 @@ gateway starts, so restart your agents to pick it up.`,
 
 			toAdd := append([]string{}, args...)
 			if top > 0 {
+				window, err := parseSince(since)
+				if err != nil {
+					return err
+				}
 				st, err := openStore()
 				if err != nil {
 					return err
 				}
 				defer st.Close()
-				tools, err := st.ToolStats(context.Background())
+				tools, err := st.ToolStatsSince(context.Background(), window)
 				if err != nil {
 					return err
 				}
 				if len(tools) == 0 {
 					fmt.Fprintln(out, "No recorded tool calls yet — nothing to auto-pin. Use the gateway, then retry.")
 				}
-				// Pin the top N tools whose server is still in the config; skip
-				// stale history (a removed/renamed server) so it can't fail Save.
 				picked := 0
 				for _, t := range tools {
 					if picked >= top {
@@ -73,7 +78,7 @@ gateway starts, so restart your agents to pick it up.`,
 					if _, ok := c.Servers[t.Server]; !ok {
 						continue
 					}
-					toAdd = append(toAdd, t.Server+"__"+t.Tool)
+					toAdd = append(toAdd, t.Server+"__"+hub.PublicToolName(t.Server, t.Tool))
 					picked++
 				}
 			}
@@ -95,11 +100,12 @@ gateway starts, so restart your agents to pick it up.`,
 			if err := config.Save(path, c); err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "Pinned %d (now %d total). Restart your agents (or the gateway) to apply.\n", added, len(c.Pin))
+			fmt.Fprintf(out, "Pinned %d (now %d total). A running gateway reloads within a few seconds.\n", added, len(c.Pin))
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&top, "top", 0, "auto-pin the N most-called tools from the intelligence store")
+	cmd.Flags().StringVar(&since, "since", "", "with --top, only count calls in this window (e.g. 7d, 24h)")
 	return cmd
 }
 

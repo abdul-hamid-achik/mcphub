@@ -71,6 +71,7 @@ usable in scripts and CI.
 | [`debug bundle`](#debug-bundle) | Stash logs + doctor + telemetry with fcheap for sharing. |
 | [`agents`](#agents)         | List supported agent harnesses and their status. |
 | [`mcp serve`](#mcp-serve)   | Run mcphub as an MCP server (the gateway). |
+| [`up`](#up)                 | Shared streamable-HTTP gateway daemon. |
 | `completion`                | Generate a shell autocompletion script. |
 | `help`                      | Help about any command. |
 
@@ -241,16 +242,17 @@ mcphub pin codemap vecgrep              # whole servers
 mcphub pin codemap__*                   # same, explicit wildcard
 mcphub pin codemap__semantic    # one tool
 mcphub pin --top 8                      # auto-pin your 8 most-called tools (from stats)
+mcphub pin --top 8 --since 7d           # same, last 7 days only
 mcphub pin                              # list current pins
 ```
 
 | Flag        | Description |
 | ----------- | ----------- |
-| `--top <N>` | Auto-pin the N most-called tools from the intelligence store. |
+| `--top <N>` | Auto-pin the N most-called tools from the intelligence store (public `server__tool` names). |
+| `--since`   | With `--top`, only count calls in this window (`7d`, `24h`, `90m`). |
 
-::: tip No sync needed
-In gateway mode a pin change takes effect the next time the gateway starts —
-there is nothing to sync. Restart your agents to pick it up.
+::: tip Hot-reload
+A running gateway polls `mcphub.yaml` and applies pin/enable changes within a few seconds. Otherwise restart the agent or `mcphub up`.
 :::
 
 ---
@@ -279,12 +281,14 @@ mcphub status
 mcphub status --markdown        # a report you can paste into notes or an issue
 mcphub status --json
 mcphub status --server cortex   # scope to one server: routing + proxied calls
+mcphub status --what-if         # connect and compare catalog size: all vs lazy+pins
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--markdown` | Render the report as Markdown (great for notes/issues). |
 | `--server <name>` | Scope to one server: which agents route to it + proxied-call count. |
+| `--what-if` | Connect enabled servers and compare advertised definition size for expose-all vs lazy+pins. |
 
 ```
 Config:  ~/.config/mcphub/mcphub.yaml
@@ -561,19 +565,41 @@ agents point at in [gateway mode](/guide/concepts#gateway-vs-direct).
 ```sh
 mcphub mcp serve
 mcphub mcp serve --agent codex   # apply this agent's scope and advertisement policy
+mcphub mcp serve --listen 127.0.0.1:9820
 ```
 
 | Flag           | Description |
 | -------------- | ----------- |
 | `--agent <name>` | Apply this agent's `servers`/`tools` call scope and optional `pin`/`tool_schema_budget` advertisement policy from `mcphub.yaml`. Downstreams see `mcphub/<name>` as the connecting client, so caller ledgers can tell agents apart. |
+| `--listen host:port` | Serve streamable HTTP instead of stdio (overrides config `listen:`). |
 
-You normally don't run this by hand — the agent launches it, because that's
+You normally don't run stdio serve by hand — the agent launches it, because that's
 what [`mcphub sync`](#sync) writes into the agent's config in gateway mode.
+When `listen:` is set in `mcphub.yaml`, sync writes that HTTP URL instead and you
+run [`mcphub up`](#up) once.
+
 (For an agent with per-agent `servers`/`tools` routing or an agent-specific
-`pin`/`tool_schema_budget` policy, sync writes
+`pin`/`tool_schema_budget` policy, stdio sync writes
 `mcphub mcp serve --agent <name>` so the gateway advertises only that agent's
 projection and refuses out-of-scope calls.) Logs go to stderr so they never corrupt
-the stdio JSON-RPC stream. It shuts down cleanly on `SIGINT`/`SIGTERM`.
+the stdio JSON-RPC stream. It shuts down cleanly on `SIGINT`/`SIGTERM`. The config
+file is polled so pin/enable edits apply without a restart.
+
+---
+
+## `up`
+
+Start one shared gateway on streamable HTTP so every agent does not spawn its
+own `mcp serve` (and its own copy of every downstream).
+
+```sh
+mcphub up
+mcphub up --listen 127.0.0.1:9820
+```
+
+Default listen is `listen:` in `mcphub.yaml`, else `127.0.0.1:9820`. This daemon
+is unscoped (no per-agent `servers`/`tools` filter). Use stdio `--agent` when
+you need that projection.
 
 The gateway also exposes eight management meta-tools to connected agents:
 `mcphub_list_servers`, `mcphub_search_tools`, `mcphub_describe_tool`,

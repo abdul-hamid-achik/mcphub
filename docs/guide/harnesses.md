@@ -1,17 +1,17 @@
 ---
 title: Supported harnesses
-description: "Every agent harness mcphub can sync — all 12, from Claude Code to local-agent — with each one's config path, on-disk format, and the quirks worth knowing."
+description: "Every agent harness mcphub can sync — 14 of them, from Claude Code to Cursor and Claude Desktop — with each one's config path, on-disk format, and the quirks worth knowing."
 ---
 
 # Supported harnesses
 
-mcphub syncs your `mcphub.yaml` into **twelve agent harnesses**. Each one wants
+mcphub syncs your `mcphub.yaml` into **fourteen agent harnesses**. Each one wants
 its MCP servers declared in its own file, in its own format; mcphub's adapters
 know all of them, so `mcphub sync` writes the right shape into each — a
 non-destructive merge, dry-run by default, with a timestamped `.bak` before any
 write. See [Sync](/guide/sync) for the mechanics.
 
-## The twelve
+## The fourteen
 
 | Harness | Config | Format |
 | --- | --- | --- |
@@ -27,6 +27,8 @@ write. See [Sync](/guide/sync) for the mechanics.
 | Forge (forgecode) | `~/forge/.mcp.json` | JSON `mcpServers` |
 | Hermes | `~/.hermes/config.yaml` | YAML `mcp_servers` |
 | local-agent | `~/.config/local-agent/config.yaml` | YAML `servers` sequence |
+| Cursor | `~/.cursor/mcp.json` | JSON `mcpServers` (Claude-shaped) |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | JSON `mcpServers` |
 
 The config column is each harness's default path; the `path` field in
 `mcphub.yaml` decides what mcphub actually edits, so point it elsewhere if you

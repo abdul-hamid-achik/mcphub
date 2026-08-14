@@ -68,6 +68,7 @@ servers actually earn their place in your context window.`,
 		newDoctorCmd(),
 		newDebugCmd(),
 		newMCPCmd(),
+		newUpCmd(),
 		newAgentsCmd(),
 	)
 	return root

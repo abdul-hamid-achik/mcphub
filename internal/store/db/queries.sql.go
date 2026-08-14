@@ -124,8 +124,8 @@ func (q *Queries) InsertSyncRun(ctx context.Context, arg InsertSyncRunParams) er
 
 const insertToolCall = `-- name: InsertToolCall :exec
 INSERT INTO tool_calls (
-    ts, server, tool, namespaced, duration_ms, ok, error, args_bytes, result_bytes, est_tokens
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ts, server, tool, namespaced, duration_ms, ok, error, args_bytes, result_bytes, est_tokens, agent, via
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertToolCallParams struct {
@@ -139,6 +139,8 @@ type InsertToolCallParams struct {
 	ArgsBytes   int64  `json:"args_bytes"`
 	ResultBytes int64  `json:"result_bytes"`
 	EstTokens   int64  `json:"est_tokens"`
+	Agent       string `json:"agent"`
+	Via         string `json:"via"`
 }
 
 func (q *Queries) InsertToolCall(ctx context.Context, arg InsertToolCallParams) error {
@@ -153,6 +155,8 @@ func (q *Queries) InsertToolCall(ctx context.Context, arg InsertToolCallParams) 
 		arg.ArgsBytes,
 		arg.ResultBytes,
 		arg.EstTokens,
+		arg.Agent,
+		arg.Via,
 	)
 	return err
 }
@@ -266,7 +270,7 @@ func (q *Queries) RecentSyncRuns(ctx context.Context, limit int64) ([]SyncRun, e
 }
 
 const recentToolCalls = `-- name: RecentToolCalls :many
-SELECT id, ts, server, tool, namespaced, duration_ms, ok, error, args_bytes, result_bytes, est_tokens FROM tool_calls ORDER BY id DESC LIMIT ?
+SELECT id, ts, server, tool, namespaced, duration_ms, ok, error, args_bytes, result_bytes, est_tokens, agent, via FROM tool_calls ORDER BY id DESC LIMIT ?
 `
 
 func (q *Queries) RecentToolCalls(ctx context.Context, limit int64) ([]ToolCall, error) {
@@ -290,6 +294,8 @@ func (q *Queries) RecentToolCalls(ctx context.Context, limit int64) ([]ToolCall,
 			&i.ArgsBytes,
 			&i.ResultBytes,
 			&i.EstTokens,
+			&i.Agent,
+			&i.Via,
 		); err != nil {
 			return nil, err
 		}

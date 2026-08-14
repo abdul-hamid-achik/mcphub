@@ -48,4 +48,6 @@ type ToolCall struct {
 	ArgsBytes   int64  `json:"args_bytes"`
 	ResultBytes int64  `json:"result_bytes"`
 	EstTokens   int64  `json:"est_tokens"`
+	Agent       string `json:"agent"`
+	Via         string `json:"via"`
 }

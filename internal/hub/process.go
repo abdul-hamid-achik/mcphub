@@ -65,6 +65,9 @@ func prepareTransport(srv config.Server) preparedTransport {
 	command, cargs := srv.SpawnCommand()
 	cmd := exec.Command(command, cargs...)
 	cmd.Env = serverEnvironment(srv, os.Environ())
+	if srv.Cwd != "" {
+		cmd.Dir = config.ExpandPath(srv.Cwd)
+	}
 	stderr := &boundedDiagnosticBuffer{limit: maxDownstreamStderrBytes}
 	cmd.Stderr = stderr
 	return preparedTransport{

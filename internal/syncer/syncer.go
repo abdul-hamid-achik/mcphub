@@ -75,6 +75,13 @@ func normalizeSelf(exe string) string {
 // can scope its advertisement and lazy meta-tools to that agent.
 func Desired(c *config.Config, name string, agent config.Agent, self string) []harness.MCPServer {
 	if agent.ResolvedMode() == config.ModeGateway {
+		if u := c.GatewayListenURL(); u != "" {
+			return []harness.MCPServer{{
+				Name:      "mcphub",
+				URL:       u,
+				Transport: "http",
+			}}
+		}
 		args := []string{"mcp", "serve"}
 		if agent.HasRouting() {
 			args = append(args, "--agent", name)

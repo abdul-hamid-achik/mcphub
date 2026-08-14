@@ -132,7 +132,7 @@ func (h *Hub) StartDetached(ctx context.Context, server, tool string, args json.
 	}()
 	go func() {
 		defer cancel()
-		res, err := h.Call(dctx, server, tool, args)
+		res, err := h.Call(ContextWithVia(dctx, ViaDetach), server, tool, args)
 		h.detachedMu.Lock()
 		defer h.detachedMu.Unlock()
 		call.CompletedAt = h.now()

@@ -6,6 +6,19 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+### Added
+
+- **`agent` and `via` on every proxied call.** Telemetry rows record which gateway `--agent` made the call and whether it arrived via a direct mount, `mcphub_call_tool`, or `detach`.
+- **`cwd` on stdio servers.** Spawned children can pin a working directory instead of inheriting the agent session cwd. `mcphub add --cwd` sets it.
+- **Config backups.** `config.Save` writes a timestamped `.bak` next to `mcphub.yaml` before replacing it.
+- **Gateway hot-reload.** `mcp serve` / `mcphub up` poll the config file and reconnect/remount when it changes (pins, enable, listen).
+- **`mcphub up` and `--listen`.** One streamable-HTTP daemon many agents can share. Set `listen: 127.0.0.1:9820` so `sync` writes that URL into gateway-mode agents instead of `command: mcphub mcp serve`.
+- **Resources and prompts passthrough.** Downstream resources are listed as `mcphub://server/<uri>` and prompts as `server__prompt`. The gateway also advertises `mcphub://howto`.
+- **Cursor and Claude Desktop adapters.** `type: cursor` (`~/.cursor/mcp.json`) and `type: claude-desktop`.
+- **`mcphub pin --top N --since 7d`** pins public `server__tool` names from a time window.
+- **`mcphub status --what-if`** connects enabled servers and compares catalog definition size for expose-all vs lazy+pins.
+- Session close on SIGTERM is now deadline-bounded (5s) so a stuck stdio child cannot hang gateway shutdown.
+
 ## [0.22.0] - 2026-08-08
 
 ### Added

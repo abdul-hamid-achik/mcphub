@@ -54,6 +54,14 @@ func TestDesired(t *testing.T) {
 	}
 }
 
+func TestDesiredListenWritesURL(t *testing.T) {
+	c := &config.Config{Listen: "127.0.0.1:9820"}
+	g := Desired(c, "claude", config.Agent{Mode: config.ModeGateway, Servers: &[]string{"a"}}, "/bin/mcphub")
+	if len(g) != 1 || g[0].URL != "http://127.0.0.1:9820" || g[0].Transport != "http" || g[0].Command != "" {
+		t.Fatalf("listen gateway desired = %+v", g)
+	}
+}
+
 func TestDesiredRouting(t *testing.T) {
 	c := &config.Config{
 		Servers: map[string]config.Server{

@@ -1,7 +1,7 @@
 -- name: InsertToolCall :exec
 INSERT INTO tool_calls (
-    ts, server, tool, namespaced, duration_ms, ok, error, args_bytes, result_bytes, est_tokens
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    ts, server, tool, namespaced, duration_ms, ok, error, args_bytes, result_bytes, est_tokens, agent, via
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: RecentToolCalls :many
 SELECT * FROM tool_calls ORDER BY id DESC LIMIT ?;

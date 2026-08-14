@@ -5,19 +5,29 @@ import "encoding/json"
 // claudeAdapter handles Claude Code's ~/.claude.json, whose MCP servers live
 // under the top-level "mcpServers" object. Only that object is touched; every
 // other key (projects, history, ui state, ...) is preserved verbatim.
-var claudeAdapter = jsonAdapter{
-	kind:        "claude",
-	key:         "mcpServers",
-	managedKeys: []string{"type", "command", "args", "env", "url"},
-	transport:   transportDefaultHTTP,
-	entryFrom:   func(s MCPServer) any { return claudeEntryFrom(s) },
-	parseEntry: func(name string, raw json.RawMessage) (MCPServer, bool) {
-		var e claudeEntry
-		if json.Unmarshal(raw, &e) == nil {
-			return MCPServer{Name: name, Command: e.Command, Args: e.Args, Env: e.Env, URL: e.URL, Transport: remoteTransport(e.URL, e.Type)}, true
-		}
-		return MCPServer{}, false
-	},
+var claudeAdapter = claudeStyleAdapter("claude")
+
+// cursorAdapter writes ~/.cursor/mcp.json (same mcpServers shape as Claude).
+var cursorAdapter = claudeStyleAdapter("cursor")
+
+// desktopAdapter writes Claude Desktop's mcpServers JSON.
+var desktopAdapter = claudeStyleAdapter("claude-desktop")
+
+func claudeStyleAdapter(kind string) jsonAdapter {
+	return jsonAdapter{
+		kind:        kind,
+		key:         "mcpServers",
+		managedKeys: []string{"type", "command", "args", "env", "url"},
+		transport:   transportDefaultHTTP,
+		entryFrom:   func(s MCPServer) any { return claudeEntryFrom(s) },
+		parseEntry: func(name string, raw json.RawMessage) (MCPServer, bool) {
+			var e claudeEntry
+			if json.Unmarshal(raw, &e) == nil {
+				return MCPServer{Name: name, Command: e.Command, Args: e.Args, Env: e.Env, URL: e.URL, Transport: remoteTransport(e.URL, e.Type)}, true
+			}
+			return MCPServer{}, false
+		},
+	}
 }
 
 type claudeEntry struct {

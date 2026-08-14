@@ -10,6 +10,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -81,6 +82,7 @@ type Config struct {
 	Agents         map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
 	ConnectTimeout string              `yaml:"connect_timeout,omitempty" toml:"connect_timeout,omitempty" json:"connect_timeout,omitempty"` // per-downstream connect timeout, e.g. "30s", "60s" (default 30s)
 	CallTimeout    string              `yaml:"call_timeout,omitempty" toml:"call_timeout,omitempty" json:"call_timeout,omitempty"`          // ceiling for one downstream call, e.g. "10m", "1h" (default 30m); clamps timeout_ms and bounds detached calls
+	Listen         string              `yaml:"listen,omitempty" toml:"listen,omitempty" json:"listen,omitempty"`                            // optional streamable HTTP bind, e.g. "127.0.0.1:9820"; gateway sync then writes this URL
 	ResponseBudget string              `yaml:"response_budget,omitempty" toml:"response_budget,omitempty" json:"response_budget,omitempty"` // max serialized result size before lossless spooling, e.g. "32KB" (default 32KB, "0" = unlimited)
 	Verbatim       bool                `yaml:"verbatim,omitempty" toml:"verbatim,omitempty" json:"verbatim,omitempty"`                      // pass downstream results through without bounded-result spooling
 }
@@ -173,6 +175,11 @@ type Server struct {
 	// (http/sse) server. Ignored for stdio servers. Useful for bearer-token
 	// authentication, e.g. the Obsidian Local REST API plugin.
 	Headers map[string]string `yaml:"headers,omitempty" toml:"headers,omitempty" json:"headers,omitempty"`
+
+	// Cwd is the working directory for a stdio server. Empty means inherit
+	// whatever directory the gateway process was started in (often the agent
+	// session cwd). Supports ~ expansion.
+	Cwd string `yaml:"cwd,omitempty" toml:"cwd,omitempty" json:"cwd,omitempty"`
 
 	// Vault names a TinyVault (tvault) project. When set, the server is spawned
 	// via `tvault run --project <Vault> -- <command>`, so the project's secrets
@@ -369,6 +376,8 @@ var validAgentTypes = map[string]bool{
 	"kilo":        true,
 	"kimi":        true,
 	"local-agent": true, "localagent": true,
+	"cursor":         true,
+	"claude-desktop": true, "claudedesktop": true, "desktop": true,
 }
 
 // DefaultPath returns the config path used when unspecified. Precedence:
@@ -455,6 +464,11 @@ func Save(path string, c *Config) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if _, err := os.Stat(path); err == nil {
+		if _, err := backupConfig(path); err != nil {
+			return fmt.Errorf("backup config: %w", err)
+		}
+	}
 	// Preserve the existing file's permissions, or default to 0o600 for a new
 	// config (it may carry env vars / vault references).
 	mode := os.FileMode(0o600)
@@ -503,6 +517,11 @@ func (c *Config) Validate() error {
 	if c.Expose != "" && c.Expose != ExposeAll && c.Expose != ExposeLazy {
 		problems = append(problems, fmt.Sprintf("expose must be %q or %q", ExposeAll, ExposeLazy))
 	}
+	if c.Listen != "" {
+		if _, port, err := net.SplitHostPort(c.Listen); err != nil || port == "" {
+			problems = append(problems, fmt.Sprintf("listen %q: want host:port (e.g. 127.0.0.1:9820)", c.Listen))
+		}
+	}
 	if c.ResponseBudget != "" {
 		n, err := humanReadableBytes(c.ResponseBudget)
 		if err != nil {
@@ -534,6 +553,9 @@ func (c *Config) Validate() error {
 		}
 		if len(s.Headers) > 0 && s.URL == "" {
 			problems = append(problems, fmt.Sprintf("server %q: headers only apply to remote (url) servers", name))
+		}
+		if s.Cwd != "" && s.Command == "" {
+			problems = append(problems, fmt.Sprintf("server %q: cwd only applies to stdio (command) servers", name))
 		}
 		if len(s.UseWhen) > MaxUseWhenHints {
 			problems = append(problems, fmt.Sprintf("server %q: use_when supports at most %d hints", name, MaxUseWhenHints))
@@ -608,7 +630,7 @@ func (c *Config) Validate() error {
 		if a.Type == "" {
 			problems = append(problems, fmt.Sprintf("agent %q: missing type", name))
 		} else if !validAgentTypes[a.Type] {
-			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi, local-agent)", name, a.Type))
+			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi, local-agent, cursor, claude-desktop)", name, a.Type))
 		}
 		// Per-agent routing: Servers must name known servers; Tools is
 		// gateway-only and each entry must be a clean `server__tool` whose
@@ -855,4 +877,35 @@ func ExpandPath(p string) string {
 		}
 	}
 	return p
+}
+
+// GatewayListenURL is the streamable HTTP URL agents should use when Listen is set.
+func (c *Config) GatewayListenURL() string {
+	if c == nil || c.Listen == "" {
+		return ""
+	}
+	return "http://" + c.Listen
+}
+
+func backupConfig(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	base := fmt.Sprintf("%s.bak-%s", path, time.Now().UTC().Format("20060102-150405"))
+	dst := base
+	for i := 1; ; i++ {
+		if _, err := os.Stat(dst); os.IsNotExist(err) {
+			break
+		}
+		dst = fmt.Sprintf("%s-%d", base, i)
+	}
+	if err := os.WriteFile(dst, body, mode); err != nil {
+		return "", err
+	}
+	return dst, nil
 }

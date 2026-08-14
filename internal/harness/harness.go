@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -167,6 +168,10 @@ func For(kind string) (Adapter, error) {
 		return kimiAdapter{}, nil
 	case "local-agent", "localagent":
 		return localAgentAdapter{}, nil
+	case "cursor":
+		return cursorAdapter, nil
+	case "claude-desktop", "claudedesktop", "desktop":
+		return desktopAdapter, nil
 	default:
 		return nil, fmt.Errorf("unknown harness type %q (supported: %s)", kind, strings.Join(Kinds(), ", "))
 	}
@@ -174,7 +179,7 @@ func For(kind string) (Adapter, error) {
 
 // Kinds lists the supported harness types.
 func Kinds() []string {
-	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent"}
+	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop"}
 }
 
 // DefaultPath returns the conventional config file path for a harness kind,
@@ -210,6 +215,13 @@ func DefaultPath(kind string) string {
 		return filepath.Join(home, ".kimi", "config.toml")
 	case "local-agent", "localagent":
 		return filepath.Join(xdg, "local-agent", "config.yaml")
+	case "cursor":
+		return filepath.Join(home, ".cursor", "mcp.json")
+	case "claude-desktop", "claudedesktop", "desktop":
+		if runtime.GOOS == "darwin" {
+			return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+		}
+		return filepath.Join(xdg, "Claude", "claude_desktop_config.json")
 	}
 	return ""
 }

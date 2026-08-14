@@ -6,11 +6,13 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/harness"
+	"github.com/abdul-hamid-achik/mcphub/internal/hub"
 	"github.com/abdul-hamid-achik/mcphub/internal/store"
 	"github.com/abdul-hamid-achik/mcphub/internal/syncer"
 )
@@ -26,19 +28,21 @@ type agentStatus struct {
 }
 
 type statusReport struct {
-	Config  string        `json:"config"`
-	Expose  string        `json:"expose"`
-	Servers int           `json:"servers"`
-	Enabled int           `json:"enabled"`
-	Agents  []agentStatus `json:"agents"`
-	Calls   int64         `json:"calls"`
-	Errors  int64         `json:"errors"`
-	Tokens  int64         `json:"est_tokens"`
-	Unused  []string      `json:"unused_enabled"`
+	Config  string             `json:"config"`
+	Expose  string             `json:"expose"`
+	Listen  string             `json:"listen,omitempty"`
+	Servers int                `json:"servers"`
+	Enabled int                `json:"enabled"`
+	Agents  []agentStatus      `json:"agents"`
+	Calls   int64              `json:"calls"`
+	Errors  int64              `json:"errors"`
+	Tokens  int64              `json:"est_tokens"`
+	Unused  []string           `json:"unused_enabled"`
+	WhatIf  *hub.CatalogWhatIf `json:"what_if,omitempty"`
 }
 
 func newStatusCmd() *cobra.Command {
-	var markdown bool
+	var markdown, whatIf bool
 	var server string
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -86,12 +90,16 @@ a machine-readable one.`,
 			rep := statusReport{
 				Config:  cfgPath,
 				Expose:  expose,
+				Listen:  c.Listen,
 				Servers: len(c.Servers),
 				Enabled: len(c.EnabledServers()),
 				Calls:   totals.Calls,
 				Errors:  totals.Errors,
 				Tokens:  totals.EstTokens,
 				Unused:  unusedServers(c, serverStats),
+			}
+			if whatIf {
+				rep.WhatIf = probeCatalogWhatIf(ctx, c)
 			}
 			for _, r := range results {
 				as := agentStatus{Agent: r.Agent, Type: r.Type, Mode: r.Mode}
@@ -120,7 +128,18 @@ a machine-readable one.`,
 	}
 	cmd.Flags().BoolVar(&markdown, "markdown", false, "render the report as Markdown (great for notes/issues)")
 	cmd.Flags().StringVar(&server, "server", "", "scope to one server: which agents route to it + proxied-call count")
+	cmd.Flags().BoolVar(&whatIf, "what-if", false, "connect enabled servers and compare catalog size: expose all vs lazy+pins")
 	return cmd
+}
+
+func probeCatalogWhatIf(ctx context.Context, c *config.Config) *hub.CatalogWhatIf {
+	pctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	h := hub.New(c, nil, nil)
+	h.Connect(pctx)
+	defer h.Close()
+	w := h.CatalogWhatIf()
+	return &w
 }
 
 func renderStatusMarkdown(cmd *cobra.Command, rep statusReport) error {
@@ -149,7 +168,12 @@ func renderStatusMarkdown(cmd *cobra.Command, rep statusReport) error {
 func renderStatus(cmd *cobra.Command, rep statusReport) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Config:  %s\n", rep.Config)
-	fmt.Fprintf(out, "Servers: %d (%d enabled)   Exposure: %s\n\n", rep.Servers, rep.Enabled, rep.Expose)
+	fmt.Fprintf(out, "Servers: %d (%d enabled)   Exposure: %s", rep.Servers, rep.Enabled, rep.Expose)
+	if rep.Listen != "" {
+		fmt.Fprintf(out, "   Listen: %s", rep.Listen)
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out)
 
 	w := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(w, "AGENT\tTYPE\tMODE\tSYNC")
@@ -170,6 +194,11 @@ func renderStatus(cmd *cobra.Command, rep statusReport) error {
 	if len(rep.Unused) > 0 {
 		fmt.Fprintf(out, "Unused:  %s (enabled but never called)\n", strings.Join(rep.Unused, ", "))
 		fmt.Fprintln(out, "         → consider `mcphub disable <name>` to shrink agent context.")
+	}
+	if rep.WhatIf != nil {
+		w := rep.WhatIf
+		fmt.Fprintf(out, "What-if: all %d tools (~%d def tokens) vs lazy+pins %d tools (~%d def tokens); save ~%d tokens of definitions (plus 8 management tools in lazy).\n",
+			w.AllTools, w.AllEstTokens, w.PinTools, w.PinEstTokens, w.SavedEstTokens)
 	}
 	if pending {
 		fmt.Fprintln(out, "\nSome agents are out of sync. Run `mcphub sync` to preview, `mcphub sync --write` to apply.")

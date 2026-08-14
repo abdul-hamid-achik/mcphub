@@ -32,7 +32,7 @@ features:
     linkText: How the gateway works
   - icon: "03"
     title: Sync 12 harnesses
-    details: <code>mcphub sync</code> writes the right config into Claude Code, Codex, opencode, Copilot CLI and eight more. Dry-run by default, timestamped .bak, hand-added servers survive.
+    details: <code>mcphub sync</code> writes the right config into Claude Code, Codex, opencode, Copilot CLI, Cursor, Claude Desktop and more. Dry-run by default, timestamped .bak, hand-added servers survive.
     link: /guide/sync
     linkText: How sync stays safe
   - icon: "04"

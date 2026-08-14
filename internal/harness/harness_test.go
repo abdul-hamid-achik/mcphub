@@ -955,7 +955,7 @@ func TestGeminiUpdatePreservesExtraKeys(t *testing.T) {
 // a dropped or reordered kind is caught immediately.
 func TestKindsReturnsExactSet(t *testing.T) {
 	got := Kinds()
-	want := []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent"}
+	want := []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Kinds() = %v, want %v", got, want)
 	}

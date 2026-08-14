@@ -27,67 +27,101 @@ func newMCPCmd() *cobra.Command {
 }
 
 func newMCPServeCmd() *cobra.Command {
-	var agentName string
+	var agentName, listen string
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the gateway MCP stdio server (proxies all enabled servers)",
-		Long: `serve runs mcphub as a single MCP stdio server. It connects to every
+		Short: "Start the gateway MCP server (stdio, or HTTP with --listen)",
+		Long: `serve runs mcphub as a single MCP server. It connects to every
 enabled downstream server, aggregates their tools under 'server__tool' names,
-and records each proxied call to the local intelligence db. Point your agents
-at 'mcphub mcp serve' (gateway mode) to front them all with one connection.
+and records each proxied call to the local intelligence db.
 
-When --agent <name> is given, the gateway applies that agent's ` + "`servers`" + ` /
-` + "`tools`" + ` call scope plus its optional ` + "`pin`" + ` and ` + "`tool_schema_budget`" + `
-advertisement policy from mcphub.yaml. A bare 'mcphub mcp serve' (no --agent)
-is unscoped and uses the global exposure policy.`,
+Default is stdio (one agent process per gateway). --listen host:port serves
+streamable HTTP instead so many agents can share one process. The same address
+can be set as listen: in mcphub.yaml; then mcphub sync writes that URL into
+gateway-mode agents and mcphub up starts this listener.
+
+When --agent <name> is given, the gateway applies that agent's servers/tools
+scope plus optional pin and tool_schema_budget.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, _, err := loadConfig()
-			if err != nil {
-				return err
-			}
-			st, err := openStore()
-			if err != nil {
-				return err
-			}
-			defer st.Close()
-
-			scope, err := hubmcp.ScopeFor(c, agentName)
-			if err != nil {
-				return err
-			}
-
-			// Logs go to stderr so they never corrupt the stdio JSON-RPC
-			// stream — and to a per-day file, because in gateway mode stderr
-			// belongs to the parent agent and dies with its session, which is
-			// exactly when the logs are needed. `mcphub debug bundle` collects
-			// them; MCPHUB_LOG_DIR=off opts out.
-			sinkName := "gateway"
-			if agentName != "" {
-				sinkName = "gateway-" + agentName
-			}
-			var logWriter io.Writer = os.Stderr
-			if sink, sinkErr := logsink.New(logsink.DefaultDir(), sinkName); sinkErr == nil {
-				defer sink.Close()
-				logWriter = io.MultiWriter(os.Stderr, sink)
-			}
-			logger := log.NewWithOptions(logWriter, log.Options{Prefix: "mcphub", ReportTimestamp: true})
-			logger.Info("gateway starting", "version", version.Version, "agent", agentName)
-
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-			defer cancel()
-
-			h := hub.New(c, st, logger)
-			// Downstreams see which agent this gateway fronts, so a product
-			// that ledgers its callers can tell sonar from codex instead of
-			// recording every gateway as "mcphub".
-			h.SetAgentName(agentName)
-			srv := hubmcp.NewServer(c, h, st, scope)
-			if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
-				return fmt.Errorf("mcp serve: %w", err)
-			}
-			return nil
+			return runGateway(agentName, listen)
 		},
 	}
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent name this gateway serves (applies servers/tools scope and pin/schema advertisement policy)")
+	cmd.Flags().StringVar(&listen, "listen", "", "serve streamable HTTP on host:port instead of stdio (overrides config listen:)")
 	return cmd
+}
+
+func newUpCmd() *cobra.Command {
+	var listen string
+	cmd := &cobra.Command{
+		Use:   "up",
+		Short: "Run a shared gateway daemon on streamable HTTP",
+		Long: `up starts one mcphub gateway that many agents can share.
+
+It listens on --listen, or listen: in mcphub.yaml, or 127.0.0.1:9820.
+Point gateway-mode agents at that URL (mcphub sync does this when listen: is set)
+instead of spawning mcphub mcp serve per session.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runGateway("", listen)
+		},
+	}
+	cmd.Flags().StringVar(&listen, "listen", "", "host:port (default: config listen: or 127.0.0.1:9820)")
+	return cmd
+}
+
+func runGateway(agentName, listenFlag string) error {
+	c, cfgPath, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	st, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	scope, err := hubmcp.ScopeFor(c, agentName)
+	if err != nil {
+		return err
+	}
+
+	listen := listenFlag
+	if listen == "" {
+		listen = c.Listen
+	}
+
+	sinkName := "gateway"
+	if agentName != "" {
+		sinkName = "gateway-" + agentName
+	}
+	if listen != "" {
+		sinkName += "-http"
+	}
+	var logWriter io.Writer = os.Stderr
+	if sink, sinkErr := logsink.New(logsink.DefaultDir(), sinkName); sinkErr == nil {
+		defer sink.Close()
+		logWriter = io.MultiWriter(os.Stderr, sink)
+	}
+	logger := log.NewWithOptions(logWriter, log.Options{Prefix: "mcphub", ReportTimestamp: true})
+	logger.Info("gateway starting", "version", version.Version, "agent", agentName, "listen", listen)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	h := hub.New(c, st, logger)
+	h.SetAgentName(agentName)
+	srv := hubmcp.NewServer(c, h, st, scope)
+	srv.SetConfigPath(cfgPath)
+	srv.SetAgentName(agentName)
+
+	if listen != "" {
+		if err := srv.RunHTTP(ctx, listen); err != nil && ctx.Err() == nil {
+			return fmt.Errorf("mcp serve http: %w", err)
+		}
+		return nil
+	}
+	if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("mcp serve: %w", err)
+	}
+	return nil
 }

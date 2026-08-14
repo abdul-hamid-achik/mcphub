@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -32,6 +33,8 @@ type Server struct {
 	hub                       *hub.Hub
 	store                     *store.Store
 	cfg                       *config.Config
+	cfgPath                   string
+	agentName                 string
 	scope                     *agentScope // nil = unscoped (advertise everything)
 	mountMu                   sync.RWMutex
 	mountedDownstreamTools    map[string][sha256.Size]byte
@@ -77,8 +80,17 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScop
 	opts := &sdk.ServerOptions{Instructions: instructions}
 	s := &Server{srv: sdk.NewServer(impl, opts), hub: h, store: st, cfg: cfg, scope: scope}
 	s.registerManagement()
+	s.mountHowto()
 	return s
 }
+
+// SetConfigPath enables polling mcphub.yaml so pin/enable/listen edits apply
+// without restarting the gateway process.
+func (s *Server) SetConfigPath(path string) { s.cfgPath = path }
+
+// SetAgentName records the --agent this process was started with so a config
+// reload can rebuild the same scope.
+func (s *Server) SetAgentName(name string) { s.agentName = name }
 
 // Run serves the scoped management surface immediately, then connects only the
 // admitted downstream servers in the background. Applying scope before Connect
@@ -98,10 +110,12 @@ func (s *Server) run(ctx context.Context, transport sdk.Transport) error {
 	if err := s.mountDownstreamTools(); err != nil {
 		return fmt.Errorf("mount downstream tools: %w", err)
 	}
+	s.mountDownstreamMeta()
 	watchCtx, cancelWatchers := context.WithCancel(ctx)
 	defer cancelWatchers()
 	go s.watchDownstreamTools(watchCtx, changes)
 	go s.hub.Watch(watchCtx)
+	go s.watchConfig(watchCtx)
 
 	connectDone := make(chan struct{})
 	go func() {
@@ -197,10 +211,10 @@ func (s *Server) watchDownstreamTools(ctx context.Context, changes <-chan struct
 			return
 		case <-changes:
 			if err := s.mountDownstreamTools(); err != nil {
-				// stdio JSON-RPC owns stdout. Keep this fallback bounded and
-				// fixed as the error may contain downstream-controlled names.
 				fmt.Fprintln(os.Stderr, "mcphub: downstream tool refresh failed")
+				continue
 			}
+			s.mountDownstreamMeta()
 		}
 	}
 }
@@ -692,7 +706,7 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	res, err := s.hub.Call(ctx, server, tool, args)
+	res, err := s.hub.Call(hub.ContextWithVia(ctx, hub.ViaCallTool), server, tool, args)
 	if err != nil {
 		return nil, nil, fmt.Errorf("call %s: %w", publicNS, err)
 	}
@@ -836,6 +850,142 @@ func (s *Server) handleStats(ctx context.Context, _ *sdk.CallToolRequest, _ empt
 		return result(map[string]any{"error": err.Error()})
 	}
 	return result(map[string]any{"totals": totals, "servers": servers})
+}
+
+const howtoMarkdown = `# Using mcphub
+
+This gateway fronts many MCP servers. Tools are named ` + "`server__tool`" + `.
+
+## Lazy mode
+
+If only a handful of mcphub_* tools are listed, the rest are still available:
+
+1. Call ` + "`mcphub_resolve_tool`" + ` with the current goal (natural language).
+2. If status is ` + "`confident`" + ` and ` + "`ambiguous`" + ` is false, call ` + "`mcphub_call_tool`" + ` with server, tool, and arguments.
+3. If the recommendation is ambiguous, use ` + "`mcphub_search_tools`" + ` or ask the user.
+4. Long jobs: ` + "`mcphub_call_tool`" + ` with ` + "`detach: true`" + `, then ` + "`mcphub_poll_result`" + `.
+5. Huge results come back as a ` + "`callId`" + `; page with ` + "`mcphub_get_result`" + `.
+
+Pinned tools (if any) can be called by their ` + "`server__tool`" + ` name directly.
+
+## Resources and prompts
+
+Downstream resources are listed under ` + "`mcphub://<server>/<original-uri>`" + `. Prompts are namespaced ` + "`server__prompt`" + `.
+`
+
+func (s *Server) mountHowto() {
+	s.srv.AddResource(&sdk.Resource{
+		URI:         "mcphub://howto",
+		Name:        "howto",
+		Description: "How to discover and call tools through this mcphub gateway",
+		MIMEType:    "text/markdown",
+	}, func(context.Context, *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+		return &sdk.ReadResourceResult{Contents: []*sdk.ResourceContents{{
+			URI:      "mcphub://howto",
+			MIMEType: "text/markdown",
+			Text:     howtoMarkdown,
+		}}}, nil
+	})
+}
+
+func (s *Server) mountDownstreamMeta() {
+	s.hub.MountResourcesAndPrompts(s.srv, s.scope.allowsServer)
+}
+
+func (s *Server) watchConfig(ctx context.Context) {
+	if s.cfgPath == "" {
+		return
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	var lastMod time.Time
+	if info, err := os.Stat(s.cfgPath); err == nil {
+		lastMod = info.ModTime()
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			info, err := os.Stat(s.cfgPath)
+			if err != nil {
+				continue
+			}
+			if !info.ModTime().After(lastMod) {
+				continue
+			}
+			lastMod = info.ModTime()
+			cfg, err := config.Load(s.cfgPath)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "mcphub: config reload failed")
+				continue
+			}
+			if err := s.Reload(cfg); err != nil {
+				fmt.Fprintln(os.Stderr, "mcphub: config reload apply failed")
+			}
+		}
+	}
+}
+
+// Reload applies a new registry: reconnect admitted downstreams and remount.
+func (s *Server) Reload(cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("reload: nil config")
+	}
+	scope, err := ScopeFor(cfg, s.agentName)
+	if err != nil {
+		return err
+	}
+	s.cfg = cfg
+	s.scope = scope
+	s.hub.ReplaceConfig(cfg)
+	s.hub.ConnectMatching(context.Background(), s.scope.allowsServer)
+	if err := s.mountDownstreamTools(); err != nil {
+		return err
+	}
+	s.mountDownstreamMeta()
+	return nil
+}
+
+// RunHTTP serves the gateway over streamable HTTP at addr (host:port).
+func (s *Server) RunHTTP(ctx context.Context, addr string) error {
+	changes, unsubscribe := s.hub.SubscribeChanges()
+	defer unsubscribe()
+	defer s.hub.Close()
+
+	if err := s.mountDownstreamTools(); err != nil {
+		return fmt.Errorf("mount downstream tools: %w", err)
+	}
+	s.mountDownstreamMeta()
+	watchCtx, cancelWatchers := context.WithCancel(ctx)
+	defer cancelWatchers()
+	go s.watchDownstreamTools(watchCtx, changes)
+	go s.hub.Watch(watchCtx)
+	go s.watchConfig(watchCtx)
+
+	connectDone := make(chan struct{})
+	go func() {
+		defer close(connectDone)
+		s.hub.ConnectMatching(watchCtx, s.scope.allowsServer)
+	}()
+
+	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server {
+		return s.srv
+	}, nil)
+	httpSrv := &http.Server{Addr: addr, Handler: handler}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutdownCtx)
+	}()
+	err := httpSrv.ListenAndServe()
+	cancelWatchers()
+	<-connectDone
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
 }
 
 // result mirrors the codemap/monitor convention: a JSON text block plus the

@@ -107,6 +107,9 @@ func Open(path string) (*Store, error) {
 }
 
 func applyMigrations(sqlDB *sql.DB) error {
+	if _, err := sqlDB.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY)`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("read migrations: %w", err)
@@ -119,12 +122,31 @@ func applyMigrations(sqlDB *sql.DB) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		var applied int
+		if err := sqlDB.QueryRow(`SELECT COUNT(1) FROM schema_migrations WHERE name = ?`, name).Scan(&applied); err != nil {
+			return fmt.Errorf("check migration %s: %w", name, err)
+		}
+		if applied > 0 {
+			continue
+		}
 		body, err := migrationsFS.ReadFile("migrations/" + name)
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", name, err)
 		}
-		if _, err := sqlDB.Exec(string(body)); err != nil {
+		tx, err := sqlDB.Begin()
+		if err != nil {
+			return fmt.Errorf("begin migration %s: %w", name, err)
+		}
+		if _, err := tx.Exec(string(body)); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_migrations (name) VALUES (?)`, name); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record migration %s: %w", name, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %s: %w", name, err)
 		}
 	}
 	return nil
@@ -277,6 +299,8 @@ type CallRecord struct {
 	Server      string
 	Tool        string
 	Namespaced  string
+	Agent       string // gateway --agent name, empty when unscoped
+	Via         string // mount | call_tool | detach
 	Duration    time.Duration
 	Err         error
 	ArgsBytes   int
@@ -307,6 +331,8 @@ func (s *Store) RecordCall(ctx context.Context, rec CallRecord) error {
 		ArgsBytes:   int64(rec.ArgsBytes),
 		ResultBytes: int64(rec.ResultBytes),
 		EstTokens:   estTokens(rec.ArgsBytes, rec.ResultBytes),
+		Agent:       rec.Agent,
+		Via:         rec.Via,
 	})
 }
 

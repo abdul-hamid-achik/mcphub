@@ -56,6 +56,8 @@ func TestValidateRejectsBadServers(t *testing.T) {
 		"both command+url":  {Servers: map[string]Server{"x": {Command: "a", URL: "b"}}},
 		"bad transport":     {Servers: map[string]Server{"x": {URL: "u", Transport: "grpc"}}},
 		"headers on stdio":  {Servers: map[string]Server{"x": {Command: "a", Headers: map[string]string{"Authorization": "Bearer tok"}}}},
+		"cwd on remote":     {Servers: map[string]Server{"x": {URL: "https://x", Cwd: "/tmp"}}},
+		"bad listen":        {Listen: "not-a-port", Servers: map[string]Server{"x": {Command: "a"}}},
 		"unknown group ref": {Servers: map[string]Server{}, Groups: map[string][]string{"g": {"missing"}}},
 		"agent no path":     {Servers: map[string]Server{}, Agents: map[string]Agent{"a": {Type: "claude"}}},
 		"agent bad type":    {Servers: map[string]Server{}, Agents: map[string]Agent{"a": {Type: "cluade", Path: "~/x"}}},
@@ -560,7 +562,7 @@ func TestValidateAcceptsNewAgentTypes(t *testing.T) {
 // harness.Kinds(). The config.go comment explicitly warns about this.
 func TestKindsAndValidTypesInSync(t *testing.T) {
 	// Every type in Kinds() must be in validAgentTypes.
-	for _, k := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent"} {
+	for _, k := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop"} {
 		c := &Config{
 			Servers: map[string]Server{"x": {Command: "c"}},
 			Agents:  map[string]Agent{"a": {Type: k, Path: "~/x"}},
@@ -578,7 +580,7 @@ func TestKindsAndValidTypesInSync(t *testing.T) {
 func TestAllAgentTypesRoundTrip(t *testing.T) {
 	allKinds := []string{
 		"claude", "opencode", "codex", "crush", "forge", "hermes",
-		"copilot", "qwen", "gemini", "kilo", "kimi", "local-agent",
+		"copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop",
 	}
 	agents := map[string]Agent{}
 	for _, k := range allKinds {
@@ -697,5 +699,33 @@ func TestValidateRejectsBadCallTimeout(t *testing.T) {
 	c.CallTimeout = "10m"
 	if err := c.Validate(); err != nil {
 		t.Errorf("valid call_timeout should pass, got %v", err)
+	}
+}
+
+func TestSaveWritesBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcphub.yaml")
+	c := &Config{
+		Version: 1,
+		Servers: map[string]Server{"x": {Command: "c", Enabled: true}},
+		Agents:  map[string]Agent{"a": {Type: "claude", Path: "~/x"}},
+	}
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	c.Servers["y"] = Server{Command: "d", Enabled: true}
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(path + ".bak-*")
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("expected a .bak after second Save, glob=%v err=%v", matches, err)
+	}
+}
+
+func TestGatewayListenURL(t *testing.T) {
+	c := &Config{Listen: "127.0.0.1:9820"}
+	if got := c.GatewayListenURL(); got != "http://127.0.0.1:9820" {
+		t.Errorf("GatewayListenURL = %q", got)
 	}
 }
