@@ -6,6 +6,8 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-14
+
 ### Added
 
 - **`agent` and `via` on every proxied call.** Telemetry rows record which gateway `--agent` made the call and whether it arrived via a direct mount, `mcphub_call_tool`, or `detach`.
