@@ -97,6 +97,7 @@ func (p preparedTransport) startupDetail() string {
 // them before it execs its own child.
 func serverEnvironment(srv config.Server, inherited []string) []string {
 	env := mergeEnvironment(inherited, srv.Env)
+	env = ensurePassphraseFile(env)
 	if srv.UsesVault() {
 		// A selected vault value must come from TinyVault, not from a stale
 		// ambient/exported value with the same name. This also avoids duplicate
@@ -174,11 +175,43 @@ func isTinyVaultRuntimeVariable(name string) bool {
 		return true
 	}
 	switch strings.ToUpper(name) {
-	case "TVAULT_DIR", "TVAULT_NO_AGENT", "TVAULT_IDENTITY":
+	case "TVAULT_DIR", "TVAULT_NO_AGENT", "TVAULT_IDENTITY", "TVAULT_PASSPHRASE_FILE":
 		return true
 	default:
 		return false
 	}
+}
+
+// conventionalPassphraseFile is TinyVault's documented daemon unlock path.
+// GUI-launched gateways (Grok, Cursor) do not source a login shell, so
+// downstreams that themselves exec `tvault` (cairntrace accompany, fcheap)
+// inherit no TVAULT_* unless we supply the path. The file is 0600 and holds
+// the passphrase; we only pass the path.
+func conventionalPassphraseFile() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, ".config", "secrets", "env")
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	return path
+}
+
+func ensurePassphraseFile(env []string) []string {
+	for _, entry := range env {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(name, "TVAULT_PASSPHRASE_FILE") && value != "" {
+			return env
+		}
+	}
+	path := conventionalPassphraseFile()
+	if path == "" {
+		return env
+	}
+	return append(env, "TVAULT_PASSPHRASE_FILE="+path)
 }
 
 func vaultSelectsEnvironmentName(srv config.Server, name string) bool {
@@ -222,7 +255,7 @@ func startupEnvironmentAllowlist(srv config.Server) map[string]struct{} {
 	for name := range tinyVaultCredentialNames {
 		names[name] = struct{}{}
 	}
-	for _, name := range []string{"TVAULT_DIR", "TVAULT_NO_AGENT", "TVAULT_IDENTITY"} {
+	for _, name := range []string{"TVAULT_DIR", "TVAULT_NO_AGENT", "TVAULT_IDENTITY", "TVAULT_PASSPHRASE_FILE"} {
 		names[name] = struct{}{}
 	}
 	return names

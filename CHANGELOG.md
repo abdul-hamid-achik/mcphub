@@ -6,6 +6,17 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-08-14
+
+### Fixed
+
+- Stdio downstreams that exec `tvault` themselves (cairntrace accompany,
+  fcheap, …) inherit `TVAULT_PASSPHRASE_FILE` and, when that is unset, the
+  conventional `~/.config/secrets/env` path if the file exists. GUI hosts
+  do not source a login shell, so those children used to fail locked after
+  the TinyVault agent idle-exited. The passphrase itself is still stripped
+  from ordinary downstreams.
+
 ## [0.23.0] - 2026-08-14
 
 ### Added

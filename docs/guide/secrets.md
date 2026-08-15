@@ -95,12 +95,15 @@ servers keep their secrets out of the file.
 
 ::: tip Unlocking the vault
 `tvault run`/`tvault get` need the vault unlocked in whatever process spawns
-them — via `TVAULT_PASSPHRASE`, `TVAULT_IDENTITY_KEY`, or a running `tvault
-agent`. mcphub preserves those three control variables only for a `tvault`
-wrapper or a directly configured `tvault` process and strips them from
-ordinary stdio downstreams. For `vault_only` and `vault_prefix`, it also
-removes matching ambient/configured values before the wrapper starts so the
-selected value comes from TinyVault.
+them — via `TVAULT_PASSPHRASE`, `TVAULT_PASSPHRASE_FILE`, `TVAULT_IDENTITY_KEY`,
+or a running `tvault agent`. mcphub preserves the master passphrase / identity
+key / agent token only for a `tvault` wrapper or a directly configured `tvault`
+process and strips them from ordinary stdio downstreams. `TVAULT_PASSPHRASE_FILE`
+is a path, not the secret: it is forwarded to every stdio child, and if unset
+mcphub injects `~/.config/secrets/env` when that file exists so GUI-launched
+gateways (no login-shell env) can still unlock. For `vault_only` and
+`vault_prefix`, it also removes matching ambient/configured values before the
+wrapper starts so the selected value comes from TinyVault.
 :::
 
 ### A vaulted server is unavailable

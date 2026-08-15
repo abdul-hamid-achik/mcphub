@@ -82,6 +82,36 @@ func TestServerEnvironmentIsolatesTinyVaultCredentials(t *testing.T) {
 		}
 	})
 
+	t.Run("ordinary downstream keeps passphrase file path", func(t *testing.T) {
+		withFile := append([]string{}, inherited...)
+		withFile = append(withFile, "TVAULT_PASSPHRASE_FILE=/tmp/secrets.env")
+		srv := config.Server{Command: "cairn", Args: []string{"mcp"}}
+		got := environmentMap(serverEnvironment(srv, withFile))
+		if got["TVAULT_PASSPHRASE_FILE"] != "/tmp/secrets.env" {
+			t.Errorf("TVAULT_PASSPHRASE_FILE = %q, want the path forwarded", got["TVAULT_PASSPHRASE_FILE"])
+		}
+		if _, ok := got["TVAULT_PASSPHRASE"]; ok {
+			t.Error("TVAULT_PASSPHRASE reached an ordinary downstream")
+		}
+	})
+
+	t.Run("injects conventional passphrase file when unset", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		path := filepath.Join(home, ".config", "secrets", "env")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("TVAULT_PASSPHRASE=x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		srv := config.Server{Command: "cairn", Args: []string{"mcp"}}
+		got := environmentMap(serverEnvironment(srv, []string{"PATH=/usr/bin", "HOME=" + home}))
+		if got["TVAULT_PASSPHRASE_FILE"] != path {
+			t.Errorf("TVAULT_PASSPHRASE_FILE = %q, want conventional %q", got["TVAULT_PASSPHRASE_FILE"], path)
+		}
+	})
+
 	t.Run("direct tvault server", func(t *testing.T) {
 		srv := config.Server{Command: "/opt/homebrew/bin/tvault", Args: []string{"mcp"}}
 		got := environmentMap(serverEnvironment(srv, inherited))
