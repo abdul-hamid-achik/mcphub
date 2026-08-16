@@ -287,7 +287,7 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
   phrases when several tools share server vocabulary but serve different
   activities, such as video timeline analysis versus image inspection.
 - **First-class Bob integration.** The documentation now includes a complete
-  trusted-local and least-privilege registration guide for Bob's six typed
+  trusted-local and least-privilege registration guide for Bob's nine read-only
   repository tools, lazy-mode pins, local-agent routing, and local-only stats.
 
 ### Changed

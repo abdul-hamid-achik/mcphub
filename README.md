@@ -237,12 +237,14 @@ agents:
     # Per-agent routing (optional) — restrict what this agent can reach:
     # servers: [codemap, vecgrep]   # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__find]  # gateway-only: only these server__tool names (omit = all; [] = none)
-    # pin: []                       # gateway-only + lazy: override global pins; [] = meta-tools only
+    # pin: [bob__bob_context]       # gateway-only + lazy: override global pins
     # tool_schema_budget: 8KB       # optional cap for directly advertised downstream definitions
   local-agent:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
     mode: gateway
+    # pin: [bob__bob_context]       # typical lean profile: pin context-read tool
+    # tool_schema_budget: 8KB
 ```
 
 Each `server` is either a stdio server (`command` + `args` + optional `env`) **or** a remote
@@ -252,7 +254,7 @@ server (`url` + `transport`, where `transport` is `http` or `sse`). Each `agent`
 
 The Bob entry uses `--allow-any-workspace`, which grants its read-only MCP tools
 access to any workspace readable by the Bob process. Use that flag only in a
-trusted, local, single-user gateway. For a least-privilege setup and the six
+trusted, local, single-user gateway. For a least-privilege setup and the nine
 available Bob tools, see the [Bob integration guide](docs/guide/bob.md).
 
 ### Per-agent routing
@@ -279,13 +281,15 @@ as before; an explicit empty list (`servers: []` / `tools: []`) means **none** �
 minimal agent. This is least activation and curation, not an OS security boundary.
 
 Gateway agents can tune advertisement separately from call authority. Under
-`expose: lazy`, an omitted per-agent `pin` inherits the top-level pins while
-`pin: []` suppresses every pinned downstream definition; the in-scope catalog
-remains discoverable and callable through the eight lazy meta-tools.
-`tool_schema_budget: 8KB` admits complete definitions deterministically up to
-that serialized-byte budget in either exposure mode; `0` means meta-tools only.
-These fields are gateway-only and cause `sync` to launch `mcphub mcp serve
---agent <name>` even without a `servers`/`tools` restriction.
+`expose: lazy`, an omitted per-agent `pin` inherits the top-level pins while an
+explicit `pin` overrides them; the in-scope catalog remains discoverable and
+callable through the eight lazy meta-tools. `tool_schema_budget: 8KB` admits
+complete definitions deterministically up to that serialized-byte budget in
+either exposure mode; `0` means meta-tools only. A typical lean profile for
+small local models is `pin: [bob__bob_context]` with `tool_schema_budget: 8KB`
+to pin the context-read tool while suppressing other global pins. These fields
+are gateway-only and cause `sync` to launch `mcphub mcp serve --agent <name>`
+even without a `servers`/`tools` restriction.
 
 Set top-level `expose: lazy` to have the gateway advertise only its meta-tools (saving tokens —
 agents route current task context with `mcphub_resolve_tool`, browse with

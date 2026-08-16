@@ -85,8 +85,9 @@ agents:
     path: ~/.config/local-agent/config.yaml
     mode: gateway
     servers: [bob, cortex, vecgrep]
-    pin: []                  # in expose: lazy, publish meta-tools only
-    # tool_schema_budget: 8KB
+    pin:
+      - bob__bob_context     # in expose: lazy, pin the context-read tool
+    tool_schema_budget: 8KB
 ```
 
 Under `expose: lazy`, omitting `pin` inherits the top-level pin list. An

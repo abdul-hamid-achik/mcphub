@@ -46,10 +46,10 @@ talks to each server itself, so it always loads every enabled server's full
 tool list. See [Concepts](/guide/concepts) for the two modes.
 :::
 
-### A no-schema profile for small local models
+### A lean profile for small local models
 
-You can keep the full in-scope lazy catalog while exposing no downstream schema
-definitions directly to one gateway agent:
+You can keep the full in-scope lazy catalog while exposing a minimal advertised
+surface to one gateway agent:
 
 ```yaml
 expose: lazy
@@ -59,17 +59,19 @@ agents:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
     mode: gateway
-    pin: []
-    tool_schema_budget: "0"
+    pin:
+      - bob__bob_context
+    tool_schema_budget: "8KB"
 ```
 
-`pin: []` overrides any global pins for this agent. `tool_schema_budget: "0"`
-keeps only the eight management tools. Neither setting removes downstream call
-authority: after resolving or searching, the agent can still use
-`mcphub_call_tool` for every tool permitted by its `servers` and `tools`
-scope. Use a finite byte budget instead when a few complete pinned definitions
-are worth their recurring prompt cost. The gateway never truncates a schema to
-fit a budget.
+`pin` overrides any global pins for this agent. `tool_schema_budget: "8KB"`
+admits complete pinned definitions up to that serialized-byte budget. Neither
+setting removes downstream call authority: after resolving or searching, the
+agent can still use `mcphub_call_tool` for every tool permitted by its
+`servers` and `tools` scope. The gateway never truncates a schema to fit a
+budget. Use `pin: []` and `tool_schema_budget: "0"` only when you want the
+agent to load zero downstream definitions — that combination advertises only the
+eight management tools.
 
 Run `mcphub sync` to preview the generated harness entry and `mcphub sync
 --write` to apply it. Restart the harness afterward so it launches
