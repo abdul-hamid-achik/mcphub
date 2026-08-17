@@ -45,23 +45,29 @@ inspect. Bob also accepts its startup workspace.
 
 ## Choose which tools stay visible
 
-Bob exposes six tools. MCPHub prefixes each one with `bob__`:
+Bob exposes nine read-only tools. MCPHub prefixes each one with `bob__`:
 
 | MCPHub tool | Purpose |
 | --- | --- |
+| `bob__bob_context` | Read Bob's compact repository context and manifest summary (call this first). |
 | `bob__inspect` | Inspect Bob-managed state and offline specialist availability. |
 | `bob__plan` | Return a bounded repository plan and deterministic digest. |
 | `bob__check` | Check convergence, conflicts, and lock drift. |
 | `bob__validate_manifest` | Strictly validate a workspace manifest or bounded inline YAML. |
 | `bob__recipe_describe` | Describe the embedded recipe contract. |
 | `bob__stats` | Summarize Bob's opt-in, local-only usage aggregates. |
+| `bob__version` | Report Bob's version and build metadata. |
+| `bob__capabilities` | List enabled Bob capabilities and integration status. |
 
-With `expose: all`, MCPHub advertises all six automatically. With
+With `expose: all`, MCPHub advertises all nine automatically. With
 `expose: lazy`, Bob remains discoverable through contextual resolution; pin
-the tools you also want advertised directly without a catalog lookup:
+the tools you want advertised directly without a catalog lookup. `bob_context`
+is typically the first tool to call for repository orientation:
 
 ```sh
-mcphub pin bob__inspect bob__plan bob__check \
+mcphub pin bob__bob_context  # minimal: context-read only
+# Or pin additional tools:
+mcphub pin bob__bob_context bob__inspect bob__plan bob__check \
   bob__validate_manifest bob__recipe_describe bob__stats
 ```
 

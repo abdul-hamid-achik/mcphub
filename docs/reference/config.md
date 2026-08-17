@@ -272,12 +272,14 @@ agents:
     # disabled: true                 # skip during sync without deleting the definition
     # servers: [codemap, vecgrep]    # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__find] # gateway-only: only these server__tool names (omit = all; [] = none)
-    # pin: []                        # gateway-only + lazy: replace global pins; [] = meta-tools only
+    # pin: [bob__bob_context]        # gateway-only + lazy: replace global pins
     # tool_schema_budget: 8KB        # cap complete downstream definitions advertised directly
   local-agent:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
     mode: gateway
+    # pin: [bob__bob_context]        # typical lean profile: pin context-read tool
+    # tool_schema_budget: 8KB
 ```
 
 ### Fields
@@ -384,8 +386,8 @@ and flags any listed-but-disabled server.
 ### `pin` and `tool_schema_budget`: per-agent advertisement
 
 Call scope and provider-visible advertisement are separate controls. This is
-useful for small local models that should retain the complete lazy catalog
-without paying for every pinned schema on the first prompt:
+useful for small local models that should retain the complete lazy catalog with
+a lean directly-advertised surface:
 
 ```yaml
 agents:
@@ -393,19 +395,22 @@ agents:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
     mode: gateway
-    pin: []
+    pin:
+      - bob__bob_context
+    tool_schema_budget: 8KB
 ```
 
-With `expose: lazy`, this advertises only mcphub's eight management tools.
-Hidden tools allowed by `servers`/`tools` are still discoverable through
-`mcphub_resolve_tool` or `mcphub_search_tools` and callable through
-`mcphub_call_tool`.
+With `expose: lazy`, this advertises mcphub's eight management tools plus the
+pinned `bob__bob_context` tool, up to the 8KB budget. Hidden tools allowed by
+`servers`/`tools` are still discoverable through `mcphub_resolve_tool` or
+`mcphub_search_tools` and callable through `mcphub_call_tool`.
 
-Use a finite budget when a few direct pins are still helpful:
+Use `pin: []` with `tool_schema_budget: "0"` only when you want zero downstream
+definitions:
 
 ```yaml
-    pin: [bob__context, cortex__status]
-    tool_schema_budget: 8KB
+    pin: []
+    tool_schema_budget: "0"  # advertises only the eight management tools
 ```
 
 The budget measures the complete namespaced tool definitions, including input
