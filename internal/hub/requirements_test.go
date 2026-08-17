@@ -12,7 +12,7 @@ func TestRequirementsExamples(t *testing.T) {
 		// Underscore-separated examples from requirements
 		{"bob", "bob_context", "bob__context"},
 		{"hitspec", "hitspec_crawl", "hitspec__crawl"},
-		{"mcphub", "mcphub_tool_call", "mcphub__tool_call"},
+		{"mcphub", "mcphub_call_tool", "mcphub__call_tool"},
 		{"cortex", "cortex_open_task", "cortex__open_task"},
 		{"codemap", "codemap_context", "codemap__context"},
 		{"vecgrep", "vecgrep_search", "vecgrep__search"},
@@ -40,7 +40,7 @@ func TestRequirementsBackwardCompatibility(t *testing.T) {
 	}{
 		{"bob", "bob_context", "bob__bob_context"},
 		{"hitspec", "hitspec_crawl", "hitspec__hitspec_crawl"},
-		{"mcphub", "mcphub_tool_call", "mcphub__mcphub_tool_call"},
+		{"mcphub", "mcphub_call_tool", "mcphub__mcphub_call_tool"},
 		{"bob", "bob-context", "bob__bob-context"},
 	}
 
