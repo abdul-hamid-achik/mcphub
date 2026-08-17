@@ -169,12 +169,15 @@ func TestAdmitNamespacedAcceptsLegacyPin(t *testing.T) {
 	plan := PlanPublicNames("hitspec", []*mcp.Tool{{Name: "hitspec_fetch"}})
 	// Predicate only knows the old stutter form.
 	pred := func(ns string) bool { return ns == "hitspec__hitspec_fetch" }
-	public, ok := admitNamespaced(pred, "hitspec", "hitspec_fetch", plan)
+	public, ok, legacyAlias := admitNamespaced(pred, "hitspec", "hitspec_fetch", plan)
 	if !ok {
 		t.Fatal("legacy pin form should admit the tool")
 	}
 	if public != "hitspec__fetch" {
 		t.Fatalf("mounted public name = %q, want hitspec__fetch", public)
+	}
+	if legacyAlias != "hitspec__hitspec_fetch" {
+		t.Fatalf("legacyAlias = %q, want hitspec__hitspec_fetch", legacyAlias)
 	}
 }
 

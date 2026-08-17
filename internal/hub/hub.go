@@ -604,9 +604,17 @@ func (h *Hub) MatchingTools(pred func(namespaced string) bool) []ToolMount {
 			if tool == nil {
 				continue
 			}
-			namespaced, ok := admitNamespaced(pred, catalog.server, tool.Name, plan)
+			namespaced, ok, legacyAlias := admitNamespaced(pred, catalog.server, tool.Name, plan)
 			if !ok {
 				continue
+			}
+			if legacyAlias != "" {
+				h.log.Warn("legacy tool name used in pin or scope",
+					"legacy", legacyAlias,
+					"canonical", namespaced,
+					"server", catalog.server,
+					"tool", tool.Name,
+					"migration", "update config to use canonical name")
 			}
 			mounts = append(mounts, ToolMount{
 				Definition: namespacedTool(catalog.server, tool, plan),
@@ -635,9 +643,17 @@ func (h *Hub) MatchingToolsBudgeted(pred func(namespaced string) bool, budgetByt
 			if tool == nil {
 				continue
 			}
-			namespaced, ok := admitNamespaced(pred, catalog.server, tool.Name, plan)
+			namespaced, ok, legacyAlias := admitNamespaced(pred, catalog.server, tool.Name, plan)
 			if !ok {
 				continue
+			}
+			if legacyAlias != "" {
+				h.log.Warn("legacy tool name used in pin or scope",
+					"legacy", legacyAlias,
+					"canonical", namespaced,
+					"server", catalog.server,
+					"tool", tool.Name,
+					"migration", "update config to use canonical name")
 			}
 			definition := namespacedTool(catalog.server, tool, plan)
 			encoded, err := json.Marshal(definition)
@@ -709,18 +725,19 @@ func (h *Hub) toolCatalogSnapshot() []downstreamToolCatalog {
 
 // admitNamespaced reports whether pred admits a downstream tool under its
 // public name or any legacy alias, and returns the public namespaced form to
-// mount/advertise.
-func admitNamespaced(pred func(namespaced string) bool, server, downstreamTool string, plan map[string]string) (string, bool) {
+// mount/advertise. When a legacy alias matched, the third return value contains
+// that alias string for logging purposes.
+func admitNamespaced(pred func(namespaced string) bool, server, downstreamTool string, plan map[string]string) (string, bool, string) {
 	public := PublicNamespacedFor(server, downstreamTool, plan)
 	if pred == nil || pred(public) {
-		return public, true
+		return public, true, ""
 	}
 	for _, alias := range NamespacedAliases(server, downstreamTool) {
 		if alias != public && pred(alias) {
-			return public, true
+			return public, true, alias
 		}
 	}
-	return public, false
+	return public, false, ""
 }
 
 // namespacedTool copies a downstream tool definition, changing only the
