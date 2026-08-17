@@ -60,7 +60,7 @@ agents:
     path: ~/.config/local-agent/config.yaml
     mode: gateway
     pin:
-      - bob__bob_context
+      - bob__context
     tool_schema_budget: "8KB"
 ```
 
@@ -72,6 +72,13 @@ agent can still use `mcphub_call_tool` for every tool permitted by its
 budget. Use `pin: []` and `tool_schema_budget: "0"` only when you want the
 agent to load zero downstream definitions — that combination advertises only the
 eight management tools.
+
+::: tip Legacy tool names
+When a downstream server self-prefixes its tools (Bob reports `bob_context`,
+Hitspec reports `hitspec_fetch`), the gateway strips that redundant prefix for
+the advertised name (`bob__context`, `hitspec__fetch`). The legacy stutter form
+(`bob__bob_context`) remains accepted as an alias for one release.
+:::
 
 Run `mcphub sync` to preview the generated harness entry and `mcphub sync
 --write` to apply it. Restart the harness afterward so it launches
