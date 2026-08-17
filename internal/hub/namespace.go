@@ -13,6 +13,8 @@ import (
 // prefix keeps the public form clean (hitspec__search_web) instead of
 // stuttering (hitspec__hitspec_search_web).
 //
+// The strip applies to both underscore and hyphen separators: if the tool name
+// is `{server}_{rest}` or `{server}-{rest}`, the public name becomes `{rest}`.
 // The strip only applies when the remainder is non-empty. Collision handling
 // for a full server catalog lives in PlanPublicNames — this helper is the
 // pure string rule used when no catalog is available.
@@ -20,7 +22,15 @@ func PublicToolName(server, downstreamTool string) string {
 	if server == "" || downstreamTool == "" {
 		return downstreamTool
 	}
+	// Try underscore separator first
 	prefix := server + "_"
+	if strings.HasPrefix(downstreamTool, prefix) {
+		if rest := downstreamTool[len(prefix):]; rest != "" {
+			return rest
+		}
+	}
+	// Try hyphen separator
+	prefix = server + "-"
 	if strings.HasPrefix(downstreamTool, prefix) {
 		if rest := downstreamTool[len(prefix):]; rest != "" {
 			return rest
@@ -65,8 +75,10 @@ func NamespacedAliases(server, tool string) []string {
 	add(Namespaced(server, tool))
 	add(LegacyNamespaced(server, tool))
 	// Bare public fragment + reconstructed self-prefix (legacy stutter).
-	if !strings.HasPrefix(tool, server+"_") {
+	// Check both underscore and hyphen separators.
+	if !strings.HasPrefix(tool, server+"_") && !strings.HasPrefix(tool, server+"-") {
 		add(LegacyNamespaced(server, server+"_"+tool))
+		add(LegacyNamespaced(server, server+"-"+tool))
 	}
 	// Already self-prefixed: also accept the stripped public form explicitly
 	// (Namespaced already added it when strip applies).

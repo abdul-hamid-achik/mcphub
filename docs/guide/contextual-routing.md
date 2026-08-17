@@ -131,15 +131,15 @@ harnesses namespace tools with the configured MCP server name. `local-agent`
 does this, so a server registered as `mcphub` exposes the model-visible name:
 
 ```text
-mcphub__mcphub_resolve_tool
+mcphub__resolve_tool
 ```
 
 The same rule gives:
 
-- `mcphub__mcphub_search_tools`;
-- `mcphub__mcphub_describe_tool`;
-- `mcphub__mcphub_call_tool`; and
-- `mcphub__mcphub_get_result`.
+- `mcphub__search_tools`;
+- `mcphub__describe_tool`;
+- `mcphub__call_tool`; and
+- `mcphub__get_result`.
 
 Host integrations should resolve the exposed name from the registry instead of
 assuming the prefix. `local-agent`, for example, provides a
