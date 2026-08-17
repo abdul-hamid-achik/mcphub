@@ -26,7 +26,7 @@ A pin can be a whole server (pins all its tools), a wildcard, or a single tool:
 
   mcphub pin codemap vecgrep              # whole servers
   mcphub pin codemap__*                   # same, explicit wildcard
-  mcphub pin codemap__codemap_semantic    # one tool
+  mcphub pin codemap__semantic            # one tool
   mcphub pin --top 8                      # auto-pin your 8 most-called tools (from stats)
   mcphub pin --top 8 --since 7d           # same, last 7 days only
   mcphub pin                              # list current pins

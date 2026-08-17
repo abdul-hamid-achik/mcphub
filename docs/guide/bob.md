@@ -49,7 +49,7 @@ Bob exposes nine read-only tools. MCPHub prefixes each one with `bob__`:
 
 | MCPHub tool | Purpose |
 | --- | --- |
-| `bob__bob_context` | Read Bob's compact repository context and manifest summary (call this first). |
+| `bob__context` | Read Bob's compact repository context and manifest summary (call this first). |
 | `bob__inspect` | Inspect Bob-managed state and offline specialist availability. |
 | `bob__plan` | Return a bounded repository plan and deterministic digest. |
 | `bob__check` | Check convergence, conflicts, and lock drift. |
@@ -65,11 +65,18 @@ the tools you want advertised directly without a catalog lookup. `bob_context`
 is typically the first tool to call for repository orientation:
 
 ```sh
-mcphub pin bob__bob_context  # minimal: context-read only
+mcphub pin bob__context  # minimal: context-read only
 # Or pin additional tools:
-mcphub pin bob__bob_context bob__inspect bob__plan bob__check \
+mcphub pin bob__context bob__inspect bob__plan bob__check \
   bob__validate_manifest bob__recipe_describe bob__stats
 ```
+
+::: tip Legacy tool names
+Bob's tools self-prefix with `bob_`. The gateway strips that redundant prefix,
+so `bob_context` advertises as `bob__context`. The legacy stutter form
+`bob__bob_context` remains accepted as an alias for one release to ease
+migration of existing pins.
+:::
 
 MCPHub changes only the protocol name and prefixes the description when it
 mounts a tool. Bob's title, input and output schemas, annotations, icons, and

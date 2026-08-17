@@ -237,13 +237,13 @@ agents:
     # Per-agent routing (optional) — restrict what this agent can reach:
     # servers: [codemap, vecgrep]   # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__find]  # gateway-only: only these server__tool names (omit = all; [] = none)
-    # pin: [bob__bob_context]       # gateway-only + lazy: override global pins
+    # pin: [bob__context]           # gateway-only + lazy: override global pins
     # tool_schema_budget: 8KB       # optional cap for directly advertised downstream definitions
   local-agent:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
     mode: gateway
-    # pin: [bob__bob_context]       # typical lean profile: pin context-read tool
+    # pin: [bob__context]           # typical lean profile: pin context-read tool
     # tool_schema_budget: 8KB
 ```
 
@@ -286,7 +286,7 @@ explicit `pin` overrides them; the in-scope catalog remains discoverable and
 callable through the eight lazy meta-tools. `tool_schema_budget: 8KB` admits
 complete definitions deterministically up to that serialized-byte budget in
 either exposure mode; `0` means meta-tools only. A typical lean profile for
-small local models is `pin: [bob__bob_context]` with `tool_schema_budget: 8KB`
+small local models is `pin: [bob__context]` with `tool_schema_budget: 8KB`
 to pin the context-read tool while suppressing other global pins. These fields
 are gateway-only and cause `sync` to launch `mcphub mcp serve --agent <name>`
 even without a `servers`/`tools` restriction.

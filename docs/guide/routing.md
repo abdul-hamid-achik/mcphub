@@ -86,7 +86,7 @@ agents:
     mode: gateway
     servers: [bob, cortex, vecgrep]
     pin:
-      - bob__bob_context     # in expose: lazy, pin the context-read tool
+      - bob__context     # in expose: lazy, pin the context-read tool
     tool_schema_budget: 8KB
 ```
 

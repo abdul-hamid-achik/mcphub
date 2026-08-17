@@ -116,7 +116,7 @@ agents:
 #     path: ~/.claude.json
 #     mode: gateway
 #     servers: [codemap, vecgrep]
-#     tools: [codemap__codemap_find, vecgrep__vecgrep_search]
+#     tools: [codemap__find, vecgrep__search]
 
 # Additional agent harnesses are supported but not seeded by default — add them
 # when you install the tool:

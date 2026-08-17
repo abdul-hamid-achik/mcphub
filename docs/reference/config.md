@@ -272,13 +272,13 @@ agents:
     # disabled: true                 # skip during sync without deleting the definition
     # servers: [codemap, vecgrep]    # only these enabled servers (omit = all; [] = none)
     # tools: [codemap__find] # gateway-only: only these server__tool names (omit = all; [] = none)
-    # pin: [bob__bob_context]        # gateway-only + lazy: replace global pins
+    # pin: [bob__context]            # gateway-only + lazy: replace global pins
     # tool_schema_budget: 8KB        # cap complete downstream definitions advertised directly
   local-agent:
     type: local-agent
     path: ~/.config/local-agent/config.yaml
     mode: gateway
-    # pin: [bob__bob_context]        # typical lean profile: pin context-read tool
+    # pin: [bob__context]            # typical lean profile: pin context-read tool
     # tool_schema_budget: 8KB
 ```
 
@@ -396,12 +396,12 @@ agents:
     path: ~/.config/local-agent/config.yaml
     mode: gateway
     pin:
-      - bob__bob_context
+      - bob__context
     tool_schema_budget: 8KB
 ```
 
 With `expose: lazy`, this advertises mcphub's eight management tools plus the
-pinned `bob__bob_context` tool, up to the 8KB budget. Hidden tools allowed by
+pinned `bob__context` tool, up to the 8KB budget. Hidden tools allowed by
 `servers`/`tools` are still discoverable through `mcphub_resolve_tool` or
 `mcphub_search_tools` and callable through `mcphub_call_tool`.
 
