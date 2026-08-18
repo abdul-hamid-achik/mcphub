@@ -52,7 +52,7 @@ The receipt is small by construction — it's built to fit inside the same
   "originalBytes": 184320,
   "budgetBytes": 32768,
   "preview": "{\"matches\":[{\"file\":\"internal/hub/hub.go\"…",
-  "nextAction": "Call mcphub_get_result with this callId and cursor 0, then continue with each nextCursor until done is true."
+  "nextAction": "Call get_result with this callId and cursor 0, then continue with each nextCursor until done is true."
 }
 ```
 

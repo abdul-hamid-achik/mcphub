@@ -85,7 +85,7 @@ Package boundaries are part of the contract — keep them clean.
 | `internal/store/db` | sqlc-**generated** typed queries (`db.go`, `models.go`, `queries.sql.go`). Committed; do not hand-edit — regenerate (see below). |
 | `internal/ui/studio` | The `mcphub studio` TUI on `charm.land/bubbletea/v2` + `lipgloss/v2`, with `charmbracelet/harmonica` spring-animated stat bars. Three tabs (Servers/Agents/Stats), space-toggle, and a `s` → preview → `a` apply sync panel (via `internal/syncer`). |
 | `internal/version` | Build metadata (`Version`/`Commit`/`Date`) stamped via `-ldflags`. |
-| `docs/` | **The public website + documentation site at <https://mcphubcli.dev>** (VitePress: landing page, `guide/`, `reference/`, custom theme in `.vitepress/theme/`). Served by `task docs`, built by `task docs-build`. Vercel auto-deploys it on every push to `main` that touches `docs/` (other pushes skip the build via `docs/vercel.json` `ignoreCommand`). Treat it as a product surface: do **not** dump scratch notes, reports, or arbitrary Markdown here — every page ships to the live site. |
+| `docs/` | **The public website + documentation site at <https://mcphubcli.dev>** (VitePress: landing page, `guide/`, `reference/`, custom theme in `.vitepress/theme/`). Served by `task docs`, built by `task docs-build`. Vercel auto-deploys **`main` only**, and only when `docs/`, lockfiles, or `docs/vercel.json` change (`git.deploymentEnabled` + `ignoreCommand`). Feature branches do not create Preview deployments. Do not `vercel promote` the site; `main` is the docs release. CLI/binary release is a separate tag pipeline. Treat `docs/` as a product surface: do **not** dump scratch notes, reports, or arbitrary Markdown here — every page ships to the live site. |
 | `specs/` | glyphrun behavioral specs (CLI + live-TUI); run by `task specs`. |
 
 ### Data flow in one paragraph
@@ -94,11 +94,11 @@ Package boundaries are part of the contract — keep them clean.
 connects enabled downstreams, registers the eight management tools, mounts allowed downstream
 tools, and serves stdio. Every successful downstream result is finalized once in `hub.Call`:
 small/verbatim/unlimited results pass through unchanged; oversized results are persisted before a
-compact recovery receipt is returned. `mcphub_get_result` scope-checks the stored server/tool and
+compact recovery receipt is returned. `get_result` scope-checks the stored server/tool and
 pages the exact serialized result without loading the whole payload. Long-running calls take the
-detached path instead: `mcphub_call_tool {detach: true}` starts the downstream call in the
+detached path instead: `call_tool {detach: true}` starts the downstream call in the
 background under a `call_timeout`-clamped deadline and returns a `callId` at once; the hub tracks
-it in a bounded in-memory registry (`internal/hub/async.go`) and `mcphub_poll_result` reports
+it in a bounded in-memory registry (`internal/hub/async.go`) and `poll_result` reports
 pending/failed or hands back the finalized result (oversized ones as spool receipts, as above).
 The registry is memory-only — a gateway restart makes old detached callIds report `unknown`.
 

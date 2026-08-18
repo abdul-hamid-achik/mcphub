@@ -1104,7 +1104,7 @@ func (h *Hub) finalizeCall(ctx context.Context, server, tool, namespaced string,
 		Namespaced:    namespaced,
 		OriginalBytes: resultBytes,
 		BudgetBytes:   budget,
-		NextAction:    "Call mcphub_get_result with this callId and cursor 0, then continue with each nextCursor until done is true.",
+		NextAction:    "Call get_result with this callId and cursor 0, then continue with each nextCursor until done is true.",
 	}
 	out := receiptResult(receipt, res.IsError)
 
@@ -1140,7 +1140,7 @@ func (h *Hub) finalizeCall(ctx context.Context, server, tool, namespaced string,
 
 func receiptResult(receipt resultReceipt, isError bool) *mcp.CallToolResult {
 	text := fmt.Sprintf(
-		"Result stored: %d bytes exceeded the %d-byte response budget. Retrieve it with mcphub_get_result using callId %s and cursor 0.",
+		"Result stored: %d bytes exceeded the %d-byte response budget. Retrieve it with get_result using callId %s and cursor 0.",
 		receipt.OriginalBytes, receipt.BudgetBytes, receipt.CallID,
 	)
 	return &mcp.CallToolResult{

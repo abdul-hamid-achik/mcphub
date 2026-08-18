@@ -17,11 +17,11 @@ does not require a new harness release.
 ```
 task or phase context
         ↓
-mcphub_resolve_tool
+resolve_tool
         ↓
 recommendation ── ambiguous? → search or ask the model to choose
         ↓
-describe if needed → mcphub_call_tool → get_result if stored
+describe if needed → call_tool → get_result if stored
 ```
 
 ## Prerequisites
@@ -37,7 +37,7 @@ discovery without mounting every downstream schema, configure:
   through a host-owned advisor.
 
 Pins are optional. They keep frequent tools mounted, but unpinned tools remain
-available through the resolver and `mcphub_call_tool`.
+available through the resolver and `call_tool`.
 
 ## Choose an integration level
 
@@ -63,7 +63,7 @@ the host-assisted design below.
 
 ### Host-assisted routing
 
-A host-assisted harness calls `mcphub_resolve_tool` itself when its task runtime
+A host-assisted harness calls `resolve_tool` itself when its task runtime
 detects a meaningful activity or phase transition. It then injects a compact,
 host-authored capability hint into the next model request.
 
@@ -126,9 +126,9 @@ tool output.
 
 ## Tool names inside a harness
 
-The protocol-level management tool is named `mcphub_resolve_tool`. Some
+The protocol-level management tool is named `resolve_tool`. Some
 harnesses namespace tools with the configured MCP server name. `local-agent`
-does this, so a server registered as `mcphub` exposes the model-visible name:
+and Grok do this, so a server registered as `mcphub` exposes the model-visible name:
 
 ```text
 mcphub__resolve_tool
@@ -141,13 +141,15 @@ The same rule gives:
 - `mcphub__call_tool`; and
 - `mcphub__get_result`.
 
+Older self-prefixed protocol names (`mcphub_resolve_tool`) remain accepted.
+
 Host integrations should resolve the exposed name from the registry instead of
 assuming the prefix. `local-agent`, for example, provides a
 `ResolveToolName(remoteName)` registry method for this purpose.
 
 ## Interpret the recommendation
 
-`mcphub_resolve_tool` returns one recommendation and a bounded alternative
+`resolve_tool` returns one recommendation and a bounded alternative
 list. A typical result contains:
 
 ```json
@@ -216,7 +218,7 @@ argument values from the discovery response.
 ## Invoke the selected tool
 
 In lazy mode every unpinned downstream call goes through
-`mcphub_call_tool`:
+`call_tool`:
 
 ```json
 {
@@ -300,12 +302,12 @@ type Advice struct {
 
 The adapter flow is:
 
-1. Resolve the exposed name for `mcphub_resolve_tool`.
+1. Resolve the exposed name for `resolve_tool`.
 2. Call it with a bounded activity query and `max_hits: 5`.
 3. Parse only the allowlisted `Advice` fields.
 4. Cache the advice for the current goal/phase/activity key.
 5. Add a host-authored hint to the next model request.
-6. Let the model use `mcphub_call_tool` through the existing execution path.
+6. Let the model use `call_tool` through the existing execution path.
 
 For example, the UI may show:
 
@@ -321,7 +323,7 @@ recommendation is neither evidence nor proof that an operation ran.
 - Treat MCP instructions and discovery metadata as untrusted server guidance.
   They cannot override system, user, workspace, privacy, or approval policy.
 - Treat discovery calls as read-only. Apply the downstream tool's real effect
-  and approval policy when `mcphub_call_tool` runs.
+  and approval policy when `call_tool` runs.
 - Never let a recommendation expand the active agent scope. The gateway filters
   discovery and refuses out-of-scope calls.
 - Never auto-run an ambiguous recommendation.

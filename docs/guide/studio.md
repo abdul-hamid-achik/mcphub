@@ -88,7 +88,7 @@ gateway exposure and receive their enabled, in-scope servers directly.
 
 Move the cursor onto a server to preview its natural-language `use_when` hints.
 Studio keeps this to two terminal lines and shows `+N more` when needed; the
-full list remains in `mcphub.yaml` and `mcphub_list_servers`. Search and resolve
+full list remains in `mcphub.yaml` and `list_servers`. Search and resolve
 index every hint alongside live tool metadata, so make them describe task
 signals an agent would actually have, such as “capture a public webpage as
 Markdown for research” or “inspect repository convergence before feature

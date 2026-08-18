@@ -79,12 +79,12 @@ agents:
 | Key | Type | Required | Description |
 | --- | --- | --- | --- |
 | `version` | int | yes | Config schema version. Currently `1`. |
-| `expose` | `all` \| `lazy` | no | Gateway tool exposure. `all` (default) mounts every downstream tool as `server__tool`; `lazy` advertises only mcphub's eight meta-tools and serves the rest on demand via `mcphub_call_tool`. See [Lazy mode](/guide/lazy-mode). |
+| `expose` | `all` \| `lazy` | no | Gateway tool exposure. `all` (default) mounts every downstream tool as `server__tool`; `lazy` advertises only mcphub's eight meta-tools and serves the rest on demand via `call_tool`. See [Lazy mode](/guide/lazy-mode). |
 | `pin` | list of strings | no | Tools that stay mounted even in `lazy` mode, so agents call them directly instead of discovering them first. Each entry is a bare server (`codemap` — all its tools), a whole-server wildcard (`codemap__*`), or one tool (`codemap__semantic`) — those are the only shapes; any other wildcard or a trailing `__` fails validation, as does a pin naming an unknown server. Legacy stutter pins (`codemap__codemap_semantic`) still match. Manage with `mcphub pin` / `mcphub unpin` (`--top N` auto-pins your N most-called tools from `mcphub stats`), or `p` in Studio. |
 | `response_budget` | byte-size string | no | Complete serialized MCP result budget. Default `32KB`; `"0"` is unlimited. A non-zero value must be at least `512B` so a recovery receipt can fit. Oversized results are stored locally for 24 hours and recovered with `mcphub_get_result`. |
 | `verbatim` | bool | no | Return every downstream result unchanged and disable result spooling entirely. Default `false`. |
 | `connect_timeout` | duration string | no | Per-downstream connect timeout, e.g. `30s`, `60s`, `2m`. Default `30s`. |
-| `call_timeout` | duration string | no | Gateway-side call bound, e.g. `10m`, `30m`, `1h`. Default `30m`. Clamps a caller's `timeout_ms` and bounds how long a detached (`detach: true`) call may run in the background. It is **not** a blanket ceiling: a synchronous `mcphub_call_tool` without `timeout_ms`, and any directly-mounted (`expose: all`) tool call, is bounded only by the client's own request deadline. |
+| `call_timeout` | duration string | no | Gateway-side call bound, e.g. `10m`, `30m`, `1h`. Default `30m`. Clamps a caller's `timeout_ms` and bounds how long a detached (`detach: true`) call may run in the background. It is **not** a blanket ceiling: a synchronous `call_tool` without `timeout_ms`, and any directly-mounted (`expose: all`) tool call, is bounded only by the client's own request deadline. |
 | `listen` | `host:port` | no | Shared streamable-HTTP bind, e.g. `127.0.0.1:9820`. When set, `mcphub sync` writes this URL into gateway-mode agents and `mcphub up` (or `mcp serve --listen`) serves one daemon instead of a stdio process per agent. |
 | `servers` | map | yes | The downstream MCP servers mcphub manages. |
 | `groups` | map | no | Named bundles of server names. |
@@ -147,9 +147,9 @@ servers:
 | `vault_only` | list of strings | stdio | Inject only these secret keys (least-privilege allowlist). |
 | `vault_prefix` | string | stdio | Inject only secret keys with this prefix. |
 | `enabled` | bool | both | Whether the gateway connects to it and `sync` (direct mode) writes it. |
-| `description` | string | both | Human-readable note shown in `list`, Studio, and `mcphub_list_servers`. |
+| `description` | string | both | Human-readable note shown in `list`, Studio, and `list_servers`. |
 | `tags` | list of strings | both | Free-form labels. |
-| `use_when` | list of strings | both | Natural-language situations in which this server is useful. `mcphub_resolve_tool` and `mcphub_search_tools` index these hints so lazy-mode agents can find unpinned tools even when their names are opaque. Up to 8 non-empty, single-line UTF-8 hints, 256 bytes each. |
+| `use_when` | list of strings | both | Natural-language situations in which this server is useful. `resolve_tool` and `search_tools` index these hints so lazy-mode agents can find unpinned tools even when their names are opaque. Up to 8 non-empty, single-line UTF-8 hints, 256 bytes each. |
 | `tool_use_when` | map of tool name to list of strings | gateway | Higher-precision situations for individual tools. These receive more routing weight than server-wide hints. Up to 128 tool entries and 8 bounded hints per tool. |
 
 ### Rules (validated on load)
@@ -370,8 +370,8 @@ Both fields distinguish **omitted** from **empty**, which matters:
 
 In **gateway** mode, a scoped agent's harness entry is launched as
 `mcphub mcp serve --agent <name>`, so the spawned gateway advertises only that
-subset and refuses out-of-scope calls through `mcphub_call_tool`,
-`mcphub_describe_tool`, `mcphub_search_tools`, and `mcphub_list_servers`. In
+subset and refuses out-of-scope calls through `call_tool`,
+`describe_tool`, `search_tools`, and `list_servers`. In
 **direct** mode only the listed servers are written into the agent's config
 (`tools` doesn't apply there). A listed server that is disabled, or missing
 from the enabled set, is dropped silently — routing selects within the
@@ -402,8 +402,8 @@ agents:
 
 With `expose: lazy`, this advertises mcphub's eight management tools plus the
 pinned `bob__context` tool, up to the 8KB budget. Hidden tools allowed by
-`servers`/`tools` are still discoverable through `mcphub_resolve_tool` or
-`mcphub_search_tools` and callable through `mcphub_call_tool`.
+`servers`/`tools` are still discoverable through `resolve_tool` or
+`search_tools` and callable through `call_tool`.
 
 Use `pin: []` with `tool_schema_budget: "0"` only when you want zero downstream
 definitions:

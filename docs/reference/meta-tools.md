@@ -18,21 +18,30 @@ The meta-tools are registered in **both** exposure modes:
   for introspection.
 - **`expose: lazy`** — the meta-tools (plus any [pins](/guide/lazy-mode#pinning-keep-hot-tools-mounted))
   are the *entire* advertised surface. Agents discover downstream tools on
-  demand and invoke everything through `mcphub_call_tool`. See
+  demand and invoke everything through `call_tool`. See
   [Lazy mode](/guide/lazy-mode) for the trade-offs.
+
+## Names
+
+The advertised protocol names are `list_servers`, `search_tools`,
+`describe_tool`, `resolve_tool`, `call_tool`, `get_result`, `poll_result`,
+and `stats`. Hosts that prefix the configured server name (Grok, local-agent)
+expose them as `mcphub__list_servers`. The older self-prefixed names
+(`mcphub_list_servers`, …) and the stutter form (`mcphub__mcphub_list_servers`)
+remain accepted as `tools/call` aliases.
 
 ## At a glance
 
 | Tool | What it does | Call it when |
 | --- | --- | --- |
-| [`mcphub_list_servers`](#mcphub-list-servers) | List downstream servers with enabled/connected state and tool counts. | You want to know what is behind the gateway. |
-| [`mcphub_search_tools`](#mcphub-search-tools) | Ranked natural-language search across tool + server metadata. | You want to browse several capability candidates. |
-| [`mcphub_describe_tool`](#mcphub-describe-tool) | One tool's description and full JSON input schema. | You know the tool but not its arguments. |
-| [`mcphub_resolve_tool`](#mcphub-resolve-tool) | Context router with match evidence, required fields, and an argument template. | A task starts or changes phase and you want the best hidden tool. |
-| [`mcphub_call_tool`](#mcphub-call-tool) | Invoke a downstream tool by name through the gateway. | Always, in lazy mode — this is how everything runs. |
-| [`mcphub_get_result`](#mcphub-get-result) | Page through an oversized result the gateway stored locally. | A call returned a `callId` receipt instead of the result. |
-| [`mcphub_poll_result`](#mcphub-poll-result) | Check a detached (`detach: true`) call and collect its result. | You started a long-running call in the background. |
-| [`mcphub_stats`](#mcphub-stats) | Local usage intelligence: calls, errors, estimated token cost. | You want to know what this session (or any) has been costing. |
+| [`list_servers`](#mcphub-list-servers) | List downstream servers with enabled/connected state and tool counts. | You want to know what is behind the gateway. |
+| [`search_tools`](#mcphub-search-tools) | Ranked natural-language search across tool + server metadata. | You want to browse several capability candidates. |
+| [`describe_tool`](#mcphub-describe-tool) | One tool's description and full JSON input schema. | You know the tool but not its arguments. |
+| [`resolve_tool`](#mcphub-resolve-tool) | Context router with match evidence, required fields, and an argument template. | A task starts or changes phase and you want the best hidden tool. |
+| [`call_tool`](#mcphub-call-tool) | Invoke a downstream tool by name through the gateway. | Always, in lazy mode — this is how everything runs. |
+| [`get_result`](#mcphub-get-result) | Page through an oversized result the gateway stored locally. | A call returned a `callId` receipt instead of the result. |
+| [`poll_result`](#mcphub-poll-result) | Check a detached (`detach: true`) call and collect its result. | You started a long-running call in the background. |
+| [`stats`](#mcphub-stats) | Local usage intelligence: calls, errors, estimated token cost. | You want to know what this session (or any) has been costing. |
 
 ## The lazy-mode flow
 
@@ -40,13 +49,13 @@ In lazy mode an agent works the catalog in a short loop —
 **resolve/search → describe if needed → call → get_result**:
 
 ```
-mcphub_resolve_tool "find code by meaning"   # 1. route: → vecgrep__search + template
-mcphub_describe_tool vecgrep__search         # 2. optional: inspect the complete schema
-mcphub_call_tool {server, tool, arguments}   # 3. invoke through the gateway
-mcphub_get_result {callId, cursor}           # 4. only if the result was oversized
+resolve_tool "find code by meaning"   # 1. route: → vecgrep__search + template
+describe_tool vecgrep__search         # 2. optional: inspect the complete schema
+call_tool {server, tool, arguments}   # 3. invoke through the gateway
+get_result {callId, cursor}           # 4. only if the result was oversized
 ```
 
-`mcphub_resolve_tool` collapses steps 1 and 2 into one call when you want a
+`resolve_tool` collapses steps 1 and 2 into one call when you want a
 direct recommendation instead of a candidate list. Steps 1–2 are also skippable
 for [pinned](/guide/lazy-mode#pinning-keep-hot-tools-mounted) tools, which stay
 mounted under their `server__tool` names even in lazy mode, and step 4 only
@@ -76,7 +85,7 @@ Tokenizes a natural-language query and ranks the aggregated catalog across tool
 names, titles, descriptions, bounded top-level input field names, and server
 names, descriptions, tags, and `use_when` hints.
 It returns the matching `server__tool` names with routing evidence so you can
-call them through `mcphub_call_tool` without loading every definition. The
+call them through `call_tool` without loading every definition. The
 optional `max_hits` defaults to 20 and is capped at 100; `count`, `returned`,
 and `truncated` make the count bound explicit. Queries are capped at 2,048
 bytes, and compact match metadata is also capped by a 12 KiB match-array
@@ -89,7 +98,7 @@ front door to the entire catalog.
 ## mcphub_describe_tool
 
 Returns a single downstream tool's description and its **full JSON input
-schema** — enough to construct a valid `mcphub_call_tool` request. It accepts
+schema** — enough to construct a valid `call_tool` request. It accepts
 the server and tool separately or the combined `server__tool` form.
 
 Many downstream servers self-prefix their tool names (hitspec's search tool is
@@ -101,7 +110,7 @@ fragments (`{server: "hitspec", tool: "search_web"}`) continue to resolve.
 If stripping would collide with another tool on the same server, the full
 downstream name is kept so a real tool can never be shadowed. This applies to
 mounted tools, search/resolve hits, `mcphub_describe_tool`, and
-`mcphub_call_tool` (sync and detached). Responses report the clean public
+`call_tool` (sync and detached). Responses report the clean public
 `namespaced` form (plus `downstream` on describe/detach receipts).
 
 **When to call it:** after a search hit (or when you already know the tool
@@ -176,7 +185,7 @@ mounted tools by name instead.
 ::: warning Scoped agents
 If the gateway was launched with [per-agent routing](/guide/routing)
 (`mcphub mcp serve --agent <name>` with `servers:`/`tools:` lists in
-`mcphub.yaml`), `mcphub_call_tool` refuses out-of-scope calls. Discovery and
+`mcphub.yaml`), `call_tool` refuses out-of-scope calls. Discovery and
 retrieval respect the same scope.
 :::
 
@@ -188,7 +197,7 @@ previously stored. Pass the `callId` from a retrieval receipt and a byte
 `done` is `true`. Paging reads a byte range straight out of SQLite; a page is
 sized to fit your `response_budget` (capped at 8KB).
 
-**When to call it:** only after `mcphub_call_tool` (or a mounted tool call)
+**When to call it:** only after `call_tool` (or a mounted tool call)
 came back with a `"status": "stored"` receipt — and only if you actually need
 the rest of the payload. The receipt's preview is often enough.
 
@@ -214,7 +223,7 @@ agent's scope before returning any bytes. Full receipt and page shapes, opt-outs
 
 ## mcphub_poll_result
 
-Checks on a detached call started with `mcphub_call_tool {detach: true}` and,
+Checks on a detached call started with `call_tool {detach: true}` and,
 once the downstream call has finished, hands back its result. Pass the
 `callId` from the `accepted` receipt:
 
@@ -232,7 +241,7 @@ survive a gateway restart. A `callId` that is expired, evicted, never issued,
 or from before a restart reports `status: "unknown"`, and the call must be
 re-run.
 
-**When to call it:** only after a detached `mcphub_call_tool` returned an
+**When to call it:** only after a detached `call_tool` returned an
 `accepted` receipt. For `callId`s that came from a `"status": "stored"`
 receipt, use `mcphub_get_result` instead.
 
@@ -250,7 +259,7 @@ what to pin or disable. For human consumption, the CLI's `mcphub stats`
 
 ::: tip Meta-tools are recorded too
 Every proxied downstream call lands in the intelligence store regardless of
-how it was invoked — mounted `server__tool` name or `mcphub_call_tool` — so
+how it was invoked — mounted `server__tool` name or `call_tool` — so
 `mcphub pin --top N` and `mcphub stats` see your real usage either way.
 :::
 

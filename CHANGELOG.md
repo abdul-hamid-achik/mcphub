@@ -6,6 +6,26 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-18
+
+### Changed
+
+- **Management tools no longer self-prefix.** The eight gateway meta-tools
+  advertise as `list_servers`, `search_tools`, `describe_tool`, `resolve_tool`,
+  `call_tool`, `get_result`, `poll_result`, and `stats`, each with a human
+  `title`. Hosts that namespace by the configured server name (Grok,
+  local-agent) now expose `mcphub__list_servers` — and paint "Mcphub List
+  Servers" — instead of `mcphub__mcphub_list_servers` / "Mcphub Mcphub List
+  Servers". Gateway instructions, receipts, and the `howto` resource use the
+  clean names.
+
+### Fixed
+
+- **Legacy `mcphub_*` names still work.** `tools/call` accepts
+  `mcphub_list_servers`, the host-namespaced `mcphub__list_servers`, and the
+  old stutter `mcphub__mcphub_list_servers` as aliases for the advertised
+  public names.
+
 ## [0.23.1] - 2026-08-14
 
 ### Fixed
@@ -608,7 +628,10 @@ First release. `brew install abdul-hamid-achik/tap/mcphub`.
   `config.mts` and set the package type. `npm run docs:build` (and `task
   docs-build`) renders all pages and validates every internal link. The site is
   also deploy-ready (`docs/vercel.json`, VitePress framework preset).
-[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.23.1...v0.24.0
+[0.23.1]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.23.0...v0.23.1
+[0.23.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.22.0...v0.23.0
 [0.18.1]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/abdul-hamid-achik/mcphub/compare/v0.16.3...v0.17.0

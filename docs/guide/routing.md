@@ -114,10 +114,10 @@ gateway starts, it looks up the named agent's `servers`/`tools` allowlists and:
   `server__tool` names are mounted; a schema budget can narrow that visible
   subset further without removing lazy call authority. Per-agent pin overrides
   apply only in `expose: lazy`.
-- **Scopes the meta-tools too.** In `expose: lazy`, `mcphub_list_servers`,
-  `mcphub_search_tools`, `mcphub_describe_tool`, and `mcphub_resolve_tool` only
+- **Scopes the meta-tools too.** In `expose: lazy`, `list_servers`,
+  `search_tools`, `describe_tool`, and `resolve_tool` only
   surface in-scope servers and tools.
-- **Refuses out-of-scope calls.** `mcphub_call_tool` on a tool outside the
+- **Refuses out-of-scope calls.** `call_tool` on a tool outside the
   allowlists fails with `tool server__x is out of scope for this agent`, and
   `mcphub_get_result` scope-checks the stored server/tool before paging a
   spooled result.

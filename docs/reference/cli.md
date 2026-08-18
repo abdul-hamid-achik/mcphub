@@ -602,17 +602,18 @@ is unscoped (no per-agent `servers`/`tools` filter). Use stdio `--agent` when
 you need that projection.
 
 The gateway also exposes eight management meta-tools to connected agents:
-`mcphub_list_servers`, `mcphub_search_tools`, `mcphub_describe_tool`,
-`mcphub_resolve_tool`, `mcphub_call_tool`, `mcphub_get_result`,
-`mcphub_poll_result`, and
-`mcphub_stats`. With `expose: lazy` in `mcphub.yaml`, those eight plus any
-[pinned](#pin) tools are the only tools advertised. `mcphub_get_result` accepts
+`list_servers`, `search_tools`, `describe_tool`,
+`resolve_tool`, `call_tool`, `get_result`,
+`poll_result`, and
+`stats`. Hosts that prefix the configured server name expose them as
+`mcphub__list_servers`. With `expose: lazy` in `mcphub.yaml`, those eight plus any
+[pinned](#pin) tools are the only tools advertised. `get_result` accepts
 `{callId, cursor}` and returns a base64 page; continue with `nextCursor` until
 `done` is true. See the [meta-tools reference](/reference/meta-tools) for each
 tool's inputs and outputs. In lazy mode the initialization instructions also
 carry a compact, scope-aware summary that prefers `use_when`, then falls back
 to a server description or tags; exact tool scopes list only their allowed
-tool names. `mcphub_resolve_tool` uses the catalog metadata to route a full
+tool names. `resolve_tool` uses the catalog metadata to route a full
 task description to an unpinned tool.
 
 ---

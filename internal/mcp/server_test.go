@@ -490,13 +490,13 @@ func TestGetResultRegistrationAndWireReconstruction(t *testing.T) {
 	}
 	var registered *sdk.Tool
 	for _, tool := range tools.Tools {
-		if tool.Name == "mcphub_get_result" {
+		if tool.Name == toolGetResult {
 			registered = tool
 			break
 		}
 	}
 	if registered == nil {
-		t.Fatal("mcphub_get_result is not always registered")
+		t.Fatal("get_result is not always registered")
 	}
 	schema, err := json.Marshal(registered.InputSchema)
 	if err != nil {
@@ -764,9 +764,9 @@ func TestPollResultRegistrationAndCallSchemaOnWire(t *testing.T) {
 	for _, tool := range tools.Tools {
 		byName[tool.Name] = tool
 	}
-	poll, ok := byName["mcphub_poll_result"]
+	poll, ok := byName[toolPollResult]
 	if !ok {
-		t.Fatal("mcphub_poll_result is not registered")
+		t.Fatal("poll_result is not registered")
 	}
 	pollSchema, err := json.Marshal(poll.InputSchema)
 	if err != nil {
@@ -775,9 +775,9 @@ func TestPollResultRegistrationAndCallSchemaOnWire(t *testing.T) {
 	if !bytes.Contains(pollSchema, []byte(`"required":["callId"]`)) {
 		t.Fatalf("callId is not required in poll wire schema: %s", pollSchema)
 	}
-	call, ok := byName["mcphub_call_tool"]
+	call, ok := byName[toolCallTool]
 	if !ok {
-		t.Fatal("mcphub_call_tool is not registered")
+		t.Fatal("call_tool is not registered")
 	}
 	callSchema, err := json.Marshal(call.InputSchema)
 	if err != nil {
@@ -788,8 +788,8 @@ func TestPollResultRegistrationAndCallSchemaOnWire(t *testing.T) {
 			t.Fatalf("call wire schema missing %s: %s", field, callSchema)
 		}
 	}
-	if !strings.Contains(call.Description, "detach") || !strings.Contains(call.Description, "mcphub_poll_result") {
-		t.Fatalf("mcphub_call_tool description does not advertise the detached path: %q", call.Description)
+	if !strings.Contains(call.Description, "detach") || !strings.Contains(call.Description, toolPollResult) {
+		t.Fatalf("call_tool description does not advertise the detached path: %q", call.Description)
 	}
 }
 

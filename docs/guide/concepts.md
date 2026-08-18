@@ -54,7 +54,7 @@ never aborts the whole gateway. The remaining servers stay available.
                  │   ├─ codemap__impact      ├─▶ codemap   (stdio child)   │
                  │   ├─ vecgrep__search     ─┼─▶ vecgrep   (stdio child)   │
                  │   ├─ memory__memory_recall       ─┼─▶ memory    (remote http)   │
-                 │   └─ mcphub_list_servers / ...    ┘   (meta-tools)              │
+                 │   └─ list_servers / ...           ┘   (meta-tools)              │
                  └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,27 +87,31 @@ recovery receipt instead of dropping bytes. Set `verbatim: true` or
 Beyond the proxied tools, the gateway registers eight management tools of its
 own so an agent can introspect and drive the hub without scanning everything:
 
-- **`mcphub_list_servers`** — configured servers with their enabled/connected
+- **`list_servers`** — configured servers with their enabled/connected
   state, tool counts, and the current exposure mode.
-- **`mcphub_search_tools`** — rank natural-language intent across tool metadata
+- **`search_tools`** — rank natural-language intent across tool metadata
   plus server descriptions, tags, and `use_when` hints, returning bounded
   `server__tool` candidates with match evidence.
-- **`mcphub_describe_tool`** — return one downstream tool's description and
+- **`describe_tool`** — return one downstream tool's description and
   full input schema.
-- **`mcphub_resolve_tool`** — route a current goal/activity and return one
+- **`resolve_tool`** — route a current goal/activity and return one
   recommended tool, match evidence, required fields, an argument template,
   alternatives, and ambiguity status.
-- **`mcphub_call_tool`** — invoke any downstream tool by
+- **`call_tool`** — invoke any downstream tool by
   `{server, tool, arguments}`. Oversized results return a lossless recovery
   receipt; `detach: true` runs a long-running tool in the background and
   returns a `callId` immediately, and `timeout_ms` bounds the call.
-- **`mcphub_get_result`** — recover a stored result by `callId` and zero-based
+- **`get_result`** — recover a stored result by `callId` and zero-based
   byte `cursor`. Decode each base64 `data` page and continue with `nextCursor`
   until `done` is true.
-- **`mcphub_poll_result`** — check a detached call by `callId`: `pending` while
+- **`poll_result`** — check a detached call by `callId`: `pending` while
   it runs, `failed` with the error, or the finished tool result itself.
-- **`mcphub_stats`** — local usage intelligence: total calls, errors, estimated
+- **`stats`** — local usage intelligence: total calls, errors, estimated
   token cost, and a per-server breakdown.
+
+Hosts that prefix the configured server name expose these as
+`mcphub__list_servers`, `mcphub__resolve_tool`, and so on. The older
+self-prefixed wire names (`mcphub_list_servers`, …) remain accepted.
 
 ## Exposure: `all` vs. `lazy`
 
@@ -117,8 +121,8 @@ advertises (see [Lazy mode](/guide/lazy-mode) for the deep dive):
 - **`expose: all`** (default) — every downstream tool is mounted as
   `server__tool`. Simple, but a large fleet means a large tool list.
 - **`expose: lazy`** — only the eight meta-tools above are advertised. The
-  agent routes task context with `mcphub_resolve_tool`, browses alternatives
-  with `mcphub_search_tools`, and runs the choice with `mcphub_call_tool`.
+  agent routes task context with `resolve_tool`, browses alternatives
+  with `search_tools`, and runs the choice with `call_tool`.
   Initialization includes a bounded capability summary built from the agent's
   in-scope servers and their `use_when` hints. The context cost is a handful of
   tools instead of hundreds.
@@ -237,7 +241,7 @@ single word.
 In gateway mode the agent loads exactly **one** server. With `expose: lazy`
 that surface collapses to eight meta-tools plus a bounded capability summary
 no matter how many servers sit behind the hub — the model sees
-`mcphub_resolve_tool` / `mcphub_call_tool` instead of every server's full
+`resolve_tool` / `call_tool` instead of every server's full
 catalog, and pulls a tool's schema on demand only when it actually needs it.
 (With the default `expose: all`, you still get
 one connection, but the full catalog is advertised under `server__tool` names.)

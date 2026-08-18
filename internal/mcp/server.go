@@ -49,22 +49,22 @@ const managementToolCount = 8
 func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScope) *Server {
 	impl := &sdk.Implementation{Name: "mcphub", Version: version.Version}
 	instructions := "mcphub is a gateway that fronts many MCP servers behind one connection. " +
-		"Downstream tools are exposed as `server__tool`. Use mcphub_list_servers to see what is " +
-		"connected, mcphub_resolve_tool to route current task context to a capability, " +
-		"mcphub_search_tools to browse alternatives, and mcphub_stats to inspect local " +
+		"Downstream tools are exposed as `server__tool`. Use `list_servers` to see what is " +
+		"connected, `resolve_tool` to route current task context to a capability, " +
+		"`search_tools` to browse alternatives, and `stats` to inspect local " +
 		"usage intelligence (calls, latency, token cost per server)."
 	if cfg.Lazy() {
 		instructions += " IMPORTANT: this gateway is in LAZY mode — the underlying tools are " +
 			"intentionally not listed to save context, but they ARE available. At the start of a " +
 			"non-trivial task and whenever work changes phase (research, planning, implementation, " +
-			"verification), proactively call mcphub_resolve_tool with the current goal or activity. " +
+			"verification), proactively call `resolve_tool` with the current goal or activity. " +
 			"It accepts natural language and returns a ranked `server__tool` plus a ready-to-fill " +
-			"argument template. Run the choice with mcphub_call_tool {server, tool, arguments} only " +
+			"argument template. Run the choice with `call_tool` {server, tool, arguments} only " +
 			"when status is `confident` and `ambiguous` is false. Never auto-run an ambiguous " +
 			"recommendation; compare alternatives, search for another tool, or ask for direction. " +
-			"Use mcphub_search_tools to browse more candidates. Do this without waiting to be asked."
+			"Use `search_tools` to browse more candidates. Do this without waiting to be asked."
 		if summary := capabilitySummary(cfg, scope); summary != "" {
-			instructions += " Capability families configured for this agent (call mcphub_list_servers for live status): " + summary + "."
+			instructions += " Capability families configured for this agent (call `list_servers` for live status): " + summary + "."
 		}
 		if len(scope.effectivePins(cfg)) > 0 {
 			instructions += " Some frequently-used tools are pinned and listed directly — call those by name as usual."
@@ -73,7 +73,7 @@ func NewServer(cfg *config.Config, h *hub.Hub, st *store.Store, scope *agentScop
 	if budget, configured := scope.schemaBudget(); configured {
 		instructions += fmt.Sprintf(
 			" This agent caps directly advertised downstream tool definitions at %d serialized bytes; "+
-				"the %d mcphub management tools remain listed, and omitted in-scope tools remain callable through mcphub_call_tool.",
+				"the %d mcphub management tools remain listed, and omitted in-scope tools remain callable through `call_tool`.",
 			budget, managementToolCount,
 		)
 	}
@@ -231,45 +231,22 @@ func (s *Server) mountDiagnostics() (int, *hub.ToolMountReport) {
 }
 
 func (s *Server) registerManagement() {
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_list_servers",
-		Description: "List configured downstream servers with enabled/connected state and tool counts.",
-	}, s.handleListServers)
-
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_search_tools",
-		Description: "Search and rank hidden downstream tools from natural-language intent. Matches tool metadata plus server descriptions, tags, and use_when routing hints; returns `server__tool` names for mcphub_call_tool.",
-	}, s.handleSearchTools)
-
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_describe_tool",
-		Description: "Return a downstream tool's description and full JSON input schema, so you can construct a valid mcphub_call_tool request.",
-	}, s.handleDescribeTool)
-
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_resolve_tool",
-		Description: "Contextual capability router. Call proactively when a task starts or changes phase: describe the current goal/activity in natural language and receive the best hidden tool, why it matched, required fields, an argument template, and ranked alternatives.",
-	}, s.handleResolveTool)
-
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_call_tool",
-		Description: "Invoke a downstream tool by name. Oversized results return a lossless retrieval receipt for mcphub_get_result; small results pass through unchanged. Accepts {server, tool, arguments} (tool may be the combined `server__tool` form). This is how you call tools in lazy mode. For long-running tools (repository indexing, large scans, batch jobs) that could exceed your client's tool-call timeout, pass detach: true — the call keeps running in the background and you get a callId immediately; collect the outcome with mcphub_poll_result. An optional timeout_ms bounds the call (clamped by the gateway's call_timeout config).",
-	}, s.handleCallTool)
-
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_get_result",
-		Description: "Retrieve a bounded base64 page of a complete result previously stored by mcphub. Start with cursor 0 and continue with nextCursor until done is true.",
-	}, s.handleGetResult)
-
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_poll_result",
-		Description: "Check on a detached (detach: true) mcphub_call_tool invocation by callId. Returns {status: pending} while the downstream call is still running (poll again after a delay), {status: failed} with the error if it failed, or — once complete — the tool's result itself, exactly as a synchronous call would have returned it (an oversized result appears as a stored-result receipt for mcphub_get_result). Completed results are retained for 24 hours; detached calls do not survive a gateway restart, in which case the callId reports status: unknown.",
-	}, s.handlePollResult)
-
-	sdk.AddTool(s.srv, &sdk.Tool{
-		Name:        "mcphub_stats",
-		Description: "Return local usage intelligence: total calls, error count, estimated token cost, and per-server breakdown recorded by the gateway.",
-	}, s.handleStats)
+	s.srv.AddReceivingMiddleware(rewriteManagementToolName)
+	def := func(name string) *sdk.Tool {
+		tool, ok := lookupManagement(name)
+		if !ok {
+			panic("unknown management tool " + name)
+		}
+		return &sdk.Tool{Name: tool.Public, Title: tool.Title, Description: tool.Description}
+	}
+	sdk.AddTool(s.srv, def(toolListServers), s.handleListServers)
+	sdk.AddTool(s.srv, def(toolSearchTools), s.handleSearchTools)
+	sdk.AddTool(s.srv, def(toolDescribeTool), s.handleDescribeTool)
+	sdk.AddTool(s.srv, def(toolResolveTool), s.handleResolveTool)
+	sdk.AddTool(s.srv, def(toolCallTool), s.handleCallTool)
+	sdk.AddTool(s.srv, def(toolGetResult), s.handleGetResult)
+	sdk.AddTool(s.srv, def(toolPollResult), s.handlePollResult)
+	sdk.AddTool(s.srv, def(toolStats), s.handleStats)
 }
 
 // splitNamespaced resolves (server, tool) from explicit fields, falling back to
@@ -305,7 +282,7 @@ type callInput struct {
 	Server    string         `json:"server,omitempty" jsonschema:"downstream server name (optional if tool is server__tool)"`
 	Tool      string         `json:"tool" jsonschema:"tool name; may be the combined server__tool form. Self-prefixed downstream names are accepted: hitspec__hitspec_search_web and hitspec__search_web both resolve"`
 	Arguments map[string]any `json:"arguments,omitempty" jsonschema:"arguments object passed to the downstream tool"`
-	Detach    bool           `json:"detach,omitempty" jsonschema:"run the call in the background and return a callId immediately; collect the result with mcphub_poll_result. Use for long-running tools that could exceed the client tool-call timeout"`
+	Detach    bool           `json:"detach,omitempty" jsonschema:"run the call in the background and return a callId immediately; collect the result with poll_result. Use for long-running tools that could exceed the client tool-call timeout"`
 	TimeoutMs int64          `json:"timeout_ms,omitempty" jsonschema:"optional per-call timeout in milliseconds, clamped by the gateway's call_timeout config (default 30m). Bounds a detached call's background execution; on a synchronous call it can only shorten the effective deadline"`
 }
 
@@ -315,7 +292,7 @@ type getResultInput struct {
 }
 
 type pollResultInput struct {
-	CallID string `json:"callId" jsonschema:"opaque call ID returned by a detached (detach: true) mcphub_call_tool invocation"`
+	CallID string `json:"callId" jsonschema:"opaque call ID returned by a detached (detach: true) call_tool invocation"`
 }
 
 type resolveToolInput struct {
@@ -490,7 +467,7 @@ func (s *Server) handleResolveTool(_ context.Context, _ *sdk.CallToolRequest, in
 			"recommendation":   nil,
 			"ambiguous":        false,
 			"alternatives":     []toolMatch{},
-			"hint":             "no tools matched — describe the capability with different terms, add use_when hints to the server, or browse with mcphub_search_tools",
+			"hint":             "no tools matched — describe the capability with different terms, add use_when hints to the server, or browse with search_tools",
 		})
 	}
 	top := matches[0]
@@ -646,12 +623,12 @@ func decodeInputSchema(encoded []byte) (map[string]any, bool) {
 
 func resolveHint(ambiguous bool, namespaced string, templateTruncated bool) string {
 	if ambiguous {
-		return "recommendation is ambiguous — do not auto-run it; compare alternatives, search with more specific intent, or ask for direction, then use mcphub_describe_tool for the complete schema"
+		return "recommendation is ambiguous — do not auto-run it; compare alternatives, search with more specific intent, or ask for direction, then use describe_tool for the complete schema"
 	}
 	if templateTruncated {
-		return fmt.Sprintf("argument template was bounded — call mcphub_describe_tool for %s before invoking it", namespaced)
+		return fmt.Sprintf("argument template was bounded — call describe_tool for %s before invoking it", namespaced)
 	}
-	return "call mcphub_call_tool with server + tool (or the namespaced name) + the argument_template filled in"
+	return "use call_tool with server + tool (or the namespaced name) + the argument_template filled in"
 }
 
 func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in callInput) (*sdk.CallToolResult, any, error) {
@@ -696,7 +673,7 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 			"downstream": tool,
 			"namespaced": publicNS,
 			"timeoutMs":  timeout.Milliseconds(),
-			"nextAction": "The call is running in the background. Call mcphub_poll_result with this callId; status pending means poll again after a delay, and a completed call returns the tool result itself (or a stored-result receipt for mcphub_get_result if it is oversized).",
+			"nextAction": "The call is running in the background. Call poll_result with this callId; status pending means poll again after a delay, and a completed call returns the tool result itself (or a stored-result receipt for get_result if it is oversized).",
 		})
 	}
 	if in.TimeoutMs > 0 {
@@ -739,7 +716,7 @@ func (s *Server) handlePollResult(_ context.Context, _ *sdk.CallToolRequest, in 
 		return result(map[string]any{
 			"status": "unknown",
 			"callId": in.CallID,
-			"reason": "The callId is unknown: it may have expired, been evicted, or the gateway restarted (detached calls do not survive restarts). Re-run the call with detach: true, or use mcphub_get_result if this callId came from a stored-result receipt.",
+			"reason": "The callId is unknown: it may have expired, been evicted, or the gateway restarted (detached calls do not survive restarts). Re-run the call with detach: true, or use get_result if this callId came from a stored-result receipt.",
 		})
 	}
 	if !s.scope.allows(call.Server, call.Tool) {
@@ -858,13 +835,13 @@ This gateway fronts many MCP servers. Tools are named ` + "`server__tool`" + `.
 
 ## Lazy mode
 
-If only a handful of mcphub_* tools are listed, the rest are still available:
+If only a handful of management tools are listed, the rest are still available:
 
-1. Call ` + "`mcphub_resolve_tool`" + ` with the current goal (natural language).
-2. If status is ` + "`confident`" + ` and ` + "`ambiguous`" + ` is false, call ` + "`mcphub_call_tool`" + ` with server, tool, and arguments.
-3. If the recommendation is ambiguous, use ` + "`mcphub_search_tools`" + ` or ask the user.
-4. Long jobs: ` + "`mcphub_call_tool`" + ` with ` + "`detach: true`" + `, then ` + "`mcphub_poll_result`" + `.
-5. Huge results come back as a ` + "`callId`" + `; page with ` + "`mcphub_get_result`" + `.
+1. Call ` + "`resolve_tool`" + ` with the current goal (natural language).
+2. If status is ` + "`confident`" + ` and ` + "`ambiguous`" + ` is false, call ` + "`call_tool`" + ` with server, tool, and arguments.
+3. If the recommendation is ambiguous, use ` + "`search_tools`" + ` or ask the user.
+4. Long jobs: ` + "`call_tool`" + ` with ` + "`detach: true`" + `, then ` + "`poll_result`" + `.
+5. Huge results come back as a ` + "`callId`" + `; page with ` + "`get_result`" + `.
 
 Pinned tools (if any) can be called by their ` + "`server__tool`" + ` name directly.
 

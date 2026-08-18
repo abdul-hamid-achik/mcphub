@@ -28,7 +28,7 @@ version: 1
 # How the gateway advertises tools to agents:
 #   all  (default) — mount every downstream tool as 'server__tool'
 #   lazy           — advertise only mcphub's meta-tools; agents resolve or search
-#                    capabilities and invoke via mcphub_call_tool (saves tokens)
+#                    capabilities and invoke via call_tool (saves tokens)
 expose: all
 
 servers:

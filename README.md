@@ -45,7 +45,7 @@ mcphub fixes both halves:
   replaced with a compact `callId`; agents recover the exact serialized result in bounded pages
   with `mcphub_get_result`. Small results pass through unchanged, and `verbatim: true` or
   `response_budget: "0"` opts out.
-- **Long-running calls** — `mcphub_call_tool` accepts `detach: true` for downstream tools that
+- **Long-running calls** — `call_tool` accepts `detach: true` for downstream tools that
   would outlive the client's tool-call timeout (repo indexing, big scans): the call keeps running
   in the background and returns a `callId` immediately, collected later with `mcphub_poll_result`.
   An optional `timeout_ms` bounds any call, clamped by the `call_timeout` config (default 30m).
@@ -164,7 +164,7 @@ version: 1
 # How the gateway advertises tools to agents:
 #   all  (default) — mount every downstream tool as 'server__tool'
 #   lazy           — advertise only mcphub's meta-tools; agents resolve or search
-#                    capabilities and invoke through mcphub_call_tool (saves tokens)
+#                    capabilities and invoke through call_tool (saves tokens)
 expose: all
 
 servers:
@@ -292,8 +292,8 @@ are gateway-only and cause `sync` to launch `mcphub mcp serve --agent <name>`
 even without a `servers`/`tools` restriction.
 
 Set top-level `expose: lazy` to have the gateway advertise only its meta-tools (saving tokens —
-agents route current task context with `mcphub_resolve_tool`, browse with
-`mcphub_search_tools`, and run a tool with `mcphub_call_tool`). Add concise
+agents route current task context with `resolve_tool`, browse with
+`search_tools`, and run a tool with `call_tool`). Add concise
 `use_when` phrases to each server so the resolver can connect user intent to narrowly named tools.
 Harness authors can follow the [contextual routing contract](https://mcphubcli.dev/guide/contextual-routing)
 to trigger discovery at task and phase changes without hardcoding server mappings. Use

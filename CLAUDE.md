@@ -70,6 +70,8 @@ records telemetry and which servers mcphub owns. TUI: `internal/ui/studio`
 - Don't write scratch `.md` into the repo — repo-root Markdown is limited to
   `README`, `AGENTS`, `CLAUDE`.
 - **`docs/` is the live website** — <https://mcphubcli.dev>, the landing page
-  and documentation site (VitePress). Vercel auto-deploys it on every push to
-  `main` that touches `docs/`. Never park scratch Markdown, reports, or notes
-  there; every file under `docs/` ships to production.
+  and documentation site (VitePress). Vercel auto-builds **`main` only**, and
+  only when `docs/` (or lockfiles / `docs/vercel.json`) change. Feature branches
+  do not deploy. Do not `vercel promote`; `main` is the docs release. Never park
+  scratch Markdown, reports, or notes there; every file under `docs/` ships to
+  production.

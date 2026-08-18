@@ -539,13 +539,13 @@ func capabilitySummary(cfg *config.Config, scope *agentScope) string {
 		remaining := len(items) - i
 		suffix := ""
 		if remaining > 1 {
-			suffix = fmt.Sprintf(" | +%d more; call mcphub_list_servers", remaining-1)
+			suffix = fmt.Sprintf(" | +%d more; call list_servers", remaining-1)
 		}
 		if summary.Len()+len(separator)+len(item)+len(suffix) > maxCapabilitySummaryBytes {
 			if summary.Len() == 0 {
 				return clipUTF8(item, maxCapabilitySummaryBytes)
 			}
-			remainingSuffix := fmt.Sprintf(" | +%d more; call mcphub_list_servers", remaining)
+			remainingSuffix := fmt.Sprintf(" | +%d more; call list_servers", remaining)
 			if summary.Len()+len(remainingSuffix) <= maxCapabilitySummaryBytes {
 				summary.WriteString(remainingSuffix)
 			}

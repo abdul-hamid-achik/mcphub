@@ -14,7 +14,7 @@ non-persistent; capture is the named operation that writes an explicit durable
 Markdown artifact.
 
 ```text
-task context → mcphub_resolve_tool
+task context → resolve_tool
                     ├─ hitspec_search_web      → discovery candidates
                     ├─ hitspec_fetch           → bounded inline result
                     └─ hitspec_capture_webpage → durable Markdown stash
@@ -208,7 +208,7 @@ valid executable.
 
 ### Fetch a direct URL
 
-In lazy mode, call the selected downstream tool through `mcphub_call_tool`:
+In lazy mode, call the selected downstream tool through `call_tool`:
 
 ```json
 {
@@ -460,4 +460,4 @@ Confirm the server is connected, the agent scope includes `hitspec`, and an
 exact tool scope includes `hitspec__fetch` when needed. Keep the tool
 unpinned, describe the desired outcome in `use_when`, restart local-agent so it
 receives current initialization instructions, and inspect the route with
-`mcphub_resolve_tool`.
+`resolve_tool`.

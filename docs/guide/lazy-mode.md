@@ -29,7 +29,7 @@ version: 1
 
 # all  (default) — mount every downstream tool as 'server__tool'
 # lazy           — advertise only mcphub's meta-tools; agents resolve or search
-#                  capabilities and invoke through mcphub_call_tool
+#                  capabilities and invoke through call_tool
 expose: lazy
 ```
 
@@ -67,7 +67,7 @@ agents:
 `pin` overrides any global pins for this agent. `tool_schema_budget: "8KB"`
 admits complete pinned definitions up to that serialized-byte budget. Neither
 setting removes downstream call authority: after resolving or searching, the
-agent can still use `mcphub_call_tool` for every tool permitted by its
+agent can still use `call_tool` for every tool permitted by its
 `servers` and `tools` scope. The gateway never truncates a schema to fit a
 budget. Use `pin: []` and `tool_schema_budget: "0"` only when you want the
 agent to load zero downstream definitions — that combination advertises only the
@@ -90,14 +90,16 @@ In lazy mode this is the entire advertised surface:
 
 | Tool | What it does |
 | --- | --- |
-| `mcphub_list_servers` | List configured downstream servers with enabled/connected state and tool counts. |
-| `mcphub_search_tools` | Ranked natural-language search across tool and server metadata; returns up to 20 matching `server__tool` names by default. |
-| `mcphub_describe_tool` | Return one tool's description and full JSON input schema. |
-| `mcphub_resolve_tool` | Route the current goal or activity to the best tool in one call, with match evidence, required fields, an argument template, alternatives, and an ambiguity flag. |
-| `mcphub_call_tool` | Invoke a downstream tool by name — how everything gets called in lazy mode. `detach: true` runs a long-running tool in the background and returns a `callId` at once. |
-| `mcphub_get_result` | Page through an oversized result the gateway stored locally (see below). |
-| `mcphub_poll_result` | Check a detached call by `callId` and collect its result when done. |
-| `mcphub_stats` | Local usage intelligence: calls, errors, estimated token cost, per-server breakdown. |
+| `list_servers` | List configured downstream servers with enabled/connected state and tool counts. |
+| `search_tools` | Ranked natural-language search across tool and server metadata; returns up to 20 matching `server__tool` names by default. |
+| `describe_tool` | Return one tool's description and full JSON input schema. |
+| `resolve_tool` | Route the current goal or activity to the best tool in one call, with match evidence, required fields, an argument template, alternatives, and an ambiguity flag. |
+| `call_tool` | Invoke a downstream tool by name — how everything gets called in lazy mode. `detach: true` runs a long-running tool in the background and returns a `callId` at once. |
+| `get_result` | Page through an oversized result the gateway stored locally (see below). |
+| `poll_result` | Check a detached call by `callId` and collect its result when done. |
+| `stats` | Local usage intelligence: calls, errors, estimated token cost, per-server breakdown. |
+
+Hosts that prefix the configured server name expose these as `mcphub__list_servers`. The older `mcphub_*` wire names remain accepted.
 
 The gateway's MCP instructions tell the connecting model it is in lazy mode,
 include a compact summary of its in-scope capability families, and ask it to
@@ -147,7 +149,7 @@ A lazy-mode agent works the catalog in three steps.
 what it is doing but not which server owns the capability:
 
 ```json
-// mcphub_resolve_tool
+// resolve_tool
 { "query": "fetch this public URL as Markdown for research" }
 ```
 
@@ -170,20 +172,20 @@ itself from becoming a context spike; `byte_limited` and
 
 **2. Inspect.** Two options, depending on how much the agent already knows:
 
-- `mcphub_describe_tool` takes `{server, tool}` — or just `tool` in the
+- `describe_tool` takes `{server, tool}` — or just `tool` in the
   combined `server__tool` form — and returns the tool's description and full
   JSON `input_schema`, enough to construct a valid call.
-- `mcphub_resolve_tool` already collapses route + describe into one round trip:
+- `resolve_tool` already collapses route + describe into one round trip:
   give it a natural-language `query` (and optionally `max_hits`, default 5) and it
   returns one recommendation with `required_fields` and a ready-to-fill
   `argument_template`, a list of alternatives, and an `ambiguous` flag when
   several tools ranked equally. If `argument_template_truncated` is true, use
-  `mcphub_describe_tool` for the complete schema before the call.
+  `describe_tool` for the complete schema before the call.
 
 **3. Invoke.** Call through the gateway:
 
 ```json
-// mcphub_call_tool
+// call_tool
 { "server": "vecgrep", "tool": "vecgrep_search", "arguments": { "query": "auth middleware" } }
 ```
 
@@ -194,10 +196,10 @@ recorded to the [intelligence store](/guide/intelligence), same as in
 
 ### Oversized results
 
-If a downstream result exceeds the response budget, `mcphub_call_tool` returns
+If a downstream result exceeds the response budget, `call_tool` returns
 a compact receipt with a `callId` instead of flooding the context. The exact
 serialized result is stored locally for 24 hours, and the agent recovers it in
-bounded base64 pages with `mcphub_get_result`: start at `cursor: 0` and follow
+bounded base64 pages with `get_result`: start at `cursor: 0` and follow
 `nextCursor` until `done` is `true`. Small results pass through unchanged.
 
 ## Pinning: keep hot tools mounted
