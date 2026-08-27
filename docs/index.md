@@ -2,12 +2,12 @@
 layout: home
 title: mcphub — one capability router for every MCP server
 titleTemplate: false
-description: Define your MCP servers once. mcphub resolves the right capability at runtime — including unpinned tools — proxies it through one gateway, and syncs 12 agent harnesses.
+description: Define your MCP servers once. mcphub resolves the right capability at runtime — including unpinned tools — proxies it through one gateway, and syncs 15 agent harnesses.
 
 hero:
   name: mcphub
   text: Every MCP server. One hub. The right tool on demand.
-  tagline: Connect each harness once. In lazy mode, agents can match the current task against your live catalog — including unpinned tools — then call the right capability through one gateway while mcphub keeps 12 agent configs in sync.
+  tagline: Connect each harness once. In lazy mode, agents can match the current task against your live catalog — including unpinned tools — then call the right capability through one gateway while mcphub keeps 15 agent configs in sync.
   actions:
     - theme: brand
       text: Get started
@@ -31,7 +31,7 @@ features:
     link: /guide/concepts
     linkText: How the gateway works
   - icon: "03"
-    title: Sync 12 harnesses
+    title: Sync 15 harnesses
     details: <code>mcphub sync</code> writes the right config into Claude Code, Codex, opencode, Copilot CLI, Cursor, Claude Desktop and more. Dry-run by default, timestamped .bak, hand-added servers survive.
     link: /guide/sync
     linkText: How sync stays safe

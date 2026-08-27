@@ -31,11 +31,11 @@ mcphub fixes both halves:
 - **Single gateway** — `mcphub mcp serve` connects to every enabled downstream server as an
   MCP client, aggregates their tools under `server__tool` names, and re-exposes them on one
   stdio connection.
-- **Syncs to twelve harnesses** — push your config into Claude Code, opencode, Codex,
+- **Syncs to fifteen harnesses** — push your config into Claude Code, opencode, Codex,
   Copilot CLI, Qwen Code, Gemini CLI, Kilo Code, Kimi Code CLI, Crush, Forge, Hermes,
-  and local-agent with a non-destructive merge. Dry-run by default; `--write` applies
-  after saving a timestamped `.bak`. `mcphub init --from-agents` imports what you
-  already have.
+  local-agent, Cursor, Claude Desktop, and ZCode with a non-destructive merge. Dry-run by
+  default; `--write` applies after saving a timestamped `.bak`. `mcphub init --from-agents`
+  imports what you already have.
 - **Two sync modes** — `gateway` (the agent sees only mcphub) or `direct` (every enabled server
   written verbatim), chosen per agent.
 - **Lazy exposure + pinning** — `expose: lazy` advertises only eight management tools and serves
@@ -250,7 +250,8 @@ agents:
 Each `server` is either a stdio server (`command` + `args` + optional `env`) **or** a remote
 server (`url` + `transport`, where `transport` is `http` or `sse`). Each `agent` has a `type`
 (`claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`,
-`kilo`, `kimi`, or `local-agent`), a `path`, and a `mode` that defaults to `gateway`.
+`kilo`, `kimi`, `local-agent`, `cursor`, `claude-desktop`, or `zcode`), a `path`, and a
+`mode` that defaults to `gateway`.
 
 The Bob entry uses `--allow-any-workspace`, which grants its read-only MCP tools
 access to any workspace readable by the Bob process. Use that flag only in a
@@ -335,6 +336,9 @@ mcphub sync --write       # apply (a .bak is saved first)
 | Forge (forgecode) | `~/forge/.mcp.json` | JSON `mcpServers` |
 | Hermes | `~/.hermes/config.yaml` | YAML `mcp_servers` |
 | local-agent | `~/.config/local-agent/config.yaml` | YAML `servers` sequence |
+| Cursor | `~/.cursor/mcp.json` | JSON `mcpServers` (Claude-shaped) |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | JSON `mcpServers` |
+| ZCode | `~/.zcode/cli/config.json` | JSON `mcp`.`servers` (Claude-shaped entries) |
 
 ## Studio TUI
 

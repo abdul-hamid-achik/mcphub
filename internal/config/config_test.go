@@ -562,7 +562,7 @@ func TestValidateAcceptsNewAgentTypes(t *testing.T) {
 // harness.Kinds(). The config.go comment explicitly warns about this.
 func TestKindsAndValidTypesInSync(t *testing.T) {
 	// Every type in Kinds() must be in validAgentTypes.
-	for _, k := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop"} {
+	for _, k := range []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop", "zcode"} {
 		c := &Config{
 			Servers: map[string]Server{"x": {Command: "c"}},
 			Agents:  map[string]Agent{"a": {Type: k, Path: "~/x"}},
@@ -580,7 +580,7 @@ func TestKindsAndValidTypesInSync(t *testing.T) {
 func TestAllAgentTypesRoundTrip(t *testing.T) {
 	allKinds := []string{
 		"claude", "opencode", "codex", "crush", "forge", "hermes",
-		"copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop",
+		"copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop", "zcode",
 	}
 	agents := map[string]Agent{}
 	for _, k := range allKinds {

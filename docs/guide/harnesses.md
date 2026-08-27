@@ -1,17 +1,17 @@
 ---
 title: Supported harnesses
-description: "Every agent harness mcphub can sync — 14 of them, from Claude Code to Cursor and Claude Desktop — with each one's config path, on-disk format, and the quirks worth knowing."
+description: "Every agent harness mcphub can sync — 15 of them, from Claude Code to Cursor, Claude Desktop, and ZCode — with each one's config path, on-disk format, and the quirks worth knowing."
 ---
 
 # Supported harnesses
 
-mcphub syncs your `mcphub.yaml` into **fourteen agent harnesses**. Each one wants
+mcphub syncs your `mcphub.yaml` into **fifteen agent harnesses**. Each one wants
 its MCP servers declared in its own file, in its own format; mcphub's adapters
 know all of them, so `mcphub sync` writes the right shape into each — a
 non-destructive merge, dry-run by default, with a timestamped `.bak` before any
 write. See [Sync](/guide/sync) for the mechanics.
 
-## The fourteen
+## The fifteen
 
 | Harness | Config | Format |
 | --- | --- | --- |
@@ -29,6 +29,7 @@ write. See [Sync](/guide/sync) for the mechanics.
 | local-agent | `~/.config/local-agent/config.yaml` | YAML `servers` sequence |
 | Cursor | `~/.cursor/mcp.json` | JSON `mcpServers` (Claude-shaped) |
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | JSON `mcpServers` |
+| ZCode | `~/.zcode/cli/config.json` | JSON `mcp`.`servers` (Claude-shaped entries) |
 
 The config column is each harness's default path; the `path` field in
 `mcphub.yaml` decides what mcphub actually edits, so point it elsewhere if you
@@ -102,11 +103,11 @@ are not seeded by default: add them by hand or via `mcphub init --from-agents`.
 
 ## Per-harness quirks
 
-All twelve adapters share the same guarantees — only the MCP-server section of
+All fifteen adapters share the same guarantees — only the MCP-server section of
 the file is touched, every other key is preserved, and pruning is limited to
 entries mcphub previously wrote. Within that, the formats differ:
 
-### JSON `mcpServers` — Claude Code, Copilot CLI, Qwen Code, Gemini CLI, Forge
+### JSON `mcpServers` — Claude Code, Copilot CLI, Qwen Code, Gemini CLI, Forge, Cursor, Claude Desktop
 
 The most common shape: a top-level `mcpServers` object.
 
@@ -125,6 +126,8 @@ The most common shape: a top-level `mcpServers` object.
   entry carries a `disable` boolean rather than a type tag. Forge's own
   convention is a project-local `.mcp.json`; mcphub's default path is the
   home-relative `~/forge/.mcp.json`, so set `path` if you keep it elsewhere.
+- **Cursor** (`type: cursor`) and **Claude Desktop** (`type: claude-desktop`)
+  — plain Claude-shaped `mcpServers` files; only that object is touched.
 
 ### JSON `mcp` — opencode, Crush, Kilo Code
 
@@ -138,6 +141,16 @@ The most common shape: a top-level `mcpServers` object.
   **JSONC**. mcphub strips comments before parsing so `.jsonc` reads the same
   as `.json`, but **comments are not preserved on write** — a `.bak` is taken
   first.
+
+### JSON `mcp`.`servers` — ZCode
+
+- **ZCode** (`type: zcode`) — entries have the same Claude-style shape
+  (`command` + `args` + `env`, or `type` + `url`; stdio/http inferred when
+  `type` is omitted), but they live under the nested `mcp`.`servers` object of
+  `~/.zcode/cli/config.json`. Everything else in the file (plugins settings)
+  and any siblings inside `mcp` stay untouched. Host-side extras mcphub does
+  not model (`cwd`, `enabled`, `timeoutMs`, per-entry `headers`) survive sync
+  on already-managed entries.
 
 ### TOML `[mcp_servers.*]` — Codex, Kimi Code CLI
 

@@ -7,7 +7,7 @@ export default defineConfig({
   title: 'mcphub',
   titleTemplate: ':title · mcphub',
   description:
-    'One hub for all your MCP servers. Define them once, run a single gateway that proxies them all, and sync the config into 12 agent harnesses.',
+    'One hub for all your MCP servers. Define them once, run a single gateway that proxies them all, and sync the config into 15 agent harnesses.',
   lang: 'en-US',
   cleanUrls: true,
   lastUpdated: true,
@@ -50,7 +50,7 @@ export default defineConfig({
         url: SITE,
         sameAs: ['https://github.com/abdul-hamid-achik/mcphub'],
         description:
-          'Gateway and control plane for MCP servers: one config, one stdio gateway, synced into 12 agent harnesses.',
+          'Gateway and control plane for MCP servers: one config, one stdio gateway, synced into 15 agent harnesses.',
       }),
     ],
   ],

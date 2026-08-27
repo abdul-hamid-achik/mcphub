@@ -25,13 +25,67 @@ const (
 // (claude, opencode, crush, forge). Each differs only in the top-level key,
 // the entry shape, the managed keys, and how transport is compared — all
 // captured here as fields so List/Apply are fully generic.
+//
+// Most adapters keep their entries directly under a single top-level key.
+// When `parent` is set, the entries live one level deeper (key within the
+// parent object — ZCode reads "mcp":"servers") and every sibling of the
+// parent object is still preserved verbatim.
 type jsonAdapter struct {
 	kind        string
 	key         string // top-level JSON key ("mcpServers" or "mcp")
+	parent      string // optional ancestor object holding key ("" = flat)
 	managedKeys []string
 	transport   transportPolicy
 	entryFrom   func(MCPServer) any // serialize desired → entry
 	parseEntry  func(name string, raw json.RawMessage) (MCPServer, bool)
+}
+
+// entryPath describes where the server entries sit inside the file, for
+// error messages: "mcpServers", or "mcp.servers" when parent is set.
+func (a jsonAdapter) entryPath() string {
+	if a.parent == "" {
+		return a.key
+	}
+	return a.parent + "." + a.key
+}
+
+// holder returns the JSON object the server entries belong to: `top` itself
+// for flat adapters, or the parsed `parent` object (created empty if absent)
+// for nested ones. It never mutates its input.
+func (a jsonAdapter) holder(top map[string]json.RawMessage, path string) (map[string]json.RawMessage, error) {
+	if a.parent == "" {
+		return top, nil
+	}
+	nested := map[string]json.RawMessage{}
+	if raw, ok := top[a.parent]; ok && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &nested); err != nil {
+			return nil, fmt.Errorf("parse %s in %s: %w", a.parent, path, err)
+		}
+	}
+	return nested, nil
+}
+
+// readEntries parses name→raw-entry out of the holder object; an absent key
+// yields an empty map.
+func (a jsonAdapter) readEntries(holder map[string]json.RawMessage, path string) (map[string]json.RawMessage, error) {
+	entries := map[string]json.RawMessage{}
+	if raw, ok := holder[a.key]; ok && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return nil, fmt.Errorf("parse %s in %s: %w", a.entryPath(), path, err)
+		}
+	}
+	return entries, nil
+}
+
+// storeEntries merges the updated entries back into `top`, replacing the old
+// value of the adapter's key (writing through the parent object when nested).
+func (a jsonAdapter) storeEntries(top map[string]json.RawMessage, holder map[string]json.RawMessage, entries map[string]json.RawMessage) {
+	if a.parent != "" {
+		holder[a.key] = mustIndentJSON(entries)
+		top[a.parent] = mustIndentJSON(holder)
+		return
+	}
+	top[a.key] = mustIndentJSON(entries)
 }
 
 func (a jsonAdapter) Kind() string { return a.kind }
@@ -48,18 +102,18 @@ func (a jsonAdapter) List(path string) ([]MCPServer, error) {
 	return sortedServers(existing), nil
 }
 
-// servers parses the adapter's top-level key into name→server entries.
+// servers parses the adapter's entry object into name→server entries.
 func (a jsonAdapter) servers(top map[string]json.RawMessage, path string) (map[string]MCPServer, error) {
+	holder, err := a.holder(top, path)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := a.readEntries(holder, path)
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]MCPServer{}
-	raw, ok := top[a.key]
-	if !ok || len(raw) == 0 {
-		return out, nil
-	}
-	entries := map[string]json.RawMessage{}
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, fmt.Errorf("parse %s in %s: %w", a.key, path, err)
-	}
-	for name, r := range entries {
+	for name, r := range raw {
 		if m, ok := a.parseEntry(name, r); ok {
 			out[name] = m
 		}
@@ -88,11 +142,13 @@ func (a jsonAdapter) Apply(path string, desired []MCPServer, owned []string, dry
 		return plan, nil
 	}
 
-	servers := map[string]json.RawMessage{}
-	if raw, ok := top[a.key]; ok && len(raw) > 0 {
-		if err := json.Unmarshal(raw, &servers); err != nil {
-			return plan, fmt.Errorf("parse %s in %s: %w", a.key, path, err)
-		}
+	holder, err := a.holder(top, path)
+	if err != nil {
+		return plan, err
+	}
+	servers, err := a.readEntries(holder, path)
+	if err != nil {
+		return plan, err
 	}
 	mergeJSONServers(servers, existing, desired, owned, plan, a.managedKeys, a.entryFrom)
 	bak, err := backup(path)
@@ -100,7 +156,7 @@ func (a jsonAdapter) Apply(path string, desired []MCPServer, owned []string, dry
 		return plan, err
 	}
 	plan.Backup = bak
-	top[a.key] = mustIndentJSON(servers)
+	a.storeEntries(top, holder, servers)
 	if err := writeJSONObject(path, top); err != nil {
 		return plan, err
 	}

@@ -286,7 +286,7 @@ agents:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `type` | string | yes | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`, `kilo`, `kimi`, `local-agent`, `cursor`, or `claude-desktop`. |
+| `type` | string | yes | The harness adapter: `claude`, `opencode`, `codex`, `crush`, `forge`, `hermes`, `copilot`, `qwen`, `gemini`, `kilo`, `kimi`, `local-agent`, `cursor`, `claude-desktop`, or `zcode`. |
 | `path` | string | yes | The harness config file. Supports leading `~` expansion. |
 | `mode` | string | no | `gateway` (default) or `direct`. |
 | `disabled` | bool | no | Skip this agent during `sync` without deleting its definition. |
@@ -314,6 +314,9 @@ the harness's on-disk format:
 | `kilo` | `~/.config/kilo/kilo.jsonc` | `mcp` |
 | `kimi` | `~/.kimi/config.toml` | `[mcp_servers.*]` |
 | `local-agent` | `~/.config/local-agent/config.yaml` | YAML `servers` sequence |
+| `cursor` | `~/.cursor/mcp.json` | `mcpServers` |
+| `claude-desktop` | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | `mcpServers` |
+| `zcode` | `~/.zcode/cli/config.json` | `mcp.servers` (nested object) |
 
 See [Supported harnesses](/guide/harnesses) for each adapter's format details,
 including the note that the Codex and Kimi TOML round-trips do not preserve

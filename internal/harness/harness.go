@@ -13,6 +13,7 @@
 //	kilo     ~/.config/kilo/kilo.jsonc   JSONC "mcp" (type: local|remote, command array)
 //	kimi     ~/.kimi/config.toml         TOML "[mcp_servers.*]" (type: local|remote)
 //	local-agent ~/.config/local-agent/config.yaml YAML "servers" sequence
+//	zcode    ~/.zcode/cli/config.json    JSON "mcp"."servers" (claude-shaped entries)
 //
 // Each adapter is responsible for a SAFE read-modify-write: it produces a
 // dry-run Plan (the diff) without writing, writes a timestamped .bak before
@@ -172,6 +173,8 @@ func For(kind string) (Adapter, error) {
 		return cursorAdapter, nil
 	case "claude-desktop", "claudedesktop", "desktop":
 		return desktopAdapter, nil
+	case "zcode":
+		return zcodeAdapter, nil
 	default:
 		return nil, fmt.Errorf("unknown harness type %q (supported: %s)", kind, strings.Join(Kinds(), ", "))
 	}
@@ -179,7 +182,7 @@ func For(kind string) (Adapter, error) {
 
 // Kinds lists the supported harness types.
 func Kinds() []string {
-	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop"}
+	return []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop", "zcode"}
 }
 
 // DefaultPath returns the conventional config file path for a harness kind,
@@ -222,6 +225,8 @@ func DefaultPath(kind string) string {
 			return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
 		}
 		return filepath.Join(xdg, "Claude", "claude_desktop_config.json")
+	case "zcode":
+		return filepath.Join(home, ".zcode", "cli", "config.json")
 	}
 	return ""
 }

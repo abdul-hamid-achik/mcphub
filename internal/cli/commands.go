@@ -125,6 +125,7 @@ agents:
 #   gemini   ~/.gemini/settings.json          Gemini CLI
 #   kilo     ~/.config/kilo/kilo.jsonc        Kilo Code (XDG)
 #   kimi     ~/.kimi/config.toml               Kimi Code CLI
+#   zcode    ~/.zcode/cli/config.json         ZCode
 #
 # Run 'mcphub init --from-agents' to auto-discover installed agents, or
 # 'mcphub agents' to see all supported types and their status.
@@ -140,7 +141,7 @@ func newInitCmd() *cobra.Command {
 JSON — pick with --format; mcphub reads and writes all three.
 
 By default it writes a small starter config. With --from-agents it scans your
-installed harness configs (Claude Code, opencode, Codex, Crush, Forge, Hermes),
+	installed harness configs (Claude Code, opencode, Codex, Crush, Forge, Hermes, ZCode),
 unions every MCP server they already declare, and wires those agents up in
 gateway mode — so you can adopt mcphub without retyping what you already have.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {

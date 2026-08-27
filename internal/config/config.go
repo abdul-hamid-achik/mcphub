@@ -378,6 +378,7 @@ var validAgentTypes = map[string]bool{
 	"local-agent": true, "localagent": true,
 	"cursor":         true,
 	"claude-desktop": true, "claudedesktop": true, "desktop": true,
+	"zcode": true,
 }
 
 // DefaultPath returns the config path used when unspecified. Precedence:
@@ -630,7 +631,7 @@ func (c *Config) Validate() error {
 		if a.Type == "" {
 			problems = append(problems, fmt.Sprintf("agent %q: missing type", name))
 		} else if !validAgentTypes[a.Type] {
-			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi, local-agent, cursor, claude-desktop)", name, a.Type))
+			problems = append(problems, fmt.Sprintf("agent %q: unknown type %q (supported: claude, opencode, codex, crush, forge, hermes, copilot, qwen, gemini, kilo, kimi, local-agent, cursor, claude-desktop, zcode)", name, a.Type))
 		}
 		// Per-agent routing: Servers must name known servers; Tools is
 		// gateway-only and each entry must be a clean `server__tool` whose

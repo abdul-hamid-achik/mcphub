@@ -6,6 +6,23 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-26
+
+### Added
+
+- **ZCode is now a supported harness.** `mcphub sync` can wire ZCode's
+  `~/.zcode/cli/config.json` like every other agent — add a
+  `type: zcode` agent to `mcphub.yaml`, or import it with
+  `mcphub init --from-agents`. ZCode keeps its MCP servers under the nested
+  `mcp`.`servers` object with Claude-shaped entries, so the JSON adapter grew
+  support for nested entry keys while preserving every sibling key (plugin
+  settings) verbatim. Host-side extras mcphub does not model (`cwd`,
+  `enabled`, `timeoutMs`, per-entry `headers`) survive sync on managed entries.
+
+### Changed
+
+- Documentation counts updated from twelve/fourteen harnesses to fifteen.
+
 ## [0.24.0] - 2026-08-18
 
 ### Changed

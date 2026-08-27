@@ -111,6 +111,56 @@ func TestCrushLifecycle(t *testing.T) {
 	}
 }
 
+func TestZcodeLifecycle(t *testing.T) {
+	p := writeFile(t, "config.json", `{"plugins":{"gp":true},"mcp":{"servers":{"keep":{"command":"k","cwd":"/tmp"}}}}`)
+	applyLifecycle(t, zcodeAdapter, p, `"gp"`)
+	body := read(t, p)
+	if !strings.Contains(body, "keep") || !strings.Contains(body, `"/tmp"`) {
+		t.Errorf("hand-written zcode server and its cwd should survive:\n%s", body)
+	}
+}
+
+// TestZcodeReadsClaudeShapedEntries pins the entry parse/write shape: stdio
+// entries carry command/args/env without an inferred transport, remotes keep
+// their type, and entries outside the nested object are ignored.
+func TestZcodeReadsClaudeShapedEntries(t *testing.T) {
+	p := writeFile(t, "zcode_read.json", `{"mcp":{"other":{"not":"servers"}},"servers":{"trap":{"command":"x"}}}`)
+	got, err := zcodeAdapter.List(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("List should only look under mcp.servers, got %+v", got)
+	}
+
+	p = writeFile(t, "zcode_entries.json", `{"mcp":{"servers":{
+		"local":{"command":"c","args":["x"],"type":"stdio"},
+		"remote":{"type":"http","url":"https://e.com"}}}}`)
+	got, err = zcodeAdapter.List(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]MCPServer{}
+	for _, s := range got {
+		byName[s.Name] = s
+	}
+	if byName["local"].Transport != "" || byName["local"].Command != "c" || len(byName["local"].Args) != 1 {
+		t.Errorf("local entry parsed wrong: %+v", byName["local"])
+	}
+	if byName["remote"].URL != "https://e.com" || byName["remote"].Transport != "http" {
+		t.Errorf("remote entry parsed wrong: %+v", byName["remote"])
+	}
+
+	plan, err := zcodeAdapter.Apply(p, []MCPServer{{Name: "r", URL: "http://127.0.0.1:9000/mcp"}}, nil, false)
+	if err != nil || !plan.Applied {
+		t.Fatalf("write: %v applied=%v", err, plan.Applied)
+	}
+	body := read(t, p)
+	if !strings.Contains(body, "127.0.0.1:9000") || !strings.Contains(body, `"type": "http"`) {
+		t.Errorf("remote write should land under mcp.servers with explicit type:\n%s", body)
+	}
+}
+
 func TestListReadsLocalAndRemote(t *testing.T) {
 	// type:"stdio" must NOT become a transport; only a url-based remote does.
 	p := writeFile(t, "claude.json", `{"mcpServers":{
@@ -775,6 +825,17 @@ func TestUpdatePreservesExtraKeysAllAdapters(t *testing.T) {
 			mustSurvive: `"timeout"`,
 			mustUpdate:  `"new"`,
 		},
+		{
+			// Nested mcp.servers layout; cwd/enabled are host-side extras.
+			name:        "zcode",
+			a:           zcodeAdapter,
+			file:        "zcode_update.json",
+			seed:        `{"mcp":{"servers":{"api":{"command":"old","cwd":"/w","enabled":false}}}}`,
+			desired:     []MCPServer{{Name: "api", Command: "new"}},
+			owned:       []string{"api"},
+			mustSurvive: `"/w"`,
+			mustUpdate:  `"new"`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -955,7 +1016,7 @@ func TestGeminiUpdatePreservesExtraKeys(t *testing.T) {
 // a dropped or reordered kind is caught immediately.
 func TestKindsReturnsExactSet(t *testing.T) {
 	got := Kinds()
-	want := []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop"}
+	want := []string{"claude", "opencode", "codex", "crush", "forge", "hermes", "copilot", "qwen", "gemini", "kilo", "kimi", "local-agent", "cursor", "claude-desktop", "zcode"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Kinds() = %v, want %v", got, want)
 	}
