@@ -1,0 +1,39 @@
+# Start the gateway from the repository you want to work on.
+# Cortex and Bob inherit that workspace. Add explicit Bob allow-workspace
+# arguments for other repositories when needed.
+version: 1
+expose: lazy
+pin: [cortex__open_task]
+response_budget: 32KB
+connect_timeout: 30s
+call_timeout: 5m
+servers:
+  cortex:
+    command: cortex
+    args: [serve]
+    enabled: true
+    env:
+      CODEMAP_SEMANTIC_BACKEND: vecgrep
+    description: Task orchestration and durable evidence
+    use_when: [start or resume an engineering task, investigate and verify a change]
+  codemap:
+    command: codemap
+    args: [serve, --profile, full]
+    enabled: true
+    env:
+      CODEMAP_SEMANTIC_BACKEND: vecgrep
+    description: Structural code graph and exact source selectors
+    use_when: [trace callers or change impact, inspect dependencies and covering tests]
+  vecgrep:
+    command: vecgrep
+    args: [serve]
+    enabled: true
+    description: Semantic code search backed by Veclite
+    use_when: [find code by intent, retrieve similar implementations]
+  bob:
+    command: bob
+    args: [mcp, serve]
+    enabled: true
+    description: Repository ownership and deterministic plans
+    use_when: [check generated file ownership before editing, inspect the repository contract]
+agents: {}

@@ -6,6 +6,12 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-09-04
+
+### Changed
+- Add a validated lazy-exposure configuration for Cortex, Codemap, Vecgrep and Bob with one semantic owner.
+
+
 ## [0.25.0] - 2026-08-26
 
 ### Added

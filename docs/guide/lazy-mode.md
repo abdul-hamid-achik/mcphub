@@ -275,3 +275,20 @@ shifting.
 - [Per-agent routing](/guide/routing) — scoping servers and tools per agent,
   which also filters what a lazy-mode agent can discover and pin.
 - [Configuration reference](/reference/config) — `expose`, `pin`, and per-server `use_when` hints.
+
+## Cortex, Codemap, Vecgrep and Bob
+
+[Download the local intelligence configuration](/local-intelligence.yaml) for
+these four servers. It pins only `cortex__open_task`, keeps the remaining tools
+discoverable through routing hints, and uses a 32 KiB result budget with a
+five-minute downstream call ceiling. Start the gateway in the target repository;
+Bob retains its default workspace boundary.
+
+Merge the entries into your configuration before restarting the gateway. The
+example makes Vecgrep the semantic owner for both Cortex's Codemap subprocesses
+and the Codemap MCP server. Veclite remains Vecgrep's storage engine; it does not
+need a separate advertised server. Set Vecgrep's `codemap.structural_chunks` to
+`auto` or `required` when using Codemap exports, and index Codemap before Vecgrep.
+
+Gateway statistics measure the proxied Cortex call as a whole. They do not
+separately measure the CLI subprocesses Cortex invokes internally.
