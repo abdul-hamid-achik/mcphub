@@ -219,10 +219,6 @@ func TestDetachedOversizedResultReturnsSpooledReceipt(t *testing.T) {
 	st, _ := openHubStore(t)
 	cfg := &config.Config{ResponseBudget: "900B"}
 	original := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: strings.Repeat("bg-data-", 600)}}}
-	expected, err := json.Marshal(original)
-	if err != nil {
-		t.Fatal(err)
-	}
 	release := make(chan struct{})
 	session, tool := gatedDownstream(t, release, original)
 	h := New(cfg, st, nil)
@@ -234,6 +230,17 @@ func TestDetachedOversizedResultReturnsSpooledReceipt(t *testing.T) {
 	}
 	close(release)
 	done := waitDetachedStatus(t, h, id, DetachedDone)
+	// The spool preserves the result exactly as the wire delivered it; the SDK
+	// adds envelope fields beyond the locally constructed value, so derive the
+	// expected bytes from a direct downstream call.
+	wireRes, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "slow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := json.Marshal(wireRes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	receipt, ok := done.Result.StructuredContent.(resultReceipt)
 	if !ok || receipt.CallID == "" {
 		t.Fatalf("oversized detached result did not finalize into a receipt: %#v", done.Result.StructuredContent)

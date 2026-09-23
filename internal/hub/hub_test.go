@@ -624,11 +624,19 @@ func TestBoundedLosslessMountedCallReconstructsExactResult(t *testing.T) {
 		},
 		IsError: true,
 	}
-	expected, err := json.Marshal(original)
+	downstreamSession, tool := inMemoryDownstream(t, original)
+	// The lossless contract covers the result exactly as it appears on the
+	// wire: the SDK adds envelope fields (resultType, _meta) the locally
+	// constructed value does not carry, so the expected bytes come from a
+	// direct downstream call rather than marshaling `original`.
+	wireRes, err := downstreamSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "large"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	downstreamSession, tool := inMemoryDownstream(t, original)
+	expected, err := json.Marshal(wireRes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := New(cfg, st, nil)
 	h.downstreams = []*Downstream{{Name: "memory", session: downstreamSession, Tools: []*mcp.Tool{tool}}}
 

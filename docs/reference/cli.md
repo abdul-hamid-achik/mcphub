@@ -572,6 +572,7 @@ mcphub mcp serve --listen 127.0.0.1:9820
 | -------------- | ----------- |
 | `--agent <name>` | Apply this agent's `servers`/`tools` call scope and optional `pin`/`tool_schema_budget` advertisement policy from `mcphub.yaml`. Downstreams see `mcphub/<name>` as the connecting client, so caller ledgers can tell agents apart. |
 | `--listen host:port` | Serve streamable HTTP instead of stdio (overrides config `listen:`). |
+| `--stateless` | With `--listen`, serve the stateless `2026-07-28` MCP protocol (same as `listen_stateless:` in `mcphub.yaml`). Older agents still connect, but without a server-to-agent channel they lose interactive-question relay and live `list_changed` updates. |
 
 You normally don't run stdio serve by hand — the agent launches it, because that's
 what [`mcphub sync`](#sync) writes into the agent's config in gateway mode.

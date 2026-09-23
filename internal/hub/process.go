@@ -45,7 +45,11 @@ var (
 // SDK intentionally exposes only the protocol connection, so mcphub retains a
 // small stderr tail itself and consults it only when the handshake fails.
 type preparedTransport struct {
-	transport            mcp.Transport
+	transport mcp.Transport
+	// remote reports whether the transport is a network connection (streamable
+	// HTTP or legacy SSE) rather than a spawned stdio child. Callers use it to
+	// enable keepalive pings, which matter for silently-dead TCP connections.
+	remote               bool
 	stderr               *boundedDiagnosticBuffer
 	redactions           []string
 	safeEnvironmentNames map[string]struct{}
@@ -56,9 +60,9 @@ func prepareTransport(srv config.Server) preparedTransport {
 		httpClient := httpClientFor(srv)
 		switch srv.Transport {
 		case "sse":
-			return preparedTransport{transport: &mcp.SSEClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}}
+			return preparedTransport{transport: &mcp.SSEClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}, remote: true}
 		default: // "http" or unset
-			return preparedTransport{transport: &mcp.StreamableClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}}
+			return preparedTransport{transport: &mcp.StreamableClientTransport{Endpoint: srv.URL, HTTPClient: httpClient}, remote: true}
 		}
 	}
 

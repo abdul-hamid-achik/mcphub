@@ -6,6 +6,18 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+### Added
+- **MCP 2026-07-28 support** (go-sdk v1.7.0). `listen_stateless: true` (or `--stateless` on `mcp serve --listen` / `up`) serves the stateless protocol on the HTTP listener; it has no server-to-agent channel, so pre-2026 agents lose interactive-question relay and live `list_changed` updates there. Default stays stateful.
+- **Interactive tools are relayed.** A downstream `input-required` round (e.g. "allow this action?") reaches the agent as an elicitation on mounted `server__tool` calls and `call_tool`, and the answer flows back so the call continues. Detached calls return a clear tool error instead.
+- Downstream keepalive pings for remote (HTTP/SSE) servers, so silently dead connections are healed.
+- Prompt and resource `list_changed` notifications refresh the gateway surface, like tool changes already did.
+
+### Fixed
+- Downstream tool, resource and prompt lists follow pagination cursors instead of silently keeping only the first page.
+- A JSON-RPC error from a downstream fails that call without tearing down and reconnecting its session.
+- `get_result` pages are measured against the response budget including the SDK envelope, and shrink until they fit.
+- A catalog refresh that fails to list resources or prompts keeps the last known catalog instead of wiping it.
+
 ## [0.25.2] - 2026-09-22
 
 ### Fixed

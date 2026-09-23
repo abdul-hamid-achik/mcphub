@@ -86,6 +86,7 @@ agents:
 | `connect_timeout` | duration string | no | Per-downstream connect timeout, e.g. `30s`, `60s`, `2m`. Default `30s`. |
 | `call_timeout` | duration string | no | Gateway-side call bound, e.g. `10m`, `30m`, `1h`. Default `30m`. Clamps a caller's `timeout_ms` and bounds how long a detached (`detach: true`) call may run in the background. It is **not** a blanket ceiling: a synchronous `call_tool` without `timeout_ms`, and any directly-mounted (`expose: all`) tool call, is bounded only by the client's own request deadline. |
 | `listen` | `host:port` | no | Shared streamable-HTTP bind, e.g. `127.0.0.1:9820`. When set, `mcphub sync` writes this URL into gateway-mode agents and `mcphub up` (or `mcp serve --listen`) serves one daemon instead of a stdio process per agent. |
+| `listen_stateless` | bool | no | Serve the stateless `2026-07-28` MCP protocol on the HTTP listener (`--stateless` on `mcp serve` / `up` is equivalent). Default `false` keeps stateful sessions. Stateless mode has no server-to-agent channel: `2026-07-28` agents still receive interactive questions inline (input-required results), but agents on older protocol versions — which still connect — lose the elicitation relay (such calls fail with an error) and live `list_changed` updates. Enable it once your agents speak `2026-07-28`. |
 | `servers` | map | yes | The downstream MCP servers mcphub manages. |
 | `groups` | map | no | Named bundles of server names. |
 | `agents` | map | yes | The agent harnesses mcphub keeps in sync. |

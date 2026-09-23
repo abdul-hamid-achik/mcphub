@@ -110,8 +110,17 @@ The registry is memory-only — a gateway restart makes old detached callIds rep
   and `charm.land/lipgloss/v2` — **not** `github.com/charmbracelet/bubbletea`.
   (`github.com/charmbracelet/log` and the `charmbracelet/x/*` helpers keep their
   github paths; only bubbletea/lipgloss v2 are on `charm.land`.)
-- **MCP SDK** is `github.com/modelcontextprotocol/go-sdk/mcp` (v1.6.1). The hub
-  is a `mcp.Client`; the gateway is an `mcp.Server` on `StdioTransport`.
+- **MCP SDK** is `github.com/modelcontextprotocol/go-sdk/mcp` (v1.7.0). The hub
+  is a `mcp.Client`; the gateway is an `mcp.Server` on `StdioTransport` (or
+  streamable HTTP with `--listen`; `listen_stateless`/`--stateless` serves the
+  stateless 2026-07-28 protocol). Downstream clients keep the SDK's automatic
+  multi-round-trip middleware off (`MultiRoundTrip.Disabled`) so the gateway is
+  the single retry point: `CallWithInput` relays 2026-07-28 input-required
+  rounds to the agent (the SDK's server middleware elicits and retries) and
+  echoes `InputResponses`/`RequestState` back downstream; detached calls
+  convert the round into a tool error. JSON-RPC errors (real protocol
+  refusals, except the SDK's -32005 transport-rejection code) fail the call
+  without invalidating the session.
 - **Errors** are returned immediately and wrapped with `fmt.Errorf("...: %w", err)`.
   Never `os.Exit` in library code — only in `main.go` / the CLI entrypoint.
 - **Tests** are table-driven where it pays (config validation, harness diff/round-trip,

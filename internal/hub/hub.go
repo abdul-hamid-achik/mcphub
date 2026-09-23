@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -26,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/log"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
@@ -323,18 +325,11 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 		srv.Headers = resolved
 	}
 
+	prepared := prepareTransport(srv)
 	client := mcp.NewClient(
 		&mcp.Implementation{Name: h.clientName(), Version: version.Version},
-		&mcp.ClientOptions{
-			ToolListChangedHandler: func(_ context.Context, req *mcp.ToolListChangedRequest) {
-				// Coalesce notifications before starting work. A notification
-				// can arrive while connectOne is still listing tools, so the
-				// downstream is activated only after it is published in Hub.
-				h.requestDownstreamToolRefresh(d, req.Session)
-			},
-		},
+		h.downstreamClientOptions(prepared.remote, d),
 	)
-	prepared := prepareTransport(srv)
 	session, err := client.Connect(cctx, prepared.transport, nil)
 	if err != nil {
 		if detail := prepared.startupDetail(); detail != "" {
@@ -345,7 +340,7 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 		return d
 	}
 	d.toolRefreshMu.Lock()
-	list, err := session.ListTools(cctx, nil)
+	tools, err := listAllTools(cctx, session)
 	d.toolRefreshMu.Unlock()
 	if err != nil {
 		_ = session.Close()
@@ -353,10 +348,74 @@ func (h *Hub) connectOne(ctx context.Context, name string, srv config.Server) *D
 		return d
 	}
 	d.setConnection(session, nil)
-	d.setTools(list.Tools)
+	d.setTools(tools)
 	d.setResources(listResources(cctx, session))
 	d.setPrompts(listPrompts(cctx, session))
 	return d
+}
+
+// Downstream keepalive pings apply to network transports only. A remote TCP
+// connection can die silently (NAT/VPN timeouts); periodic pings surface that
+// as a connection failure the watcher can heal. Stdio children are excluded on
+// purpose: a minimal single-threaded server busy in a long tool call may not
+// answer pings in time, and killing its session would fail calls whose outcome
+// is unknown. Servers that reject ping outright (2026-07-28 removed it) make
+// the SDK stop the keepalive loop on the first MethodNotFound.
+const (
+	remoteKeepAliveInterval = 30 * time.Second
+	remoteKeepAliveFailures = 3
+)
+
+// downstreamClientOptions builds the client options for one downstream
+// connection: live catalog refresh on any list-changed notification, remote
+// keepalive when applicable, and the multi-round-trip policy below.
+func (h *Hub) downstreamClientOptions(remote bool, d *Downstream) *mcp.ClientOptions {
+	opts := &mcp.ClientOptions{
+		ToolListChangedHandler: func(_ context.Context, req *mcp.ToolListChangedRequest) {
+			// Coalesce notifications before starting work. A notification
+			// can arrive while connectOne is still listing tools, so the
+			// downstream is activated only after it is published in Hub.
+			h.requestDownstreamCatalogRefresh(d, req.Session)
+		},
+		PromptListChangedHandler: func(_ context.Context, req *mcp.PromptListChangedRequest) {
+			h.requestDownstreamCatalogRefresh(d, req.Session)
+		},
+		ResourceListChangedHandler: func(_ context.Context, req *mcp.ResourceListChangedRequest) {
+			h.requestDownstreamCatalogRefresh(d, req.Session)
+		},
+		// A downstream on the 2026-07-28 protocol may answer a tool call with
+		// an "input-required" result. Keep the SDK's automatic client-side
+		// multi-round-trip middleware off so the hub stays the single retry
+		// point: CallWithInput relays the round to the gateway server, whose
+		// own MRTR middleware elicits the agent (or forwards the
+		// input-required result to a 2026-07-28 client) and retries with the
+		// agent's answers. Detached calls convert the round to a clear error.
+		MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
+	}
+	if remote {
+		opts.KeepAlive = remoteKeepAliveInterval
+		opts.KeepAliveFailureThreshold = remoteKeepAliveFailures
+	}
+	return opts
+}
+
+// inputRequiredResult replaces a 2026-07-28 "input-required" tool result with
+// an actionable error on paths that cannot relay it (detached calls, or a
+// caller that did not opt in via CallOptions). There is no agent request left
+// to answer the question, and forwarding the raw inputRequests envelope would
+// hand the caller a payload it has no way to fulfill.
+func inputRequiredResult(namespaced string, original *mcp.CallToolResult) *mcp.CallToolResult {
+	detail := ""
+	if n := len(original.InputRequests); n > 0 {
+		detail = fmt.Sprintf(" (%d pending input request(s))", n)
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(
+			"tool %s asked for interactive input%s, which cannot be answered on this path (a detached call has no agent request to relay the question to). Call it synchronously (without detach) so the question reaches you, or configure the tool to avoid interactive input.",
+			namespaced, detail,
+		)}},
+		IsError: true,
+	}
 }
 
 func (d *Downstream) activateToolRefresh(h *Hub) {
@@ -373,7 +432,7 @@ func (d *Downstream) activateToolRefresh(h *Hub) {
 	d.refreshStateMu.Unlock()
 	if start {
 		session, _ := d.connectionSnapshot()
-		go h.runDownstreamToolRefresh(d, session)
+		go h.runDownstreamCatalogRefresh(d, session)
 	}
 }
 
@@ -384,7 +443,7 @@ func (d *Downstream) deactivateToolRefresh() {
 	d.refreshStateMu.Unlock()
 }
 
-func (h *Hub) requestDownstreamToolRefresh(d *Downstream, session *mcp.ClientSession) {
+func (h *Hub) requestDownstreamCatalogRefresh(d *Downstream, session *mcp.ClientSession) {
 	if session == nil || h.closing.Load() {
 		return
 	}
@@ -397,13 +456,13 @@ func (h *Hub) requestDownstreamToolRefresh(d *Downstream, session *mcp.ClientSes
 	}
 	d.refreshStateMu.Unlock()
 	if start {
-		go h.runDownstreamToolRefresh(d, session)
+		go h.runDownstreamCatalogRefresh(d, session)
 	}
 }
 
-func (h *Hub) runDownstreamToolRefresh(d *Downstream, session *mcp.ClientSession) {
+func (h *Hub) runDownstreamCatalogRefresh(d *Downstream, session *mcp.ClientSession) {
 	for {
-		h.refreshDownstreamTools(h.shutdownCtx, d, session)
+		h.refreshDownstreamCatalogs(h.shutdownCtx, d, session)
 
 		d.refreshStateMu.Lock()
 		if !d.refreshLive || h.closing.Load() {
@@ -423,7 +482,12 @@ func (h *Hub) runDownstreamToolRefresh(d *Downstream, session *mcp.ClientSession
 	}
 }
 
-func (h *Hub) refreshDownstreamTools(ctx context.Context, d *Downstream, session *mcp.ClientSession) {
+// refreshDownstreamCatalogs re-lists every downstream catalog (tools,
+// resources, prompts) and installs them atomically. Any list-changed
+// notification routes here: tools changed historically, and prompt/resource
+// changes flow through the same coalesced path so the gateway surface stays
+// current without waiting for a reconnect.
+func (h *Hub) refreshDownstreamCatalogs(ctx context.Context, d *Downstream, session *mcp.ClientSession) {
 	if session == nil || h.closing.Load() {
 		return
 	}
@@ -431,18 +495,29 @@ func (h *Hub) refreshDownstreamTools(ctx context.Context, d *Downstream, session
 	defer d.toolRefreshMu.Unlock()
 	rctx, cancel := context.WithTimeout(ctx, h.connectTimeout)
 	defer cancel()
-	list, err := session.ListTools(rctx, nil)
+	list, err := listAllTools(rctx, session)
 	if err != nil {
 		h.log.Warn("refresh downstream tools failed", "server", d.Name, "err", err)
 		return
 	}
+	// Resource and prompt listing failures are non-fatal (downstreams without
+	// those capabilities error, and a refresh can hit a transient failure):
+	// keep the last known catalog rather than wiping it on an error.
+	resources, resErr := listAllResources(rctx, session)
+	prompts, promptErr := listAllPrompts(rctx, session)
 
 	installed := false
 	h.mu.Lock()
 	for _, current := range h.downstreams {
 		currentSession, _ := current.connectionSnapshot()
 		if !h.closing.Load() && current == d && currentSession == session && current.Connected() {
-			d.setTools(list.Tools)
+			d.setTools(list)
+			if resErr == nil {
+				d.setResources(resources)
+			}
+			if promptErr == nil {
+				d.setPrompts(prompts)
+			}
 			installed = true
 			break
 		}
@@ -764,21 +839,21 @@ func (h *Hub) PublicNamespaced(server, downstreamTool string) string {
 }
 
 // forward returns a raw passthrough handler used when a tool is mounted
-// directly (expose: all). It simply relays to Call.
+// directly (expose: all). It relays to Call, echoing any multi-round-trip
+// state so elicitation retries from the gateway reach the downstream.
 func (h *Hub) forward(server, toolName, namespaced string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args json.RawMessage
-		if req.Params != nil {
+		opts := &CallOptions{AllowInputRequests: true}
+		if req != nil && req.Params != nil {
 			args = req.Params.Arguments
+			opts.InputResponses = req.Params.InputResponses
+			opts.RequestState = req.Params.RequestState
 		}
-		return h.Call(ctx, server, toolName, args)
+		return h.CallWithInput(ctx, server, toolName, args, opts)
 	}
 }
 
-// Call forwards a tool invocation to a downstream server by name, records the
-// telemetry, and applies the configured bounded-lossless result policy. It is
-// the single code path used by directly mounted, pinned, and lazy meta-tool
-// calls.
 // ReconnectOne immediately reconnects a single downstream by name. Returns
 // true if the server is connected on return — either because this call
 // reconnected it or because a concurrent reconnect already had. Call uses this
@@ -886,7 +961,33 @@ func normalizeArgs(args json.RawMessage) json.RawMessage {
 	return args
 }
 
+// CallOptions carries the multi-round-trip (2026-07-28) state of one forwarded
+// tool call. When a downstream answers with an input-required result, the
+// gateway's SDK middleware elicits the agent and retries the call; the retry
+// arrives here so the same exchange can be echoed back to the downstream.
+type CallOptions struct {
+	// InputResponses and RequestState echo the previous input-required round
+	// back to the downstream, exactly as the agent answered it.
+	InputResponses mcp.InputResponseMap
+	RequestState   string
+	// AllowInputRequests lets an input-required result flow back to the
+	// gateway caller, where the SDK middleware bridges it to the agent.
+	// Detached calls leave it false — no agent request exists to answer — so
+	// Call converts the round into a clear tool error instead.
+	AllowInputRequests bool
+}
+
+// Call forwards a tool invocation to a downstream server by name, records the
+// telemetry, and applies the configured bounded-lossless result policy. It is
+// the single code path used by directly mounted, pinned, and lazy meta-tool
+// calls.
 func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessage) (*mcp.CallToolResult, error) {
+	return h.CallWithInput(ctx, server, tool, args, nil)
+}
+
+// CallWithInput is Call with multi-round-trip state (see CallOptions). A nil
+// opts behaves as Call and never relays input-required results.
+func (h *Hub) CallWithInput(ctx context.Context, server, tool string, args json.RawMessage, opts *CallOptions) (*mcp.CallToolResult, error) {
 	args = normalizeArgs(args)
 	d, err := h.awaitDownstream(ctx, server)
 	if err != nil {
@@ -904,9 +1005,30 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 	// Telemetry and receipts use the clean public form; the wire call below
 	// still uses the exact downstream tool name.
 	namespaced := h.PublicNamespaced(server, tool)
+	params := &mcp.CallToolParams{Name: tool, Arguments: args}
+	if opts != nil {
+		params.InputResponses = opts.InputResponses
+		params.RequestState = opts.RequestState
+	}
 	start := time.Now()
-	res, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
+	res, callErr := session.CallTool(ctx, params)
 	if callErr != nil {
+		// A JSON-RPC error is a protocol-level refusal from the downstream —
+		// an unfulfillable elicitation, invalid params, a server bug — not a
+		// lost connection. The call was answered, so the session stays valid:
+		// record it and fail this call without invalidating or reconnecting.
+		// The SDK's reserved -32005 ("rejected by transport", its unexported
+		// ErrRejected) is the exception: those never got a real JSON-RPC
+		// response — an HTTP failure after the downstream may already have
+		// executed — and must stay on the outcome-unknown path. Errors seen
+		// while the hub is closing keep their dedicated shutdown semantics.
+		const jsonrpcRejectedByTransport = -32005
+		var jsonrpcErr *jsonrpc.Error
+		if !h.closing.Load() &&
+			errors.As(callErr, &jsonrpcErr) && jsonrpcErr.Code != jsonrpcRejectedByTransport {
+			h.record(ctx, server, tool, namespaced, time.Since(start), callErr, len(args), 0, res)
+			return nil, fmt.Errorf("call %s: %w", namespaced, callErr)
+		}
 		h.record(ctx, server, tool, namespaced, time.Since(start), callErr, len(args), 0, res)
 		// A transport/protocol failure does not prove the downstream skipped the
 		// operation: it may have completed and lost only the response. Reconnect
@@ -928,6 +1050,18 @@ func (h *Hub) Call(ctx context.Context, server, tool string, args json.RawMessag
 			return nil, fmt.Errorf("call %s outcome unknown after transport failure: %w (connection restored for future calls; request was not retried)", namespaced, callErr)
 		}
 		return nil, fmt.Errorf("call %s outcome unknown after transport failure: %w (reconnect failed; request was not retried and the background watcher will restore the connection)", namespaced, callErr)
+	}
+	// The 2026-07-28 protocol lets a downstream answer with an "input-required"
+	// result instead of a final one. On the synchronous paths the gateway
+	// relays it: returning the result as-is hands it to the SDK's
+	// multi-round-trip middleware, which elicits the agent (or forwards the
+	// input-required result to a 2026-07-28 client) and retries this call with
+	// the agent's answers in CallOptions. Automatic client-side MRTR is
+	// disabled (see downstreamClientOptions) so the hub stays the single
+	// retry point. Detached calls have no agent request to answer, so the
+	// round converts to a clear tool error instead.
+	if res != nil && res.NeedsInput() && (opts == nil || !opts.AllowInputRequests) {
+		res = inputRequiredResult(namespaced, res)
 	}
 	return h.finalizeCall(ctx, server, tool, namespaced, time.Since(start), len(args), res), nil
 }

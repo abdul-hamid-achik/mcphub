@@ -13,22 +13,22 @@ func listResources(ctx context.Context, session *mcp.ClientSession) []*mcp.Resou
 	if session == nil {
 		return nil
 	}
-	list, err := session.ListResources(ctx, nil)
-	if err != nil || list == nil {
+	resources, err := listAllResources(ctx, session)
+	if err != nil {
 		return nil
 	}
-	return list.Resources
+	return resources
 }
 
 func listPrompts(ctx context.Context, session *mcp.ClientSession) []*mcp.Prompt {
 	if session == nil {
 		return nil
 	}
-	list, err := session.ListPrompts(ctx, nil)
-	if err != nil || list == nil {
+	prompts, err := listAllPrompts(ctx, session)
+	if err != nil {
 		return nil
 	}
-	return list.Prompts
+	return prompts
 }
 
 // ResourceURI is the gateway-facing URI for a downstream resource.

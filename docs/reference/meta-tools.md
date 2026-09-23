@@ -165,6 +165,15 @@ Transport failures are reported as **outcome unknown**. mcphub reconnects the
 server for future calls but deliberately does not replay the request: receiving
 no response does not prove that a downstream mutation did not happen.
 
+Interactive tools are relayed. A downstream on the `2026-07-28` protocol may
+answer a call with an *input-required* round ("allow this action?") instead of
+a final result — the gateway forwards that question to the agent as an
+elicitation, and your answer (accept / decline / cancel) flows back so the call
+continues automatically. This works for mounted `server__tool` calls and for
+`call_tool` alike, and needs no extra arguments. Detached (`detach: true`)
+calls cannot ask questions — a tool that needs input fails with a clear error
+instead.
+
 Two optional arguments cover long-running downstream work:
 
 - **`detach: true`** — start the call in the background and return an

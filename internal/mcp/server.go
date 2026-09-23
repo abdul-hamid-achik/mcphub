@@ -631,7 +631,7 @@ func resolveHint(ambiguous bool, namespaced string, templateTruncated bool) stri
 	return "use call_tool with server + tool (or the namespaced name) + the argument_template filled in"
 }
 
-func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in callInput) (*sdk.CallToolResult, any, error) {
+func (s *Server) handleCallTool(ctx context.Context, req *sdk.CallToolRequest, in callInput) (*sdk.CallToolResult, any, error) {
 	server, tool := splitNamespaced(in.Server, in.Tool)
 	if server == "" || tool == "" {
 		return nil, nil, fmt.Errorf("need server and tool (or a server__tool name)")
@@ -654,6 +654,14 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 			return nil, nil, fmt.Errorf("marshal arguments: %w", err)
 		}
 		args = b
+	}
+	// Echo multi-round-trip state so elicitation retries reach the downstream;
+	// input-required results flow back for the SDK middleware to bridge to the
+	// agent the same way directly mounted tools do.
+	opts := &hub.CallOptions{AllowInputRequests: true}
+	if req != nil && req.Params != nil {
+		opts.InputResponses = req.Params.InputResponses
+		opts.RequestState = req.Params.RequestState
 	}
 	timeout := s.effectiveCallTimeout(in.TimeoutMs)
 	if in.Detach {
@@ -683,7 +691,7 @@ func (s *Server) handleCallTool(ctx context.Context, _ *sdk.CallToolRequest, in 
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	res, err := s.hub.Call(hub.ContextWithVia(ctx, hub.ViaCallTool), server, tool, args)
+	res, err := s.hub.CallWithInput(hub.ContextWithVia(ctx, hub.ViaCallTool), server, tool, args, opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("call %s: %w", publicNS, err)
 	}
@@ -747,6 +755,13 @@ func (s *Server) handlePollResult(_ context.Context, _ *sdk.CallToolRequest, in 
 
 const maxResultPageSize int64 = 8 * 1024
 
+// sdkEnvelopeMargin reserves bytes the SDK may add to a CallToolResult after
+// the handler returns — per-request _meta and protocol envelope fields on the
+// 2026-07-28 wire format add roughly a hundred bytes that the handler cannot
+// see. The get_result shrink loop compares this margin against the response
+// budget so the envelope the agent actually receives stays bounded.
+const sdkEnvelopeMargin = 192
+
 func (s *Server) resultPageSize() int64 {
 	if s.cfg == nil {
 		return maxResultPageSize
@@ -755,9 +770,11 @@ func (s *Server) resultPageSize() int64 {
 	if budget <= 0 {
 		return maxResultPageSize
 	}
-	// Data is base64-encoded into both text and structured MCP content. Reserve
-	// the observed fixed envelope plus a conservative 3x expansion factor; this
-	// keeps even the minimum valid 512-byte budget bounded.
+	// First guess only: handleGetResult verifies the real envelope (including
+	// SDK additions beyond the handler) against the budget and shrinks until it
+	// fits. Data is base64-encoded into both text and structured MCP content;
+	// the 3x divisor covers that expansion plus a fixed envelope allowance,
+	// keeping even the minimum valid 512-byte budget bounded.
 	const envelopeHeadroom = 448
 	available := budget - envelopeHeadroom
 	if available < 1 {
@@ -770,6 +787,54 @@ func (s *Server) resultPageSize() int64 {
 	return size
 }
 
+func (s *Server) responseBudget() int {
+	if s.cfg == nil {
+		return 0
+	}
+	return s.cfg.ResponseBudgetBytes()
+}
+
+// pageResult builds one get_result page. The JSON text is compact, unlike the
+// pretty-printed management-tool result(): a page is dominated by base64 data,
+// and indentation only spends response budget. withText reports whether the
+// duplicated text form is included; under tight budgets the structured form
+// alone is returned because an agent can always read structuredContent.
+func pageResult(callID string, page store.ResultPage, withText bool) (*sdk.CallToolResult, any) {
+	payload := map[string]any{
+		"status":     "ok",
+		"callId":     callID,
+		"mediaType":  "application/json",
+		"data":       base64.StdEncoding.EncodeToString(page.Data),
+		"cursor":     page.Cursor,
+		"nextCursor": page.NextCursor,
+		"done":       page.Done,
+		"totalBytes": page.TotalBytes,
+	}
+	res := &sdk.CallToolResult{StructuredContent: payload}
+	if withText {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			b = []byte("{}") // a flat map of primitives cannot fail in practice
+		}
+		res.Content = []sdk.Content{&sdk.TextContent{Text: string(b)}}
+	}
+	return res, payload
+}
+
+// fitsBudget reports whether the marshaled result envelope plus the SDK's
+// envelope margin stays within the configured response budget.
+func (s *Server) fitsBudget(res *sdk.CallToolResult) bool {
+	budget := s.responseBudget()
+	if budget <= 0 {
+		return true
+	}
+	encoded, err := json.Marshal(res)
+	if err != nil {
+		return true // cannot measure; the original full-size page is still returned
+	}
+	return len(encoded)+sdkEnvelopeMargin <= budget
+}
+
 func (s *Server) handleGetResult(ctx context.Context, _ *sdk.CallToolRequest, in getResultInput) (*sdk.CallToolResult, any, error) {
 	if strings.TrimSpace(in.CallID) == "" {
 		return nil, nil, fmt.Errorf("callId is required")
@@ -780,38 +845,53 @@ func (s *Server) handleGetResult(ctx context.Context, _ *sdk.CallToolRequest, in
 	if s.store == nil {
 		return nil, nil, fmt.Errorf("result store not configured")
 	}
-	page, err := s.store.ReadResultPage(ctx, in.CallID, in.Cursor, s.resultPageSize())
-	switch {
-	case errors.Is(err, store.ErrResultNotFound), errors.Is(err, store.ErrResultExpired):
-		return result(map[string]any{
-			"status": "unavailable",
-			"reason": "The callId is unknown or its stored result has expired.",
-			"callId": in.CallID,
-		})
-	case err != nil && !errors.Is(err, store.ErrResultCursorOutOfRange):
-		return nil, nil, fmt.Errorf("read stored result: %w", err)
+	size := s.resultPageSize()
+	for {
+		page, err := s.store.ReadResultPage(ctx, in.CallID, in.Cursor, size)
+		switch {
+		case errors.Is(err, store.ErrResultNotFound), errors.Is(err, store.ErrResultExpired):
+			return result(map[string]any{
+				"status": "unavailable",
+				"reason": "The callId is unknown or its stored result has expired.",
+				"callId": in.CallID,
+			})
+		case err != nil && !errors.Is(err, store.ErrResultCursorOutOfRange):
+			return nil, nil, fmt.Errorf("read stored result: %w", err)
+		}
+		if !s.scope.allows(page.Server, page.Tool) {
+			return nil, nil, fmt.Errorf("stored result for %s__%s is out of scope for this agent", page.Server, page.Tool)
+		}
+		if errors.Is(err, store.ErrResultCursorOutOfRange) {
+			return result(map[string]any{
+				"status": "cursor_out_of_range",
+				"reason": "cursor is beyond the end of the stored result",
+				"callId": in.CallID,
+				"cursor": in.Cursor,
+			})
+		}
+		// Enforce the budget against the envelope the agent receives. The page
+		// size above is only a guess: protocol envelope growth (per-request
+		// _meta, resultType) can push a full page over. Prefer the text+structured
+		// form; under tight budgets fall back to structured-only (the SDK's
+		// typed-tool wrapper re-adds a JSON text block whenever the typed output
+		// is non-nil, so the structured-only form must return nil output), then
+		// halve the page. A budget too small for any envelope returns the
+		// structured 1-byte page as best effort.
+		if res, payload := pageResult(in.CallID, page, true); s.fitsBudget(res) {
+			return res, payload, nil
+		}
+		if res, _ := pageResult(in.CallID, page, false); s.fitsBudget(res) {
+			return res, nil, nil
+		}
+		if size <= 1 {
+			res, _ := pageResult(in.CallID, page, false)
+			return res, nil, nil
+		}
+		size /= 2
+		if size < 1 {
+			size = 1
+		}
 	}
-	if !s.scope.allows(page.Server, page.Tool) {
-		return nil, nil, fmt.Errorf("stored result for %s__%s is out of scope for this agent", page.Server, page.Tool)
-	}
-	if errors.Is(err, store.ErrResultCursorOutOfRange) {
-		return result(map[string]any{
-			"status": "cursor_out_of_range",
-			"reason": "cursor is beyond the end of the stored result",
-			"callId": in.CallID,
-			"cursor": in.Cursor,
-		})
-	}
-	return result(map[string]any{
-		"status":     "ok",
-		"callId":     in.CallID,
-		"mediaType":  "application/json",
-		"data":       base64.StdEncoding.EncodeToString(page.Data),
-		"cursor":     page.Cursor,
-		"nextCursor": page.NextCursor,
-		"done":       page.Done,
-		"totalBytes": page.TotalBytes,
-	})
 }
 
 func (s *Server) handleStats(ctx context.Context, _ *sdk.CallToolRequest, _ emptyInput) (*sdk.CallToolResult, any, error) {
@@ -844,6 +924,13 @@ If only a handful of management tools are listed, the rest are still available:
 5. Huge results come back as a ` + "`callId`" + `; page with ` + "`get_result`" + `.
 
 Pinned tools (if any) can be called by their ` + "`server__tool`" + ` name directly.
+
+## Interactive tools
+
+Some tools ask a question mid-call ("allow this action?"). The gateway relays
+that question to you; answer it and the call continues automatically — accept
+runs it, decline/cancel tells the tool to stop. Detached (` + "`detach: true`" + `) calls
+cannot ask questions; a tool that needs input fails with a clear error instead.
 
 ## Resources and prompts
 
@@ -924,8 +1011,13 @@ func (s *Server) Reload(cfg *config.Config) error {
 	return nil
 }
 
-// RunHTTP serves the gateway over streamable HTTP at addr (host:port).
-func (s *Server) RunHTTP(ctx context.Context, addr string) error {
+// RunHTTP serves the gateway over streamable HTTP at addr (host:port). With
+// stateless set, the listener advertises the 2026-07-28 protocol: requests are
+// stateless (identity travels per-request in _meta, no sessions), so clients
+// that support it skip the initialize handshake. Stateless mode has no
+// server-to-client channel (the SDK rejects server requests and GET streams),
+// so older clients still connect but lose elicitation relay and list_changed.
+func (s *Server) RunHTTP(ctx context.Context, addr string, stateless bool) error {
 	changes, unsubscribe := s.hub.SubscribeChanges()
 	defer unsubscribe()
 	defer s.hub.Close()
@@ -948,7 +1040,7 @@ func (s *Server) RunHTTP(ctx context.Context, addr string) error {
 
 	handler := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server {
 		return s.srv
-	}, nil)
+	}, &sdk.StreamableHTTPOptions{Stateless: stateless})
 	httpSrv := &http.Server{Addr: addr, Handler: handler}
 	go func() {
 		<-ctx.Done()

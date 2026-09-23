@@ -28,6 +28,7 @@ func newMCPCmd() *cobra.Command {
 
 func newMCPServeCmd() *cobra.Command {
 	var agentName, listen string
+	var stateless bool
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the gateway MCP server (stdio, or HTTP with --listen)",
@@ -40,19 +41,26 @@ streamable HTTP instead so many agents can share one process. The same address
 can be set as listen: in mcphub.yaml; then mcphub sync writes that URL into
 gateway-mode agents and mcphub up starts this listener.
 
+--stateless (or listen_stateless: in mcphub.yaml) makes the HTTP listener serve
+the stateless 2026-07-28 MCP protocol. Older agents still connect, but there is
+no server-to-agent channel: they lose interactive-question relay and live
+list_changed updates.
+
 When --agent <name> is given, the gateway applies that agent's servers/tools
 scope plus optional pin and tool_schema_budget.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runGateway(agentName, listen)
+			return runGateway(agentName, listen, stateless)
 		},
 	}
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent name this gateway serves (applies servers/tools scope and pin/schema advertisement policy)")
 	cmd.Flags().StringVar(&listen, "listen", "", "serve streamable HTTP on host:port instead of stdio (overrides config listen:)")
+	cmd.Flags().BoolVar(&stateless, "stateless", false, "serve the stateless 2026-07-28 protocol on the HTTP listener (or set listen_stateless: in mcphub.yaml)")
 	return cmd
 }
 
 func newUpCmd() *cobra.Command {
 	var listen string
+	var stateless bool
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Run a shared gateway daemon on streamable HTTP",
@@ -60,16 +68,21 @@ func newUpCmd() *cobra.Command {
 
 It listens on --listen, or listen: in mcphub.yaml, or 127.0.0.1:9820.
 Point gateway-mode agents at that URL (mcphub sync does this when listen: is set)
-instead of spawning mcphub mcp serve per session.`,
+instead of spawning mcphub mcp serve per session.
+
+--stateless (or listen_stateless: in mcphub.yaml) serves the stateless
+2026-07-28 MCP protocol (older agents connect but lose interactive-question
+relay and live list_changed updates).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runGateway("", listen)
+			return runGateway("", listen, stateless)
 		},
 	}
 	cmd.Flags().StringVar(&listen, "listen", "", "host:port (default: config listen: or 127.0.0.1:9820)")
+	cmd.Flags().BoolVar(&stateless, "stateless", false, "serve the stateless 2026-07-28 protocol (or set listen_stateless: in mcphub.yaml)")
 	return cmd
 }
 
-func runGateway(agentName, listenFlag string) error {
+func runGateway(agentName, listenFlag string, statelessFlag bool) error {
 	c, cfgPath, err := loadConfig()
 	if err != nil {
 		return err
@@ -115,7 +128,11 @@ func runGateway(agentName, listenFlag string) error {
 	srv.SetAgentName(agentName)
 
 	if listen != "" {
-		if err := srv.RunHTTP(ctx, listen); err != nil && ctx.Err() == nil {
+		stateless := statelessFlag || c.ListenStateless
+		if stateless {
+			logger.Info("HTTP listener serving the stateless 2026-07-28 protocol; pre-2026 agents lose elicitation relay and list_changed updates")
+		}
+		if err := srv.RunHTTP(ctx, listen, stateless); err != nil && ctx.Err() == nil {
 			return fmt.Errorf("mcp serve http: %w", err)
 		}
 		return nil

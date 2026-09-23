@@ -74,17 +74,18 @@ func marshalConfig(c *Config, format string) ([]byte, error) {
 
 // Config is the root of the mcphub config file (YAML, TOML, or JSON — see Load).
 type Config struct {
-	Version        int                 `yaml:"version" toml:"version" json:"version"`
-	Expose         string              `yaml:"expose,omitempty" toml:"expose,omitempty" json:"expose,omitempty"` // "all" (default) | "lazy"
-	Pin            []string            `yaml:"pin,omitempty" toml:"pin,omitempty" json:"pin,omitempty"`          // server__tool names always mounted, even in lazy mode
-	Servers        map[string]Server   `yaml:"servers" toml:"servers" json:"servers"`
-	Groups         map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
-	Agents         map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
-	ConnectTimeout string              `yaml:"connect_timeout,omitempty" toml:"connect_timeout,omitempty" json:"connect_timeout,omitempty"` // per-downstream connect timeout, e.g. "30s", "60s" (default 30s)
-	CallTimeout    string              `yaml:"call_timeout,omitempty" toml:"call_timeout,omitempty" json:"call_timeout,omitempty"`          // ceiling for one downstream call, e.g. "10m", "1h" (default 30m); clamps timeout_ms and bounds detached calls
-	Listen         string              `yaml:"listen,omitempty" toml:"listen,omitempty" json:"listen,omitempty"`                            // optional streamable HTTP bind, e.g. "127.0.0.1:9820"; gateway sync then writes this URL
-	ResponseBudget string              `yaml:"response_budget,omitempty" toml:"response_budget,omitempty" json:"response_budget,omitempty"` // max serialized result size before lossless spooling, e.g. "32KB" (default 32KB, "0" = unlimited)
-	Verbatim       bool                `yaml:"verbatim,omitempty" toml:"verbatim,omitempty" json:"verbatim,omitempty"`                      // pass downstream results through without bounded-result spooling
+	Version         int                 `yaml:"version" toml:"version" json:"version"`
+	Expose          string              `yaml:"expose,omitempty" toml:"expose,omitempty" json:"expose,omitempty"` // "all" (default) | "lazy"
+	Pin             []string            `yaml:"pin,omitempty" toml:"pin,omitempty" json:"pin,omitempty"`          // server__tool names always mounted, even in lazy mode
+	Servers         map[string]Server   `yaml:"servers" toml:"servers" json:"servers"`
+	Groups          map[string][]string `yaml:"groups,omitempty" toml:"groups,omitempty" json:"groups,omitempty"`
+	Agents          map[string]Agent    `yaml:"agents" toml:"agents" json:"agents"`
+	ConnectTimeout  string              `yaml:"connect_timeout,omitempty" toml:"connect_timeout,omitempty" json:"connect_timeout,omitempty"`    // per-downstream connect timeout, e.g. "30s", "60s" (default 30s)
+	CallTimeout     string              `yaml:"call_timeout,omitempty" toml:"call_timeout,omitempty" json:"call_timeout,omitempty"`             // ceiling for one downstream call, e.g. "10m", "1h" (default 30m); clamps timeout_ms and bounds detached calls
+	Listen          string              `yaml:"listen,omitempty" toml:"listen,omitempty" json:"listen,omitempty"`                               // optional streamable HTTP bind, e.g. "127.0.0.1:9820"; gateway sync then writes this URL
+	ListenStateless bool                `yaml:"listen_stateless,omitempty" toml:"listen_stateless,omitempty" json:"listen_stateless,omitempty"` // serve the stateless 2026-07-28 protocol on the HTTP listener; stateful sessions (2025-11-25) otherwise
+	ResponseBudget  string              `yaml:"response_budget,omitempty" toml:"response_budget,omitempty" json:"response_budget,omitempty"`    // max serialized result size before lossless spooling, e.g. "32KB" (default 32KB, "0" = unlimited)
+	Verbatim        bool                `yaml:"verbatim,omitempty" toml:"verbatim,omitempty" json:"verbatim,omitempty"`                         // pass downstream results through without bounded-result spooling
 }
 
 // Exposure controls how many tools the gateway advertises up front.
