@@ -6,6 +6,9 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+### Fixed
+- Stop injecting `TVAULT_PASSPHRASE_FILE=~/.config/secrets/env` into stdio downstreams. tvault resolves that file itself, and the injected explicit variable outranked tvault's `agent.passphrase_command`, so moving the passphrase into a password manager turned every vaulted spawn into an unlock error when no agent was running. An explicitly configured or inherited `TVAULT_PASSPHRASE_FILE` is still forwarded.
+
 ## [0.25.1] - 2026-09-04
 
 ### Changed

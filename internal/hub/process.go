@@ -96,8 +96,13 @@ func (p preparedTransport) startupDetail() string {
 // credentials long enough to unlock; TinyVault is responsible for removing
 // them before it execs its own child.
 func serverEnvironment(srv config.Server, inherited []string) []string {
+	// No TVAULT_PASSPHRASE_FILE is invented here. tvault (>= 0.21.1) already
+	// falls back to ~/.config/secrets/env on its own, and since 0.23 it skips
+	// that file once the passphrase has moved to agent.passphrase_command.
+	// Injecting the path as an explicit variable would outrank that command
+	// and turn a migrated file into a hard unlock error. An explicitly
+	// configured or inherited TVAULT_PASSPHRASE_FILE is still forwarded.
 	env := mergeEnvironment(inherited, srv.Env)
-	env = ensurePassphraseFile(env)
 	if srv.UsesVault() {
 		// A selected vault value must come from TinyVault, not from a stale
 		// ambient/exported value with the same name. This also avoids duplicate
@@ -180,38 +185,6 @@ func isTinyVaultRuntimeVariable(name string) bool {
 	default:
 		return false
 	}
-}
-
-// conventionalPassphraseFile is TinyVault's documented daemon unlock path.
-// GUI-launched gateways (Grok, Cursor) do not source a login shell, so
-// downstreams that themselves exec `tvault` (cairntrace accompany, fcheap)
-// inherit no TVAULT_* unless we supply the path. The file is 0600 and holds
-// the passphrase; we only pass the path.
-func conventionalPassphraseFile() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	path := filepath.Join(home, ".config", "secrets", "env")
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return ""
-	}
-	return path
-}
-
-func ensurePassphraseFile(env []string) []string {
-	for _, entry := range env {
-		name, value, ok := strings.Cut(entry, "=")
-		if ok && strings.EqualFold(name, "TVAULT_PASSPHRASE_FILE") && value != "" {
-			return env
-		}
-	}
-	path := conventionalPassphraseFile()
-	if path == "" {
-		return env
-	}
-	return append(env, "TVAULT_PASSPHRASE_FILE="+path)
 }
 
 func vaultSelectsEnvironmentName(srv config.Server, name string) bool {

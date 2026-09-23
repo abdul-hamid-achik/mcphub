@@ -95,7 +95,10 @@ func TestServerEnvironmentIsolatesTinyVaultCredentials(t *testing.T) {
 		}
 	})
 
-	t.Run("injects conventional passphrase file when unset", func(t *testing.T) {
+	t.Run("does not inject the conventional passphrase file", func(t *testing.T) {
+		// An injected explicit TVAULT_PASSPHRASE_FILE would outrank tvault's
+		// agent.passphrase_command and hard-fail once the file no longer holds
+		// the passphrase; tvault resolves the conventional file itself.
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		path := filepath.Join(home, ".config", "secrets", "env")
@@ -107,8 +110,8 @@ func TestServerEnvironmentIsolatesTinyVaultCredentials(t *testing.T) {
 		}
 		srv := config.Server{Command: "cairn", Args: []string{"mcp"}}
 		got := environmentMap(serverEnvironment(srv, []string{"PATH=/usr/bin", "HOME=" + home}))
-		if got["TVAULT_PASSPHRASE_FILE"] != path {
-			t.Errorf("TVAULT_PASSPHRASE_FILE = %q, want conventional %q", got["TVAULT_PASSPHRASE_FILE"], path)
+		if v, ok := got["TVAULT_PASSPHRASE_FILE"]; ok {
+			t.Errorf("TVAULT_PASSPHRASE_FILE = %q was injected; tvault must resolve %s itself", v, path)
 		}
 	})
 
