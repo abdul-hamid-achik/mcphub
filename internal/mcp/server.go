@@ -873,8 +873,9 @@ func (s *Server) handleGetResult(ctx context.Context, _ *sdk.CallToolRequest, in
 		// size above is only a guess: protocol envelope growth (per-request
 		// _meta, resultType) can push a full page over. Prefer the text+structured
 		// form; under tight budgets fall back to structured-only (the SDK's
-		// typed-tool wrapper re-adds a JSON text block whenever the typed output
-		// is non-nil, so the structured-only form must return nil output), then
+		// typed-tool wrapper synthesizes a JSON text block from a non-nil typed
+		// output when Content is empty, so the structured-only form returns nil
+		// output), then
 		// halve the page. A budget too small for any envelope returns the
 		// structured 1-byte page as best effort.
 		if res, payload := pageResult(in.CallID, page, true); s.fitsBudget(res) {

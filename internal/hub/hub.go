@@ -483,7 +483,9 @@ func (h *Hub) runDownstreamCatalogRefresh(d *Downstream, session *mcp.ClientSess
 }
 
 // refreshDownstreamCatalogs re-lists every downstream catalog (tools,
-// resources, prompts) and installs them atomically. Any list-changed
+// resources, prompts) and installs them together under the hub lock. A failed
+// resource or prompt listing keeps that catalog's last known contents, so an
+// install can be partial; the next refresh converges. Any list-changed
 // notification routes here: tools changed historically, and prompt/resource
 // changes flow through the same coalesced path so the gateway surface stays
 // current without waiting for a reconnect.
@@ -1022,6 +1024,8 @@ func (h *Hub) CallWithInput(ctx context.Context, server, tool string, args json.
 		// response — an HTTP failure after the downstream may already have
 		// executed — and must stay on the outcome-unknown path. Errors seen
 		// while the hub is closing keep their dedicated shutdown semantics.
+		// -32005 mirrors the SDK's unexported ErrRejected code
+		// (internal/jsonrpc2); the public jsonrpc.Error aliases its WireError.
 		const jsonrpcRejectedByTransport = -32005
 		var jsonrpcErr *jsonrpc.Error
 		if !h.closing.Load() &&

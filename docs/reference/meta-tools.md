@@ -174,6 +174,19 @@ continues automatically. This works for mounted `server__tool` calls and for
 calls cannot ask questions — a tool that needs input fails with a clear error
 instead.
 
+Things to know about relayed questions:
+
+- `timeout_ms` covers the whole call, including the time you take to answer.
+  A call that times out while waiting for your answer is reported as
+  *outcome unknown* and the server is reconnected — give interactive tools a
+  generous `timeout_ms`.
+- Each round re-runs the downstream tool with your answers. Well-behaved
+  interactive tools ask **before** acting; a tool that mutates and then asks
+  would mutate again on the retry.
+- Agents on the `2026-07-28` protocol can go through several rounds. Older
+  agents get one relayed round; a tool that asks a second question fails for
+  them.
+
 Two optional arguments cover long-running downstream work:
 
 - **`detach: true`** — start the call in the background and return an

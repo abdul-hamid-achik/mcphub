@@ -17,6 +17,8 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 - A JSON-RPC error from a downstream fails that call without tearing down and reconnecting its session.
 - `get_result` pages are measured against the response budget including the SDK envelope, and shrink until they fit.
 - A catalog refresh that fails to list resources or prompts keeps the last known catalog instead of wiping it.
+- Mounted prompts and resources relay `input-required` rounds too (the agent's answers were dropped, so the downstream asked again until the SDK gave up after 10 retries).
+- Catalog pagination fails fast on a cursor that does not advance and caps a catalog at 20,000 entries.
 
 ## [0.25.2] - 2026-09-22
 

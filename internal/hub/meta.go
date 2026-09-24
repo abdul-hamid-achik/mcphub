@@ -83,7 +83,15 @@ func (h *Hub) MountResourcesAndPrompts(srv *mcp.Server, allowServer func(string)
 				if err != nil {
 					return nil, err
 				}
-				return session.ReadResource(ctx, &mcp.ReadResourceParams{URI: orig})
+				// Echo multi-round-trip state so a 2026-07-28 input-required
+				// round answered by the agent reaches the downstream, as forward()
+				// does for tools.
+				params := &mcp.ReadResourceParams{URI: orig}
+				if req != nil && req.Params != nil {
+					params.InputResponses = req.Params.InputResponses
+					params.RequestState = req.Params.RequestState
+				}
+				return session.ReadResource(ctx, params)
 			})
 		}
 		for _, p := range d.PromptsSnapshot() {
@@ -104,6 +112,8 @@ func (h *Hub) MountResourcesAndPrompts(srv *mcp.Server, allowServer func(string)
 				params := &mcp.GetPromptParams{Name: orig}
 				if req != nil && req.Params != nil {
 					params.Arguments = req.Params.Arguments
+					params.InputResponses = req.Params.InputResponses
+					params.RequestState = req.Params.RequestState
 				}
 				return session.GetPrompt(ctx, params)
 			})

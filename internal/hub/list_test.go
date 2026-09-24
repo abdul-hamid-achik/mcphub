@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -128,5 +129,29 @@ func TestCallConvertsInputRequiredToToolError(t *testing.T) {
 	if !strings.Contains(toolErrorText(res), "interactive input") ||
 		!strings.Contains(toolErrorText(res), "memory__confirm") {
 		t.Fatalf("error text should name the tool and the limitation, got: %s", toolErrorText(res))
+	}
+}
+
+func TestListAllStopsOnRepeatedCursorAndItemCap(t *testing.T) {
+	calls := 0
+	_, err := listAll("x/list", func(cursor string) ([]int, string, error) {
+		calls++
+		return []int{1}, "same", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "same cursor") {
+		t.Fatalf("repeated cursor: err = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("repeated cursor detected after %d calls, want 2", calls)
+	}
+
+	big := make([]int, maxListItems/2+1)
+	page := 0
+	_, err = listAll("x/list", func(string) ([]int, string, error) {
+		page++
+		return big, fmt.Sprintf("c%d", page), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Fatalf("item cap: err = %v", err)
 	}
 }

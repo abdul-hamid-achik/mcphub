@@ -149,6 +149,21 @@ func confirmHTTPDownstream(t *testing.T, state *confirmState) string {
 			return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: "action skipped: input not accepted"}}}, nil
 		},
 	)
+	server.AddPrompt(
+		&sdk.Prompt{Name: "confirm_prompt", Description: "a prompt that asks before rendering"},
+		func(_ context.Context, req *sdk.GetPromptRequest) (*sdk.GetPromptResult, error) {
+			if len(req.Params.InputResponses) == 0 {
+				return &sdk.GetPromptResult{
+					InputRequests: sdk.InputRequestMap{
+						"1": &sdk.ElicitParams{Message: "Render the prompt?"},
+					},
+				}, nil
+			}
+			answer, _ := req.Params.InputResponses["1"].(*sdk.ElicitResult)
+			state.answer.Store(answer)
+			return &sdk.GetPromptResult{Description: "rendered after confirmation"}, nil
+		},
+	)
 	// Stateless HTTP is what serves the 2026-07-28 protocol: a stateful
 	// handler would negotiate down to 2025-11-25 and elicit the hub client
 	// directly (no handler) instead of returning an input-required result.
@@ -249,5 +264,28 @@ func TestElicitationPassthroughCallTool(t *testing.T) {
 	}
 	if text := res.Content[0].(*sdk.TextContent).Text; text != "action skipped: input not accepted" {
 		t.Fatalf("final result = %q", text)
+	}
+}
+
+// Prompts relay input-required rounds like tools: the agent's answer must be
+// echoed back to the downstream instead of re-asking forever.
+func TestElicitationPassthroughMountedPrompt(t *testing.T) {
+	var state confirmState
+	s := confirmGateway(t, confirmHTTPDownstream(t, &state))
+	client := connectElicitingClient(t, s.srv, &state, "accept")
+
+	res, err := client.GetPrompt(context.Background(), &sdk.GetPromptParams{Name: "memory__confirm_prompt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.elicitMessage.Load(); got != "Render the prompt?" {
+		t.Fatalf("agent elicitation message = %#v, want the downstream question", got)
+	}
+	answer, _ := state.answer.Load().(*sdk.ElicitResult)
+	if answer == nil || answer.Action != "accept" {
+		t.Fatalf("downstream received answer = %#v, want accepted elicitation", answer)
+	}
+	if res.Description != "rendered after confirmation" {
+		t.Fatalf("final prompt description = %q", res.Description)
 	}
 }
