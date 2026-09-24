@@ -289,3 +289,74 @@ func TestElicitationPassthroughMountedPrompt(t *testing.T) {
 		t.Fatalf("final prompt description = %q", res.Description)
 	}
 }
+
+// A downstream that adds a resource after connect emits resources/list_changed;
+// the hub refreshes its resource catalog and the gateway remounts, so agents
+// see the remapped URI and can read it without a reconnect.
+func TestResourceListChangedRefreshesGatewaySurface(t *testing.T) {
+	downstream := sdk.NewServer(&sdk.Implementation{Name: "live", Version: "1"}, nil)
+	downstream.AddTool(
+		&sdk.Tool{Name: "hello", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, *sdk.CallToolRequest) (*sdk.CallToolResult, error) {
+			return &sdk.CallToolResult{}, nil
+		},
+	)
+	httpServer := httptest.NewServer(sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return downstream }, nil))
+	defer httpServer.Close()
+
+	cfg := &config.Config{
+		Expose:         config.ExposeAll,
+		ConnectTimeout: "2s",
+		Servers: map[string]config.Server{
+			"live": {URL: httpServer.URL, Transport: "http", Enabled: true},
+		},
+	}
+	h := hub.New(cfg, nil, nil)
+	// Close the hub (and its downstream sessions) before httpServer.Close: the
+	// streamable client holds a long-lived stream that otherwise blocks server
+	// shutdown until the remote keepalive reaps it.
+	defer h.Close()
+	s, cancel := dynamicMountServer(t, cfg, h, nil)
+	defer cancel()
+	client := connectServerClient(t, s.srv)
+
+	want := hub.ResourceURI("live", "file:///notes")
+	assertResourceSurface(t, client, func(uris map[string]int) bool {
+		return uris[want] == 0
+	})
+
+	downstream.AddResource(&sdk.Resource{URI: "file:///notes", Name: "notes"},
+		func(_ context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
+			return &sdk.ReadResourceResult{Contents: []*sdk.ResourceContents{{
+				URI:  req.Params.URI,
+				Text: "notes-body",
+			}}}, nil
+		})
+	assertResourceSurface(t, client, func(uris map[string]int) bool {
+		return uris[want] == 1
+	})
+
+	// The mounted resource must forward ReadResource to the downstream.
+	res, err := client.ReadResource(context.Background(), &sdk.ReadResourceParams{URI: want})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Contents) == 0 || res.Contents[0].Text != "notes-body" {
+		t.Fatalf("read through the gateway = %#v", res.Contents)
+	}
+}
+
+func assertResourceSurface(t *testing.T, client *sdk.ClientSession, accept func(map[string]int) bool) {
+	t.Helper()
+	eventually(t, func() bool {
+		list, err := client.ListResources(context.Background(), nil)
+		if err != nil {
+			return false
+		}
+		uris := make(map[string]int, len(list.Resources))
+		for _, r := range list.Resources {
+			uris[r.URI]++
+		}
+		return accept(uris)
+	})
+}

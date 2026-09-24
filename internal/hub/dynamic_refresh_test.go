@@ -92,7 +92,7 @@ func TestToolRefreshCoalescesNotificationsBeforePublication(t *testing.T) {
 
 // A refresh that cannot list resources or prompts (a transient failure, or a
 // capability error) must keep the last known catalog instead of wiping it.
-func TestCatalogRefreshKeepsResourcesWhenListingFails(t *testing.T) {
+func TestCatalogRefreshKeepsCatalogsWhenListingFails(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "flaky", Version: "1"}, nil)
 	server.AddTool(
 		&mcp.Tool{Name: "t", InputSchema: map[string]any{"type": "object"}},
@@ -103,6 +103,10 @@ func TestCatalogRefreshKeepsResourcesWhenListingFails(t *testing.T) {
 	server.AddResource(&mcp.Resource{URI: "file:///a", Name: "a"},
 		func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 			return &mcp.ReadResourceResult{}, nil
+		})
+	server.AddPrompt(&mcp.Prompt{Name: "p"},
+		func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{}, nil
 		})
 	var failLists atomic.Bool
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -119,6 +123,10 @@ func TestCatalogRefreshKeepsResourcesWhenListingFails(t *testing.T) {
 	d := &Downstream{Name: "flaky"}
 	d.setConnection(session, nil)
 	d.setResources(listResources(context.Background(), session))
+	d.setPrompts(listPrompts(context.Background(), session))
+	if got := len(d.PromptsSnapshot()); got != 1 {
+		t.Fatalf("test setup: %d prompts at connect, want 1", got)
+	}
 	if got := len(d.ResourcesSnapshot()); got != 1 {
 		t.Fatalf("test setup: %d resources at connect, want 1", got)
 	}
@@ -130,5 +138,8 @@ func TestCatalogRefreshKeepsResourcesWhenListingFails(t *testing.T) {
 	h.refreshDownstreamCatalogs(context.Background(), d, session)
 	if got := len(d.ResourcesSnapshot()); got != 1 {
 		t.Fatalf("resources after a failed refresh = %d, want the last known 1", got)
+	}
+	if got := len(d.PromptsSnapshot()); got != 1 {
+		t.Fatalf("prompts after a failed refresh = %d, want the last known 1", got)
 	}
 }

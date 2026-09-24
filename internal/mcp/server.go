@@ -875,9 +875,8 @@ func (s *Server) handleGetResult(ctx context.Context, _ *sdk.CallToolRequest, in
 		// form; under tight budgets fall back to structured-only (the SDK's
 		// typed-tool wrapper synthesizes a JSON text block from a non-nil typed
 		// output when Content is empty, so the structured-only form returns nil
-		// output), then
-		// halve the page. A budget too small for any envelope returns the
-		// structured 1-byte page as best effort.
+		// output), then halve the page. A budget too small for any envelope
+		// returns the structured 1-byte page as best effort.
 		if res, payload := pageResult(in.CallID, page, true); s.fitsBudget(res) {
 			return res, payload, nil
 		}
@@ -932,6 +931,8 @@ Some tools ask a question mid-call ("allow this action?"). The gateway relays
 that question to you; answer it and the call continues automatically — accept
 runs it, decline/cancel tells the tool to stop. Detached (` + "`detach: true`" + `) calls
 cannot ask questions; a tool that needs input fails with a clear error instead.
+Agents on older protocols get one relayed question round; a tool that asks
+again fails for them.
 
 ## Resources and prompts
 

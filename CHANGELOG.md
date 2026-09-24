@@ -20,6 +20,10 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 - Mounted prompts and resources relay `input-required` rounds too (the agent's answers were dropped, so the downstream asked again until the SDK gave up after 10 retries).
 - Catalog pagination fails fast on a cursor that does not advance and caps a catalog at 20,000 entries.
 
+
+### Changed
+- The in-agent how-to now says pre-2026 agents get one relayed question round (docs only; behavior unchanged).
+
 ## [0.25.2] - 2026-09-22
 
 ### Fixed

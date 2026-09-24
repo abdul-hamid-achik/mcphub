@@ -262,3 +262,53 @@ func TestDetachedOversizedResultReturnsSpooledReceipt(t *testing.T) {
 		t.Fatal("spooled detached result did not reconstruct byte-for-byte")
 	}
 }
+
+// A detached call cannot elicit (nobody is left to answer), so a downstream
+// that answers input-required must surface the hub's clear tool error — never
+// a raw inputRequests envelope an agent cannot fulfill.
+func TestDetachedCallAgainstInputRequiredFailsWithToolError(t *testing.T) {
+	tool := &mcp.Tool{Name: "confirm", InputSchema: map[string]any{"type": "object"}}
+	server := mcp.NewServer(&mcp.Implementation{Name: "memory", Version: "1"}, nil)
+	server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{
+			InputRequests: mcp.InputRequestMap{
+				"1": &mcp.ElicitParams{Message: "Allow destructive action?"},
+			},
+		}, nil
+	})
+	h := New(&config.Config{}, nil, nil)
+	t.Cleanup(func() { _ = h.Close() })
+	d := &Downstream{Name: "memory", Tools: []*mcp.Tool{tool}}
+	// Connect through the hub's real client factory so the downstream session
+	// carries the production options (MRTR auto-handling disabled).
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "mcphub", Version: "1"}, h.downstreamClientOptions(false, d))
+	session, err := client.Connect(context.Background(), clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	d.session = session
+	h.downstreams = []*Downstream{d}
+
+	id, err := h.StartDetached(context.Background(), "memory", "confirm", nil, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitDetachedStatus(t, h, id, DetachedDone)
+	if done.Result == nil || !done.Result.IsError {
+		t.Fatalf("detached input-required result = %+v, want a tool error", done.Result)
+	}
+	if len(done.Result.InputRequests) != 0 {
+		t.Fatalf("converted result must not carry the raw inputRequests envelope: %#v", done.Result.InputRequests)
+	}
+	if text := toolErrorText(done.Result); !strings.Contains(text, "interactive input") ||
+		!strings.Contains(text, "memory__confirm") {
+		t.Fatalf("error text should name the tool and the limitation, got: %s", text)
+	}
+}

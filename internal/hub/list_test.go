@@ -155,3 +155,20 @@ func TestListAllStopsOnRepeatedCursorAndItemCap(t *testing.T) {
 		t.Fatalf("item cap: err = %v", err)
 	}
 }
+
+// A downstream that always returns a fresh cursor must not loop the gateway
+// forever: listAll stops after maxListPages fetches even though no cursor ever
+// repeats and no item cap is hit.
+func TestListAllStopsAfterPageCap(t *testing.T) {
+	calls := 0
+	_, err := listAll("x/list", func(cursor string) ([]int, string, error) {
+		calls++
+		return nil, fmt.Sprintf("fresh-%d", calls), nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "exceeded 1000 pages") {
+		t.Fatalf("page cap: err = %v", err)
+	}
+	if calls != maxListPages {
+		t.Fatalf("fetch called %d times, want exactly %d", calls, maxListPages)
+	}
+}

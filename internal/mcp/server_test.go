@@ -974,3 +974,67 @@ func TestHandlePollResultOutOfScope(t *testing.T) {
 		t.Fatalf("owner poll status = %v, want pending", status)
 	}
 }
+
+// fitsBudget must measure the marshaled envelope plus the SDK margin: the
+// duplicated text form of a page can exceed a budget the structured-only form
+// still fits.
+func TestFitsBudgetMeasuresEnvelopeWithMargin(t *testing.T) {
+	s, _ := serverWithResultStore(t, nil)
+	if !s.fitsBudget(&sdk.CallToolResult{}) {
+		t.Fatal("no configured budget must accept any result")
+	}
+	s.cfg.ResponseBudget = "600B"
+	page := store.ResultPage{
+		CallID: "call", Server: "memory", Tool: "large",
+		Data: bytes.Repeat([]byte("x"), 100), NextCursor: 100, TotalBytes: 100,
+	}
+	withText, _ := pageResult("call", page, true)
+	if s.fitsBudget(withText) {
+		t.Fatal("text+structured page of 100 data bytes must not fit a 600B budget")
+	}
+	structuredOnly, _ := pageResult("call", page, false)
+	if !s.fitsBudget(structuredOnly) {
+		t.Fatal("structured-only page of 100 data bytes must fit a 600B budget")
+	}
+}
+
+// Under a budget too tight for the duplicated text form, get_result must drop
+// the text block and return the structured page alone, within budget — the
+// shrink loop's second branch, exercised end to end.
+func TestGetResultDropsTextFormUnderTightBudget(t *testing.T) {
+	s, _ := serverWithResultStore(t, nil)
+	s.cfg.ResponseBudget = "700B"
+	callID, err := s.store.PutResult(context.Background(), "memory", "large", bytes.Repeat([]byte("x"), 4096))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := connectServerClient(t, s.srv)
+	res, err := client.CallTool(context.Background(), &sdk.CallToolParams{
+		Name:      toolGetResult,
+		Arguments: json.RawMessage(fmt.Sprintf(`{"callId":%q,"cursor":0}`, callID)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if budget := s.cfg.ResponseBudgetBytes(); len(envelope)+sdkEnvelopeMargin > budget {
+		t.Fatalf("envelope+margin = %d bytes, want within the %d-byte budget", len(envelope)+sdkEnvelopeMargin, budget)
+	}
+	if len(res.Content) != 0 {
+		t.Fatalf("tight budget must drop the duplicated text block, got %d content blocks", len(res.Content))
+	}
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("structured output type = %T", res.StructuredContent)
+	}
+	data, err := base64.StdEncoding.DecodeString(out["data"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := int64(len(data)), s.resultPageSize(); got != want {
+		t.Fatalf("page bytes = %d, want the un-shrunk first guess %d", got, want)
+	}
+}
