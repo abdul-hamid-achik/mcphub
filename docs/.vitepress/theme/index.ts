@@ -5,9 +5,15 @@ import InstallCmd from './components/InstallCmd.vue'
 import CapabilityRoutes from './components/CapabilityRoutes.vue'
 import HomeExtras from './components/HomeExtras.vue'
 import './custom.css'
+import { inject } from '@vercel/analytics'
 
 export default {
   extends: DefaultTheme,
+  enhanceApp() {
+    if (typeof window !== 'undefined') {
+      inject()
+    }
+  },
   Layout() {
     return h(DefaultTheme.Layout, null, {
       'home-hero-info-after': () => h(InstallCmd),
