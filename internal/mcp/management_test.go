@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -69,6 +70,34 @@ func TestManagementToolsAdvertiseCleanNamesAndTitles(t *testing.T) {
 	}
 	for name := range want {
 		t.Errorf("missing advertised tool %q", name)
+	}
+}
+
+// Every management tool advertises "properties" as an object, the no-argument
+// ones included: llama.cpp's chat templates refuse a schema without it.
+func TestManagementToolsAdvertiseAnObjectOfProperties(t *testing.T) {
+	cfg := &config.Config{Expose: config.ExposeLazy}
+	s := NewServer(cfg, hub.New(cfg, nil, nil), nil, nil)
+	client := connectServerClient(t, s.srv)
+	list, err := client.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range list.Tools {
+		encoded, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(encoded, &schema); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := schema["properties"].(map[string]any); !ok {
+			t.Errorf("%s inputSchema has no properties object: %s", tool.Name, encoded)
+		}
+		if tool.Name == toolListServers && schema["additionalProperties"] != false {
+			t.Errorf("%s inputSchema no longer refuses arguments: %s", tool.Name, encoded)
+		}
 	}
 }
 
