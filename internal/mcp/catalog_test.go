@@ -630,6 +630,45 @@ func TestCatalogHandlersRouteAndBoundResults(t *testing.T) {
 	}
 }
 
+// The text an agent reads is the structured value in compact JSON, the
+// encoding the match-array budget is measured in.
+func TestManagementToolsReturnCompactText(t *testing.T) {
+	s := connectedCatalogServer(t, nil)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		call func() (*sdk.CallToolResult, any, error)
+	}{
+		{"list_servers", func() (*sdk.CallToolResult, any, error) { return s.handleListServers(ctx, nil, emptyInput{}) }},
+		{"search_tools", func() (*sdk.CallToolResult, any, error) {
+			return s.handleSearchTools(ctx, nil, searchInput{Query: "HTTP", MaxHits: 100})
+		}},
+		{"resolve_tool", func() (*sdk.CallToolResult, any, error) {
+			return s.handleResolveTool(ctx, nil, resolveToolInput{Query: "fetch a URL as Markdown"})
+		}},
+		{"describe_tool", func() (*sdk.CallToolResult, any, error) {
+			return s.handleDescribeTool(ctx, nil, describeInput{Tool: "hitspec__fetch"})
+		}},
+		{"poll_result", func() (*sdk.CallToolResult, any, error) {
+			return s.handlePollResult(ctx, nil, pollResultInput{CallID: "no-such-call"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res, structured, err := tc.call()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := json.Marshal(structured)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text := textContent(res); text != string(want) {
+				t.Fatalf("text is not the compact structured value:\n%s", text)
+			}
+		})
+	}
+}
+
 func TestCatalogHandlersRespectToolScope(t *testing.T) {
 	s := connectedCatalogServer(t, &agentScope{
 		servers: map[string]bool{"hitspec": true},
