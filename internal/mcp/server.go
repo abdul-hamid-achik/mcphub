@@ -809,11 +809,11 @@ func (s *Server) responseBudget() int {
 	return s.cfg.ResponseBudgetBytes()
 }
 
-// pageResult builds one get_result page. The JSON text is compact, unlike the
-// pretty-printed management-tool result(): a page is dominated by base64 data,
-// and indentation only spends response budget. withText reports whether the
-// duplicated text form is included; under tight budgets the structured form
-// alone is returned because an agent can always read structuredContent.
+// pageResult builds one get_result page. The JSON text is compact, like
+// result(): a page is dominated by base64 data, and indentation only spends
+// response budget. withText reports whether the duplicated text form is
+// included; under tight budgets the structured form alone is returned because
+// an agent can always read structuredContent.
 func pageResult(callID string, page store.ResultPage, withText bool) (*sdk.CallToolResult, any) {
 	payload := map[string]any{
 		"status":     "ok",
@@ -1075,9 +1075,12 @@ func (s *Server) RunHTTP(ctx context.Context, addr string, stateless bool) error
 }
 
 // result mirrors the codemap/monitor convention: a JSON text block plus the
-// same value as structured output.
+// same value as structured output. The text is compact, not indented: an
+// agent reads it into its context, where indentation costs 15-24% of the
+// characters, and the match-array budget (maxCatalogMatchesBytes) is measured
+// in this encoding.
 func result(v any) (*sdk.CallToolResult, any, error) {
-	b, err := json.MarshalIndent(v, "", "  ")
+	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal result: %w", err)
 	}

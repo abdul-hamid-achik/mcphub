@@ -24,6 +24,7 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ### Changed
 - The in-agent how-to now says pre-2026 agents get one relayed question round (docs only; behavior unchanged).
+- mcphub's own tools (`list_servers`, `search_tools`, `resolve_tool`, `describe_tool`, `stats`, the detached `call_tool` receipt, and the `poll_result`/`get_result` status replies) return their text as compact JSON instead of two-space indentation, as `get_result` pages and stored-result receipts already did. The fields are unchanged, and the agent reads 15-24% fewer characters for the four tools measured. The match arrays of `search_tools` and `resolve_tool` are budgeted in compact JSON, so the text now matches what that budget counts. Downstream tool results pass through as their server sent them.
 
 ## [0.25.2] - 2026-09-22
 

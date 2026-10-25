@@ -74,7 +74,7 @@ func TestHandleListServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := textContent(res)
-	for _, want := range []string{`"name": "codemap"`, `"enabled": true`, `"name": "monitor"`, `"enabled": false`, `"connected": false`} {
+	for _, want := range []string{`"name":"codemap"`, `"enabled":true`, `"name":"monitor"`, `"enabled":false`, `"connected":false`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("list output missing %q:\n%s", want, body)
 		}
@@ -89,7 +89,7 @@ func TestHandleSearchToolsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := textContent(res)
-	if !strings.Contains(body, `"count": 0`) {
+	if !strings.Contains(body, `"count":0`) {
 		t.Errorf("expected count 0 with no connected downstreams:\n%s", body)
 	}
 }
@@ -204,7 +204,7 @@ func TestHandleStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := textContent(res)
-	if !strings.Contains(body, `"calls": 1`) {
+	if !strings.Contains(body, `"calls":1`) {
 		t.Errorf("expected calls=1 in stats:\n%s", body)
 	}
 }
@@ -337,10 +337,10 @@ func TestHandleListServersScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := textContent(res)
-	if !strings.Contains(body, `"name": "codemap"`) {
+	if !strings.Contains(body, `"name":"codemap"`) {
 		t.Errorf("scoped list should include codemap:\n%s", body)
 	}
-	if strings.Contains(body, `"name": "monitor"`) {
+	if strings.Contains(body, `"name":"monitor"`) {
 		t.Errorf("scoped list should exclude monitor (out of scope):\n%s", body)
 	}
 }
