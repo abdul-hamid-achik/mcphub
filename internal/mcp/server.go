@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
@@ -239,14 +240,28 @@ func (s *Server) registerManagement() {
 		}
 		return &sdk.Tool{Name: tool.Public, Title: tool.Title, Description: tool.Description}
 	}
-	sdk.AddTool(s.srv, def(toolListServers), s.handleListServers)
+	// A tool without arguments advertises an empty "properties". The schema
+	// inferred from emptyInput leaves it out, which is valid JSON Schema, but
+	// llama.cpp's chat templates (Ollama runs them for several models) refuse
+	// it: a client that offered these tools had every request to such a model
+	// fail with "properties must be an object".
+	noArgs := func(tool *sdk.Tool) *sdk.Tool {
+		schema, err := jsonschema.For[emptyInput](nil)
+		if err != nil {
+			panic(err)
+		}
+		schema.Properties = map[string]*jsonschema.Schema{}
+		tool.InputSchema = schema
+		return tool
+	}
+	sdk.AddTool(s.srv, noArgs(def(toolListServers)), s.handleListServers)
 	sdk.AddTool(s.srv, def(toolSearchTools), s.handleSearchTools)
 	sdk.AddTool(s.srv, def(toolDescribeTool), s.handleDescribeTool)
 	sdk.AddTool(s.srv, def(toolResolveTool), s.handleResolveTool)
 	sdk.AddTool(s.srv, def(toolCallTool), s.handleCallTool)
 	sdk.AddTool(s.srv, def(toolGetResult), s.handleGetResult)
 	sdk.AddTool(s.srv, def(toolPollResult), s.handlePollResult)
-	sdk.AddTool(s.srv, def(toolStats), s.handleStats)
+	sdk.AddTool(s.srv, noArgs(def(toolStats)), s.handleStats)
 }
 
 // splitNamespaced resolves (server, tool) from explicit fields, falling back to

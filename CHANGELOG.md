@@ -13,6 +13,7 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 - Prompt and resource `list_changed` notifications refresh the gateway surface, like tool changes already did.
 
 ### Fixed
+- `list_servers` and `stats` advertise an empty `properties` object. Their inferred schema left it out, and llama.cpp's chat templates (Ollama runs them for several models, e.g. ornith-1.5) refuse that: every request from an agent that offered mcphub's tools to such a model failed with "properties must be an object".
 - Downstream tool, resource and prompt lists follow pagination cursors instead of silently keeping only the first page.
 - A JSON-RPC error from a downstream fails that call without tearing down and reconnecting its session.
 - `get_result` pages are measured against the response budget including the SDK envelope, and shrink until they fit.
