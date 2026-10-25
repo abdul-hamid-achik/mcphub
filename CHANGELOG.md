@@ -6,6 +6,8 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-25
+
 ### Added
 - **MCP 2026-07-28 support** (go-sdk v1.7.0). `listen_stateless: true` (or `--stateless` on `mcp serve --listen` / `up`) serves the stateless protocol on the HTTP listener; it has no server-to-agent channel, so pre-2026 agents lose interactive-question relay and live `list_changed` updates there. Default stays stateful.
 - **Interactive tools are relayed.** A downstream `input-required` round (e.g. "allow this action?") reaches the agent as an elicitation on mounted `server__tool` calls and `call_tool`, and the answer flows back so the call continues. Detached calls return a clear tool error instead.
