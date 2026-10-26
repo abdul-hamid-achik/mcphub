@@ -6,6 +6,8 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-10-26
+
 ### Added
 - `mcphub stats --recent` names the agent of each call: an `AGENT` column (the
   gateway's `--agent`, or `-` when none was recorded: an unscoped gateway, or a
