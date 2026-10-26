@@ -70,9 +70,11 @@ func normalizeSelf(exe string) string {
 // Desired computes the server entries mcphub wants present in an agent: in
 // gateway mode a single 'mcphub' server (self), in direct mode every enabled
 // downstream server verbatim — filtered to the agent's `servers` allowlist
-// when one is set. When the agent has any routing config (servers or tools),
-// the gateway entry is launched with `--agent <name>` so the spawned gateway
-// can scope its advertisement and lazy meta-tools to that agent.
+// when one is set. A stdio gateway entry is always launched with `--agent <name>`
+// (a `listen:` URL entry carries no args):
+// routing config scopes the advertisement through it, and without routing the
+// flag still presents mcphub/<name> as the gateway's client identity, so
+// downstream caller ledgers can tell agents apart.
 func Desired(c *config.Config, name string, agent config.Agent, self string) []harness.MCPServer {
 	if agent.ResolvedMode() == config.ModeGateway {
 		if u := c.GatewayListenURL(); u != "" {
@@ -82,10 +84,10 @@ func Desired(c *config.Config, name string, agent config.Agent, self string) []h
 				Transport: "http",
 			}}
 		}
-		args := []string{"mcp", "serve"}
-		if agent.HasRouting() {
-			args = append(args, "--agent", name)
-		}
+		// --agent is unconditional: with routing it scopes advertisement and
+		// lazy meta-tools; without it the scope is nil but the downstream
+		// still sees mcphub/<name> as the connecting client.
+		args := append([]string{"mcp", "serve"}, "--agent", name)
 		return []harness.MCPServer{{
 			Name:    "mcphub",
 			Command: self,

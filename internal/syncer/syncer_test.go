@@ -20,10 +20,10 @@ func TestDesired(t *testing.T) {
 		},
 	}
 
-	// Gateway: exactly one self entry.
+	// Gateway: exactly one self entry, always launched with --agent.
 	g := Desired(c, "a", config.Agent{Mode: config.ModeGateway}, "/bin/mcphub")
 	if len(g) != 1 || g[0].Name != "mcphub" || g[0].Command != "/bin/mcphub" ||
-		len(g[0].Args) != 2 || g[0].Args[0] != "mcp" || g[0].Args[1] != "serve" {
+		strings.Join(g[0].Args, " ") != "mcp serve --agent a" {
 		t.Fatalf("gateway desired = %+v", g)
 	}
 
@@ -72,7 +72,7 @@ func TestDesiredRouting(t *testing.T) {
 		},
 	}
 
-	// Gateway + routing => --agent <name> appended; no routing => plain 2 args.
+	// Gateway always emits --agent <name>: routing scopes it, identity otherwise.
 	gw := Desired(c, "claude", config.Agent{Mode: config.ModeGateway, Servers: &[]string{"a"}}, "/bin/mcphub")
 	if len(gw) != 1 || gw[0].Name != "mcphub" {
 		t.Fatalf("gateway routing desired = %+v", gw)
@@ -82,8 +82,9 @@ func TestDesiredRouting(t *testing.T) {
 		t.Errorf("gateway routing args = %v, want %v", gw[0].Args, want)
 	}
 	gwPlain := Desired(c, "x", config.Agent{Mode: config.ModeGateway}, "/bin/mcphub")
-	if len(gwPlain[0].Args) != 2 {
-		t.Errorf("gateway no-routing args = %v, want 2 (no --agent)", gwPlain[0].Args)
+	plainWant := []string{"mcp", "serve", "--agent", "x"}
+	if strings.Join(gwPlain[0].Args, " ") != strings.Join(plainWant, " ") {
+		t.Errorf("gateway no-routing args = %v, want %v (unconditional --agent)", gwPlain[0].Args, plainWant)
 	}
 	// Advertisement-only policy still needs --agent even when the callable
 	// server/tool scope is otherwise unrestricted.

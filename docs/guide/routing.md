@@ -99,16 +99,16 @@ name order, never truncates a schema, and treats `0` as meta-tools only.
 
 ## How it works in gateway mode
 
-When a gateway-mode agent has routing or advertisement config (a
-`servers`/`tools`/`pin` key, even empty, or `tool_schema_budget`), `mcphub
-sync` writes its harness entry with an extra flag:
+`mcphub sync` writes every stdio gateway-mode harness entry with the agent's
+name:
 
 ```
 mcphub mcp serve --agent codex
 ```
 
-instead of the plain `mcphub mcp serve` that unscoped agents get. When that
-gateway starts, it looks up the named agent's `servers`/`tools` allowlists and:
+Downstreams see `mcphub/codex` as the connecting client. When the agent has
+routing or advertisement config (a `servers`/`tools`/`pin` key, even empty, or
+`tool_schema_budget`), the gateway also looks up its allowlists and:
 
 - **Advertises only the subset.** In `expose: all`, only in-scope
   `server__tool` names are mounted; a schema budget can narrow that visible
@@ -127,10 +127,10 @@ is `--agent <name>` for an agent with no routing keys. An `--agent` naming an
 agent that doesn't exist in the config is an error — a stale flag in a harness
 file fails fast instead of silently serving everything or nothing.
 
-::: tip Restart to apply
-Routing is enforced at gateway startup. After editing `servers`/`tools`, run
-`mcphub sync` (the `--agent` flag in the harness entry may need to appear or
-disappear) and restart the agent so it relaunches its gateway.
+::: tip Applying a change
+A running gateway polls `mcphub.yaml` every two seconds and rebuilds its scope
+when the file changes, so an edit to `servers`/`tools` needs no `sync`: the
+harness entry already names the agent. Restarting the agent also applies it.
 :::
 
 ## How it works in direct mode

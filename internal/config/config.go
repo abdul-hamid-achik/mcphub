@@ -296,7 +296,7 @@ type Agent struct {
 }
 
 // HasRouting reports whether the agent has call-routing or direct-advertisement
-// policy that requires a gateway spawned with `--agent <name>`. A non-nil but
+// policy, which its gateway applies through `--agent <name>`. A non-nil but
 // empty slice still counts: it is an intentional "none of these" override.
 func (a Agent) HasRouting() bool {
 	return a.Servers != nil || a.Tools != nil || a.Pin != nil || a.ToolSchemaBudget != ""

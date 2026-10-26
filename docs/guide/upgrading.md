@@ -73,6 +73,24 @@ Scoped / probe failures can leave doctor with a **non-zero** exit after JSON is
 printed. CI that only inspected stdout and ignored exit status may start failing
 — treat non-zero as real.
 
+## Every gateway entry names its agent (0.27)
+
+Since **v0.27.0**, `mcphub sync` writes `--agent <name>` into every stdio
+gateway entry, not only for agents with routing or advertisement keys. What an
+agent can see and call is unchanged, but:
+
+- downstream servers see `mcphub/<name>` as the connecting client instead of a
+  bare `mcphub`, so their caller ledgers can tell agents apart;
+- the gateway's log file is `gateway-<name>` instead of `gateway`, and
+  `mcphub stats` attributes those calls to the agent;
+- an entry whose `--agent` names an agent no longer in `mcphub.yaml` fails at
+  launch with an unknown-agent error, instead of serving everything. Remove
+  the stale entry or add the agent back.
+
+A `listen:` entry (a URL to the shared `mcphub up` daemon) is unchanged. After
+upgrading, a dry-run sync shows an `update` on each stdio gateway entry that
+lacked the flag; apply it with `mcphub sync --write` and restart those agents.
+
 ## Recommended checklist
 
 1. `mcphub sync` (dry-run) — expect possible one-time gateway path update  

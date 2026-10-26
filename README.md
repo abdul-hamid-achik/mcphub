@@ -275,8 +275,8 @@ agents:
     tools: [codemap__find, vecgrep__search]
 ```
 
-In gateway mode a scoped agent's harness entry is launched as `mcphub mcp serve --agent <name>`,
-so excluded servers are not started or contacted, the gateway advertises only that subset, and
+In gateway mode every stdio harness entry is launched as `mcphub mcp serve --agent <name>`.
+For a scoped agent, excluded servers are not started or contacted, the gateway advertises only that subset, and
 out-of-scope calls are refused. In direct mode only the listed servers are written. An agent with no `servers`/`tools` (omitted) sees everything,
 as before; an explicit empty list (`servers: []` / `tools: []`) means **none** — a deliberately
 minimal agent. This is least activation and curation, not an OS security boundary.
@@ -289,8 +289,11 @@ complete definitions deterministically up to that serialized-byte budget in
 either exposure mode; `0` means meta-tools only. A typical lean profile for
 small local models is `pin: [bob__context]` with `tool_schema_budget: 8KB`
 to pin the context-read tool while suppressing other global pins. These fields
-are gateway-only and cause `sync` to launch `mcphub mcp serve --agent <name>`
-even without a `servers`/`tools` restriction.
+are gateway-only and apply through that `--agent <name>`. An agent without
+routing or policy keys still gets the flag: it serves everything, and
+downstreams see `mcphub/<name>` as the connecting client, so caller ledgers
+can tell agents apart. A `listen:` entry (a URL to the shared `mcphub up`
+daemon) carries no flag; that daemon is unscoped and connects as `mcphub`.
 
 Set top-level `expose: lazy` to have the gateway advertise only its meta-tools (saving tokens —
 agents route current task context with `resolve_tool`, browse with

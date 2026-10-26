@@ -6,6 +6,17 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+### Changed
+- Gateway-mode sync always writes `--agent <name>` into the harness entry, not
+  just for agents with routing config. Scope semantics are unchanged — an agent
+  without routing config still serves everything — but the spawned gateway now
+  presents `mcphub/<name>` as its client identity downstream, so caller ledgers
+  (BlankCode harness sessions, for one) record the agent instead of a bare
+  `mcphub`. It also names the log file (`gateway-<name>`), `mcphub stats`
+  attributes those calls to the agent, and an entry naming an agent that is no
+  longer in `mcphub.yaml` fails at launch instead of serving everything.
+  `listen:` (shared HTTP daemon) entries are unchanged.
+
 ## [0.26.0] - 2026-10-25
 
 ### Added
@@ -22,7 +33,6 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 - A catalog refresh that fails to list resources or prompts keeps the last known catalog instead of wiping it.
 - Mounted prompts and resources relay `input-required` rounds too (the agent's answers were dropped, so the downstream asked again until the SDK gave up after 10 retries).
 - Catalog pagination fails fast on a cursor that does not advance and caps a catalog at 20,000 entries.
-
 
 ### Changed
 - The in-agent how-to now says pre-2026 agents get one relayed question round (docs only; behavior unchanged).

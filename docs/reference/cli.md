@@ -579,10 +579,11 @@ what [`mcphub sync`](#sync) writes into the agent's config in gateway mode.
 When `listen:` is set in `mcphub.yaml`, sync writes that HTTP URL instead and you
 run [`mcphub up`](#up) once.
 
-(For an agent with per-agent `servers`/`tools` routing or an agent-specific
-`pin`/`tool_schema_budget` policy, stdio sync writes
-`mcphub mcp serve --agent <name>` so the gateway advertises only that agent's
-projection and refuses out-of-scope calls.) Logs go to stderr so they never corrupt
+(Stdio sync writes `mcphub mcp serve --agent <name>` for every gateway agent.
+With per-agent `servers`/`tools` routing or an agent-specific
+`pin`/`tool_schema_budget` policy, the gateway advertises only that agent's
+projection and refuses out-of-scope calls; without either it serves everything
+and names the agent, `mcphub/<name>`, to downstreams.) Logs go to stderr so they never corrupt
 the stdio JSON-RPC stream. It shuts down cleanly on `SIGINT`/`SIGTERM`. The config
 file is polled so pin/enable edits apply without a restart.
 

@@ -372,9 +372,9 @@ Both fields distinguish **omitted** from **empty**, which matters:
 | `servers: []` / `tools: []` | **None.** A deliberately minimal agent. |
 | `servers: [a, b]` / `tools: [a__x]` | **Only these.** |
 
-In **gateway** mode, a scoped agent's harness entry is launched as
-`mcphub mcp serve --agent <name>`, so the spawned gateway advertises only that
-subset and refuses out-of-scope calls through `call_tool`,
+In **gateway** mode, every stdio harness entry is launched as
+`mcphub mcp serve --agent <name>`; for a scoped agent the spawned gateway
+advertises only that subset and refuses out-of-scope calls through `call_tool`,
 `describe_tool`, `search_tools`, and `list_servers`. In
 **direct** mode only the listed servers are written into the agent's config
 (`tools` doesn't apply there). A listed server that is disabled, or missing
@@ -420,8 +420,8 @@ definitions:
 The budget measures the complete namespaced tool definitions, including input
 and output schemas, annotations, icons, and metadata. Definitions are never
 truncated: deterministic admission keeps only complete definitions that fit.
-Both fields are gateway-only and automatically make `sync` include
-`--agent <name>`.
+Both fields are gateway-only. The gateway applies them through the
+`--agent <name>` that `sync` writes into every stdio gateway entry.
 
 ::: warning Curation, not a security boundary
 Routing controls what the gateway *advertises and honors* for a well-behaved
