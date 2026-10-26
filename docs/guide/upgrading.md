@@ -81,8 +81,9 @@ agent can see and call is unchanged, but:
 
 - downstream servers see `mcphub/<name>` as the connecting client instead of a
   bare `mcphub`, so their caller ledgers can tell agents apart;
-- the gateway's log file is `gateway-<name>` instead of `gateway`, and
-  `mcphub stats` attributes those calls to the agent;
+- the gateway's log file is `gateway-<name>` instead of `gateway`, and each
+  call through it is recorded under the agent; since v0.27.1,
+  `mcphub stats --recent` shows it in an `AGENT` column;
 - an entry whose `--agent` names an agent no longer in `mcphub.yaml` fails at
   launch with an unknown-agent error, instead of serving everything. Remove
   the stale entry or add the agent back.

@@ -71,7 +71,7 @@ Flags drill in further:
 
 ```sh
 mcphub stats --tools            # per-tool breakdown — which exact tools cost the most
-mcphub stats --recent 20        # also list the 20 most recent calls
+mcphub stats --recent 20        # also list the 20 most recent calls, with each one's agent
 mcphub stats --since 7d         # scope to a recent window (24h, 90m, 7d, ...)
 mcphub stats --server vecgrep   # drill into one server's stats and tools
 ```

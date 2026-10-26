@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/abdul-hamid-achik/mcphub/internal/harness"
 	"github.com/abdul-hamid-achik/mcphub/internal/hub"
 	"github.com/abdul-hamid-achik/mcphub/internal/store"
+	"github.com/abdul-hamid-achik/mcphub/internal/store/db"
 )
 
 // --- init -----------------------------------------------------------------
@@ -331,9 +333,7 @@ servers are earning their keep lately".`,
 				if err != nil {
 					return err
 				}
-				for _, r := range rows {
-					recents = append(recents, recentCall{TS: r.Ts, Namespaced: r.Namespaced, OK: r.Ok, DurationMs: r.DurationMs, EstTokens: r.EstTokens})
-				}
+				recents = recentCallsFrom(rows)
 			}
 			// --server filter: drill into one server's stats.
 			if server != "" {
@@ -386,12 +386,9 @@ servers are earning their keep lately".`,
 			}
 			if recent > 0 {
 				fmt.Fprintf(out, "\nRecent %d calls:\n", len(recents))
-				rw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-				fmt.Fprintln(rw, "WHEN\tTOOL\tOK\tMS\tTOKENS")
-				for _, r := range recents {
-					fmt.Fprintf(rw, "%s\t%s\t%t\t%d\t%d\n", r.TS, r.Namespaced, r.OK, r.DurationMs, r.EstTokens)
+				if err := writeRecentCalls(out, recents); err != nil {
+					return err
 				}
-				rw.Flush()
 			}
 			return nil
 		},
@@ -447,6 +444,33 @@ func filterToolStats(rows []store.ToolStat, server string) []store.ToolStat {
 	return out
 }
 
+// recentCallsFrom maps stored rows to the stats view, keeping the agent each
+// call was recorded under.
+func recentCallsFrom(rows []db.ToolCall) []recentCall {
+	out := make([]recentCall, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, recentCall{TS: r.Ts, Agent: r.Agent, Namespaced: r.Namespaced, OK: r.Ok, DurationMs: r.DurationMs, EstTokens: r.EstTokens})
+	}
+	return out
+}
+
+// writeRecentCalls prints one row per call. AGENT is the gateway's --agent
+// name, so calls from different harnesses can be told apart; "-" marks a call
+// with no agent recorded (an unscoped gateway, or a call logged before the
+// column existed).
+func writeRecentCalls(out io.Writer, recents []recentCall) error {
+	rw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(rw, "WHEN\tAGENT\tTOOL\tOK\tMS\tTOKENS")
+	for _, r := range recents {
+		agent := r.Agent
+		if agent == "" {
+			agent = "-"
+		}
+		fmt.Fprintf(rw, "%s\t%s\t%s\t%t\t%d\t%d\n", r.TS, agent, r.Namespaced, r.OK, r.DurationMs, r.EstTokens)
+	}
+	return rw.Flush()
+}
+
 func filterRecentCalls(rows []recentCall, server string) []recentCall {
 	prefix := server + "__"
 	var out []recentCall
@@ -482,6 +506,7 @@ func parseSince(s string) (time.Duration, error) {
 // recentCall is the JSON/printable shape of a recent tool call.
 type recentCall struct {
 	TS         string `json:"ts"`
+	Agent      string `json:"agent"` // the gateway's --agent; empty when none was recorded
 	Namespaced string `json:"tool"`
 	OK         bool   `json:"ok"`
 	DurationMs int64  `json:"duration_ms"`

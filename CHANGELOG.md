@@ -6,6 +6,14 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+### Added
+- `mcphub stats --recent` names the agent of each call: an `AGENT` column (the
+  gateway's `--agent`, or `-` when none was recorded: an unscoped gateway, or a
+  call logged before the column existed) and an `agent` field in `--json`
+  (empty when none). The call log already recorded the agent, but no view
+  showed it, so the 0.27.0 note that `mcphub stats` attributes calls to the
+  agent was true only of the stored log.
+
 ## [0.27.0] - 2026-10-25
 
 ### Changed

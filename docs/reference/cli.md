@@ -420,6 +420,10 @@ mcphub stats --json
 | `--server <name>` | Filter to one server's stats and tools. |
 | `--markdown` | Render as Markdown (great for notes/issues). |
 
+`--recent` names each call's agent: the gateway's `--agent`, or `-` when none
+was recorded (a call through an unscoped gateway, or one logged before mcphub
+recorded agents). In `--json`, `agent` is empty for those calls.
+
 `--since` accepts any Go duration (`24h`, `90m`) plus a day suffix (`7d`), and
 scopes the totals and breakdowns to that lookback window — useful for "which
 servers are earning their keep *lately*". With `--json`, the output includes

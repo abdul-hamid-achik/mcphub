@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/abdul-hamid-achik/mcphub/internal/config"
 	"github.com/abdul-hamid-achik/mcphub/internal/store"
+	"github.com/abdul-hamid-achik/mcphub/internal/store/db"
 )
 
 func TestRenderStatsMarkdown(t *testing.T) {
@@ -169,6 +171,59 @@ func TestFilterToolStats(t *testing.T) {
 	got := filterToolStats(rows, "codemap")
 	if len(got) != 2 {
 		t.Fatalf("filterToolStats = %d rows, want 2", len(got))
+	}
+}
+
+func TestRecentCallsKeepTheAgent(t *testing.T) {
+	got := recentCallsFrom([]db.ToolCall{
+		{Ts: "t1", Agent: "opencode", Namespaced: "codemap__search", Ok: true, DurationMs: 4, EstTokens: 9},
+		{Ts: "t2", Namespaced: "monitor__procs"},
+	})
+	if len(got) != 2 || got[0].Agent != "opencode" || got[1].Agent != "" {
+		t.Fatalf("recentCallsFrom = %+v, want agents opencode and none", got)
+	}
+	if got := filterRecentCalls(got, "codemap"); len(got) != 1 || got[0].Agent != "opencode" {
+		t.Fatalf("--server filter = %+v, want the codemap call with its agent", got)
+	}
+	// --json always carries the key, empty when no agent was recorded.
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"agent":"opencode"`; !strings.Contains(string(raw), want) {
+		t.Errorf("json = %s, want %s", raw, want)
+	}
+	raw, err = json.Marshal(got[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"agent":""`; !strings.Contains(string(raw), want) {
+		t.Errorf("json = %s, want %s", raw, want)
+	}
+}
+
+func TestWriteRecentCallsNamesTheAgent(t *testing.T) {
+	var out bytes.Buffer
+	err := writeRecentCalls(&out, []recentCall{
+		{TS: "t1", Agent: "local-agent", Namespaced: "monitor__snapshot", OK: true, DurationMs: 293, EstTokens: 7},
+		{TS: "t2", Namespaced: "cortex__status", DurationMs: 1, EstTokens: 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want a header and 2 rows:\n%s", len(lines), out.String())
+	}
+	want := [][]string{
+		{"WHEN", "AGENT", "TOOL", "OK", "MS", "TOKENS"},
+		{"t1", "local-agent", "monitor__snapshot", "true", "293", "7"},
+		{"t2", "-", "cortex__status", "false", "1", "3"},
+	}
+	for i, line := range lines {
+		if got := strings.Fields(line); !reflect.DeepEqual(got, want[i]) {
+			t.Errorf("line %d = %q, want %q", i, got, want[i])
+		}
 	}
 }
 
