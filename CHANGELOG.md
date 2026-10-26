@@ -6,6 +6,8 @@ on [Keep a Changelog](https://keepachangelog.com/), and the project follows
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-25
+
 ### Changed
 - Gateway-mode sync always writes `--agent <name>` into the harness entry, not
   just for agents with routing config. Scope semantics are unchanged — an agent
